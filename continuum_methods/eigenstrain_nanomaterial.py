@@ -154,4 +154,4 @@ st.markdown("---")
 st.markdown("""
 Local HCP regions from stacking faults and twins are the atomic origin of defect-engineered low-temperature sintering in Ag nanoparticles.
 """)
-st.caption("© 2025 – Publication-Ready | Fully generated schematics | No external images")
+st.caption("Material: Ag  | Length scale: Angstroms and nm | Continuum method")
