@@ -43,9 +43,9 @@ def eigenstrain_distribution(x, eps_star, w, dist_type='gaussian'):
         # Simplest physical model: linear decay
         return eps_star * np.maximum(1 - np.abs(x)/w, 0)
     
-    elif dist_type == 'erf':
-        # Error function (similar to tanh)
-        return (eps_star/2) * (1 - np.erf(2*x/w))
+    else:  # Default to Gaussian if unknown
+        sigma = w / 2.5
+        return eps_star * np.exp(-(x/sigma)**2)
 
 # =============================================
 # High-quality schematic generator
@@ -148,7 +148,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["ISF (ε* = 0.706)", "ESF (ε* = 0.706)", "Twi
 # Distribution type selector
 dist_type = st.sidebar.selectbox(
     "Eigenstrain Distribution",
-    ["gaussian", "tanh", "linear", "erf"],
+    ["gaussian", "tanh", "linear"],
     index=0,
     help="Choose the spatial distribution of eigenstrain"
 )
@@ -246,7 +246,7 @@ with tab4:
     ### Key Updates in This Version:
     
     1. **Fixed Eigenstrains**: Each defect type has constant ε* based on displacement/height ratio
-    2. **Multiple Distributions**: Compare Gaussian, Tanh, Linear, and Error function profiles
+    2. **Multiple Distributions**: Compare Gaussian, Tanh, and Linear profiles
     3. **Corrected Peaks**: Show actual computed peaks vs. simple estimates
     4. **Bipolar Forces**: Explicit visualization of pushing (+f) and pulling (-f) regions
     
@@ -254,7 +254,6 @@ with tab4:
     - **Gaussian**: Mathematical convenience, smooth decay
     - **Tanh**: Physically motivated for phase boundaries  
     - **Linear**: Simplest physical model
-    - **Error Function**: Similar to Tanh, common in diffusion problems
     
     ### Why Different Distributions Give Similar Results:
     All smooth, localized distributions produce:
@@ -270,8 +269,8 @@ with tab4:
     fig_compare, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), dpi=300)
     x = np.linspace(-3*w_compare, 3*w_compare, 600)
     
-    distributions = ['gaussian', 'tanh', 'linear', 'erf']
-    colors = ['blue', 'red', 'green', 'orange']
+    distributions = ['gaussian', 'tanh', 'linear']
+    colors = ['blue', 'red', 'green']
     
     for dist, color in zip(distributions, colors):
         eps_profile = eigenstrain_distribution(x, EPS_TWIN, w_compare, dist)
