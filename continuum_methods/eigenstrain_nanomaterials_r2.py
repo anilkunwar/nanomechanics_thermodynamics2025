@@ -183,4 +183,4 @@ with tab4:
         plt.close(fig)
         st.download_button(f"Download {name} Schematic", buf.getvalue(), f"Ag_{name}_Schematic.png", "image/png")
 
-st.caption("© 2025 — Ready for Acta Materialia / Nano Letters | Fully corrected & enhanced")
+st.caption("Material: Ag NPs / Length scale: Angstroms and nm |  Continuum method")
