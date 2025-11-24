@@ -35,4 +35,7 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect7-streamlit-red)](https://defect-evolution-in-nanomaterial7.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, )
 
-[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect8-streamlit-red)](https://defect-evolution-in-nanomaterial8.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, )
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect8-streamlit-red)](https://defect-evolution-in-nanomaterial8.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, 2D)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect9-streamlit-red)](https://defect-evolution-in-nanomaterial9.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, 3D )
+
