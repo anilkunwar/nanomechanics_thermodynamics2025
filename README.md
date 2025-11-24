@@ -28,3 +28,9 @@
 [![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect4-streamlit-red)](https://defect-evolution-in-nanomaterial4.streamlit.app/) (no coupling, elasticity only,enhanced model, defect type morphology same and only eigen strain magnitude changed)
 
 [![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect5-streamlit-red)](https://defect-evolution-in-nanomaterial5.streamlit.app/) (no coupling, elasticity only, enhanced model, )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect6-streamlit-red)](https://defect-evolution-in-nanomaterial6.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect7-streamlit-red)](https://defect-evolution-in-nanomaterial7.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect8-streamlit-red)](https://defect-evolution-in-nanomaterial8.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, )
