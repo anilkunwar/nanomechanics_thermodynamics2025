@@ -142,7 +142,37 @@ tick_length = st.sidebar.slider("Tick Length", 4, 12, 6)
 tick_width = st.sidebar.slider("Tick Width", 1.0, 3.0, 2.0, 0.5)
 
 # Color maps
-cmap_list = ['viridis', 'plasma', 'turbo', 'jet', 'rainbow', 'hot', 'coolwarm', 'RdBu_r', 'seismic', 'magma']
+#cmap_list = ['viridis', 'plasma', 'turbo', 'jet', 'rainbow', 'hot', 'coolwarm', 'RdBu_r', 'seismic', 'magma']
+cmap_list = [
+    # Perceptually Uniform Sequential
+    'viridis', 'plasma', 'inferno', 'magma', 'cividis',
+
+    # Sequential
+    'Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
+    'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu', 'GnBu',
+    'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
+
+    # Sequential (2)
+    'binary', 'gist_yarg', 'gist_gray', 'gray', 'bone', 'pink',
+    'spring', 'summer', 'autumn', 'winter', 'cool', 'Wistia',
+    'hot', 'afmhot', 'gist_heat', 'copper',
+
+    # Diverging
+    'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu',
+    'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic',
+
+    # Cyclic
+    'twilight', 'twilight_shifted', 'hsv',
+
+    # Qualitative
+    'Pastel1', 'Pastel2', 'Paired', 'Accent', 'Dark2', 'Set1',
+    'Set2', 'Set3', 'tab10', 'tab20', 'tab20b', 'tab20c',
+
+    # Miscellaneous
+    'flag', 'prism', 'ocean', 'gist_earth', 'terrain', 'gist_stern',
+    'gnuplot', 'gnuplot2', 'CMRmap', 'cubehelix', 'brg',
+    'gist_rainbow', 'rainbow', 'jet', 'turbo', 'nipy_spectral', 'gist_ncar'
+]
 eta_cmap   = st.sidebar.selectbox("η colormap", cmap_list, index=0)
 sigma_cmap = st.sidebar.selectbox("|σ| colormap", cmap_list, index=cmap_list.index('hot'))
 hydro_cmap = st.sidebar.selectbox("Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
