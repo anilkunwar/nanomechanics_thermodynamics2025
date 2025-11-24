@@ -14,6 +14,9 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce6-streamlit-red)]( https://eigenstrain-stackingfaults-twin6.streamlit.app/)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce7-streamlit-red)]( https://eigenstrain-stackingfaults-twin7.streamlit.app/)
+
+
 
 
 
