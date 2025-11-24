@@ -3,3 +3,14 @@
 [![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce1-streamlit-red)]( https://eigenstrain-stackingfaults-twin1.streamlit.app/)
 
 [![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce2-streamlit-red)]( https://eigenstrain-stackingfaults-twin2.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce3-streamlit-red)]( https://eigenstrain-stackingfaults-twin3.streamlit.app/)
+
+
+[![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce4-streamlit-red)]( https://eigenstrain-stackingfaults-twin4.streamlit.app/)
+
+
+[![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce5-streamlit-red)]( https://eigenstrain-stackingfaults-twin5.streamlit.app/)
+
+
+[![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce6-streamlit-red)]( https://eigenstrain-stackingfaults-twin6.streamlit.app/)
