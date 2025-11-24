@@ -14,3 +14,14 @@
 
 
 [![continuummodelsintering2d](https://img.shields.io/badge/epsilonforce6-streamlit-red)]( https://eigenstrain-stackingfaults-twin6.streamlit.app/)
+
+
+# Phase field model for stress calculation in Ag nanoparticles consisting of ISF, ESF and Twin defects
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect1-streamlit-red)](https://defect-evolution-in-nanomaterial1.streamlit.app/) 
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect2-streamlit-red)](https://defect-evolution-in-nanomaterial2.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect3-streamlit-red)](https://defect-evolution-in-nanomaterial3.streamlit.app/) (working model)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect3-streamlit-red)](https://defect-evolution-in-nanomaterial3.streamlit.app/) (enhanced model)
