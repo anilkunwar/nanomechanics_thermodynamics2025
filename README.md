@@ -52,7 +52,7 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual10-streamlit-red)](https://defect-evolution-in-nanomaterial14.streamlit.app/) (2D  visualized, no orientation, only seed rotation)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial15.streamlit.app/) (2D  visualized, orientation, orientation)
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial15.streamlit.app/) (2D  visualized, orientation, isotropic, singlevariant {111})
 
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual12-streamlit-red)](https://defect-evolution-in-nanomaterial16.streamlit.app/) (2D  visualized, orientation, anisotropic, mutivariant {111} planes)
 
