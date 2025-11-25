@@ -361,7 +361,7 @@ def compute_stress_fields(etas, eps0, thetas):
     sxy = 2 * C44_p * (exy - eps_xy_star)
     # Stress fields in GPa
     sigma_mag = np.sqrt(sxx**2 + syy**2 + 2 * sxy**2) / 1e9
-    sigma_hydro = (sxx + syy) / 3 / 1e9
+    sigma_hydro = (sxx + syy) / 2 / 1e9
     # von Mises with plane strain szz
     szz = (C12 / (C11 + C12)) * (sxx + syy)  # Approximate
     von_mises = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 6 * sxy**2)) / 1e9
