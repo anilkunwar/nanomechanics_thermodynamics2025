@@ -42,6 +42,11 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/pfmdefect9-streamlit-red)](https://defect-evolution-in-nanomaterial9.streamlit.app/) ( coupling, elasticity + phase field plasticity, enhanced model, 3D )
 
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual1-streamlit-red)](https://defect-evolution-in-nanomaterial10.streamlit.app/) (3D  visualized, arbitrary units )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual2-streamlit-red)](https://defect-evolution-in-nanomaterial11.streamlit.app/) (3D  visualized, arbitrary units )
+
+
 
 # Phase field model for sintering
 [![continuummodelsintering2d](https://img.shields.io/badge/2dpfm-streamlit-red)](https://sintering-2dphasefieldmodel1.streamlit.app/) (basic model1 )
