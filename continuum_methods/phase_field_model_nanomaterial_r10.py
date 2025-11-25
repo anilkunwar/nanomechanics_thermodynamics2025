@@ -1,245 +1,237 @@
+# =============================================
+# 3D Ag Nanoparticle Phase-Field + FFT – PERFECT PVD/VTI EXPORT
+# =============================================
 import streamlit as st
 import numpy as np
 from numba import jit, prange
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import pandas as pd
 import zipfile
 from io import BytesIO
 
-# =============================================
-# Page Config
-# =============================================
-st.set_page_config(page_title="3D Ag NP Defect Analyzer", layout="wide")
-st.title("3D Ag Nanoparticle Defect Mechanics")
-st.markdown("**Phase-Field + FFT Elasticity • Full ParaView Export • No Errors**")
+st.set_page_config(page_title="3D Ag NP Defect Evolution", layout="wide")
+st.title("3D Phase-Field Simulation of Defects in Spherical Ag Nanoparticles")
+st.markdown("""
+**Realistic spherical nanoparticle • Internal planar defect (ISF/Twin)**  
+Interactive 3D Plotly • Perfect ParaView export (PVD + VTI + CSV)
+""")
 
 # =============================================
-# Sidebar
+# Parameters
 # =============================================
-st.sidebar.header("Simulation Parameters")
-col1, col2 = st.sidebar.columns(2)
-with col1:
-    N = st.slider("Grid N³", 32, 96, 64, 16)
-    dx = st.slider("dx (nm)", 0.05, 0.25, 0.10, 0.01)
-    dt = st.slider("dt", 0.001, 0.01, 0.005, 0.001)
-with col2:
-    steps = st.slider("Steps", 20, 200, 80, 10)
-    save_every = st.slider("Save every", 5, 30, 10, 5)
-    np_ratio = st.slider("NP radius ratio", 0.6, 0.95, 0.88, 0.02)
-    defect_ratio = st.slider("Defect/NP ratio", 0.1, 0.6, 0.33, 0.05)
+N = 64                              # Grid resolution (64³ = fast, looks good)
+dx = 0.25                           # nm per voxel
+dt = 0.005
+kappa = 0.6
+M = 1.0
+C44 = 46.1                          # GPa
+eps0 = st.sidebar.slider("Eigenstrain ε*", 0.3, 3.0, 1.414, 0.01)  # ESF default
+steps = st.sidebar.slider("Evolution steps", 20, 200, 80, 10)
+save_every = st.sidebar.slider("Save every", 5, 20, 10)
 
-st.sidebar.header("Defect Type")
-defect = st.sidebar.selectbox("Defect", ["ISF", "ESF", "Twin", "Custom"])
-if defect == "ISF":
-    eps0, kappa, init_eta = 0.707, 0.60, 0.60
-elif defect == "ESF":
-    eps0, kappa, init_eta = 1.414, 0.70, 0.65
-elif defect == "Twin":
-    eps0, kappa, init_eta = 2.121, 0.30, 0.85
-else:
-    eps0 = st.sidebar.slider("ε*", 0.3, 3.5, 1.0, 0.01)
-    kappa = st.sidebar.slider("κ", 0.1, 2.0, 0.5, 0.05)
-    init_eta = st.sidebar.slider("Init η", 0.3, 1.0, 0.7, 0.05)
+# Physical domain
+origin = -N * dx / 2
+extent = [origin, origin + N*dx] * 3
+X, Y, Z = np.meshgrid(
+    np.linspace(origin, origin + (N-1)*dx, N),
+    np.linspace(origin, origin + (N-1)*dx, N),
+    np.linspace(origin, origin + (N-1)*dx, N),
+    indexing='ij'
+)
 
-C44 = st.sidebar.slider("C₄₄ (GPa)", 20, 80, 46.1, 1.0)
+# Spherical nanoparticle mask (radius ~8 nm)
+R_np = N * dx / 4
+r = np.sqrt(X**2 + Y**2 + Z**2)
+np_mask = r <= R_np
 
-st.sidebar.header("Visualization")
-mode = st.sidebar.radio("Mode", ["2D Slices", "3D", "Both"])
-cmap_eta = st.sidebar.selectbox("η cmap", ["viridis", "plasma", "turbo"], index=0)
-cmap_stress = st.sidebar.selectbox("Stress cmap", ["hot", "inferno", "magma"], index=0)
+# Initial planar defect (horizontal twin/fault plate at center)
+eta = np.zeros((N, N, N))
+thickness = 3
+center_z = N // 2
+eta[:, :, center_z-thickness:center_z+thickness+1] = 0.7
+eta[~np_mask] = 0.0  # Zero outside NP
 
-if "3D" in mode:
-    iso_eta = st.sidebar.slider("η iso", 0.1, 0.9, 0.4, 0.05)
-    iso_sig = st.sidebar.slider("σ iso (GPa)", 0.1, 6.0, 1.5, 0.1)
-
-if "2D" in mode:
-    axis = st.sidebar.selectbox("Slice", ["X", "Y", "Z"])
-    pos = st.sidebar.slider("Position", 0, N-1, N//2)
+# Add small noise inside NP only
+np.random.seed(42)
+eta += 0.02 * np.random.randn(N, N, N) * np_mask
+eta = np.clip(eta, 0.0, 1.0)
 
 # =============================================
-# Pure Numba-safe evolution (NO masking inside!)
+# 3D Phase-Field Evolution (Numba)
 # =============================================
 @jit(nopython=True, parallel=True)
-def evolve_pure(eta, kappa, dt, dx, N):
+def evolve_3d(eta, kappa, dt, dx, N):
     eta_new = eta.copy()
-    inv_dx2 = 1.0 / (dx * dx)
+    idx2 = 1.0 / (dx * dx)
     for i in prange(1, N-1):
         for j in prange(1, N-1):
             for k in prange(1, N-1):
+                if not np_mask[i,j,k]:
+                    eta_new[i,j,k] = 0.0
+                    continue
                 lap = (eta[i+1,j,k] + eta[i-1,j,k] +
                        eta[i,j+1,k] + eta[i,j-1,k] +
-                       eta[i,j,k+1] + eta[i,j,k-1] - 6.0*eta[i,j,k]) * inv_dx2
-                chem = 2.0 * eta[i,j,k] * (1.0 - eta[i,j,k]) * (eta[i,j,k] - 0.5)
-                eta_new[i,j,k] = eta[i,j,k] + dt * (kappa * lap - chem)
-                if eta_new[i,j,k] < 0.0:
-                    eta_new[i,j,k] = 0.0
-                if eta_new[i,j,k] > 1.0:
-                    eta_new[i,j,k] = 1.0
-    # Periodic BC
-    eta_new[0,:,:] = eta_new[-2,:,:]; eta_new[-1,:,:] = eta_new[1,:,:]
-    eta_new[:,0,:] = eta_new[:,-2,:]; eta_new[:,-1,:] = eta_new[:,1,:]
-    eta_new[:,:,0] = eta_new[:,:,-2]; eta_new[:,:,-1] = eta_new[:,:,1]
+                       eta[i,j,k+1] + eta[i,j,k-1] - 6*eta[i,j,k]) * idx2
+                dF = 2*eta[i,j,k]*(1-eta[i,j,k])*(eta[i,j,k]-0.5)
+                eta_new[i,j,k] = eta[i,j,k] + dt * M * (-dF + kappa * lap)
+                eta_new[i,j,k] = max(0.0, min(1.0, eta_new[i,j,k]))
     return eta_new
 
 # =============================================
-# FFT Stress (safe)
-# =============================================
-def compute_stress(eta, eps0, C44, N, dx):
-    eps_star = eps0 * eta
-    eps_hat = np.fft.fftn(eps_star)
-    k = np.fft.fftfreq(N, d=dx) * 2j * np.pi
-    KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
-    k2 = KX**2 + KY**2 + KZ**2
-    k2[0,0,0] = 1e-12
-    strain_hat = -eps_hat / (2 * k2)
-    strain = np.real(np.fft.ifftn(strain_hat))
-    return C44 * np.abs(strain)
-
-# =============================================
-# Geometry (cached)
+# 3D FFT Stress Magnitude (simplified but accurate)
 # =============================================
 @st.cache_data
-def init_geometry(N, dx, np_ratio, defect_ratio, init_eta):
-    x = np.linspace(-N*dx/2, N*dx/2, N, dtype=np.float64)
-    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
-    r = np.sqrt(X**2 + Y**2 + Z**2)
-
-    np_mask = r <= (N*dx/2 * np_ratio)
-    defect_mask = r <= (N*dx/2 * np_ratio * defect_ratio)
-
-    eta = np.zeros((N,N,N), dtype=np.float64)
-    eta[defect_mask] = init_eta
-    eta += 0.02 * np.random.randn(N,N,N)
-    eta = np.clip(eta, 0.0, 1.0)
-    eta[~np_mask] = 0.0
-
-    return X, Y, Z, np_mask.astype(bool), eta
+def compute_stress_3d(eta, eps0):
+    eps_star = eps0 * eta * 0.5
+    eps_fft = np.fft.fftn(eps_star)
+    kx, ky, kz = np.meshgrid(np.fft.fftfreq(N, d=dx),
+                             np.fft.fftfreq(N, d=dx),
+                             np.fft.fftfreq(N, d=dx), indexing='ij')
+    k2 = kx**2 + ky**2 + kz**2
+    k2[0,0,0] = 1e-12
+    denom = 8 * C44**2 * k2**2
+    ux_hat = -(kx*ky*eps_fft*2*C44) / denom
+    uy_hat = -(ky*kx*eps_fft*2*C44) / denom
+    uz_hat = np.zeros_like(eps_fft)
+    ux = np.real(np.fft.ifftn(ux_hat))
+    uy = np.real(np.fft.ifftn(uy_hat))
+    uz = np.real(np.fft.ifftn(uz_hat))
+    exx = np.gradient(ux, dx, axis=0)
+    eyy = np.gradient(uy, dx, axis=1)
+    ezz = np.gradient(uz, dx, axis=2)
+    exy = 0.5 * (np.gradient(ux, dx, axis=1) + np.gradient(uy, dx, axis=0))
+    sigma = 2 * C44 * np.sqrt(exx**2 + eyy**2 + ezz**2 + 2*exy**2)
+    return np.nan_to_num(sigma)
 
 # =============================================
-# Perfect VTU + PVD Export
+# VTI Writer (Perfect ParaView Compatibility)
 # =============================================
-def write_vtu(eta, sigma, X, Y, Z, step):
-    N = eta.shape[0]
-    def flat(arr):
-        return ' '.join(f"{float(x):.6f}" for x in arr.flatten(order='F'))
-
-    coords = np.stack([X, Y, Z], axis=-1).reshape(-1, 3)
-    coord_str = ' '.join(f"{x:.6f} {y:.6f} {z:.6f}" for x,y,z in coords)
-
-    vtu = f"""<?xml version="1.0"?>
-<VTKFile type="StructuredGrid" version="1.0" byte_order="LittleEndian">
-  <StructuredGrid WholeExtent="0 {N-1} 0 {N-1} 0 {N-1}">
+def create_vti(eta, sigma, step, time):
+    flat = lambda arr: ' '.join(map(str, arr.flatten(order='F')))
+    vti = f"""<?xml version="1.0"?>
+<VTKFile type="ImageData" version="1.0" byte_order="LittleEndian">
+  <ImageData WholeExtent="0 {N-1} 0 {N-1} 0 {N-1}" 
+             Origin="{origin:.3f} {origin:.3f} {origin:.3f}" 
+             Spacing="{dx:.3f} {dx:.3f} {dx:.3f}">
     <Piece Extent="0 {N-1} 0 {N-1} 0 {N-1}">
-      <PointData>
-        <DataArray type="Float32" Name="Order_Parameter_eta" format="ascii">
+      <PointData Scalars="eta">
+        <DataArray type="Float32" Name="eta" format="ascii">
           {flat(eta)}
         </DataArray>
-        <DataArray type="Float32" Name="Stress_Magnitude_GPa" format="ascii">
+        <DataArray type="Float32" Name="stress_magnitude" format="ascii">
           {flat(sigma)}
         </DataArray>
-        <DataArray type="Float32" Name="Strain_Energy_Density_MJ_m3" format="ascii">
-          {flat(sigma * eta)}
-        </DataArray>
-        <DataArray type="UInt8" Name="Inside_Nanoparticle" format="ascii">
-          {flat((X**2+Y**2+Z**2 <= (N*dx/2*np_ratio)**2).astype(np.uint8))}
-        </DataArray>
       </PointData>
-      <Points>
-        <DataArray type="Float32" NumberOfComponents="3" format="ascii">
-          {coord_str}
-        </DataArray>
-      </Points>
+      <CellData></CellData>
     </Piece>
-  </StructuredGrid>
+  </ImageData>
 </VTKFile>"""
-    return vtu
+    return vti
 
 # =============================================
 # Run Simulation
 # =============================================
-if st.button("Run Simulation", type="primary"):
-    X, Y, Z, np_mask, eta = init_geometry(N, dx, np_ratio, defect_ratio, init_eta)
+if st.button("Run 3D Evolution", type="primary"):
+    with st.spinner("Running 3D phase-field + FFT elasticity..."):
+        eta_current = eta.copy()
+        history = []
+        vti_list = []
+        times = []
 
-    progress = st.progress(0)
-    frames = []
+        for step in range(steps + 1):
+            current_time = step * dt
+            if step > 0:
+                eta_current = evolve_3d(eta_current, kappa, dt, dx, N)
+            if step % save_every == 0 or step == steps:
+                sigma = compute_stress_3d(eta_current, eps0)
+                history.append((eta_current.copy(), sigma.copy()))
+                vti_content = create_vti(eta_current, sigma, step, current_time)
+                vti_list.append(vti_content)
+                times.append(current_time)
+                st.write(f"Step {step}/{steps} – t = {current_time:.3f}")
 
-    for step in range(steps + 1):
-        if step > 0:
-            eta = evolve_pure(eta, kappa, dt, dx, N)   # Pure Numba, no masking!
-            eta[~np_mask] = 0.0                         # Masking done in Python
+        # Build correct PVD
+        pvd = '<?xml version="1.0"?>\n'
+        pvd += '<VTKFile type="Collection" version="1.0">\n'
+        pvd += '  <Collection>\n'
+        for i, t in enumerate(times):
+            pvd += f'    <DataSet timestep="{t:.6f}" group="" part="0" file="frame_{i:04d}.vti"/>\n'
+        pvd += '  </Collection>\n</VTKFile>'
 
-        if step % save_every == 0 or step == steps:
-            sigma = compute_stress(eta, eps0, C44, N, dx)
-            frames.append((eta.copy(), sigma.copy()))
-
-        progress.progress(step / steps)
-
-    st.session_state.frames = frames
-    st.session_state.grid = (X, Y, Z)
-    st.session_state.mask = np_mask
-    st.success(f"Done! {len(frames)} frames saved")
+        st.session_state.history_3d = history
+        st.session_state.vti_3d = vti_list
+        st.session_state.pvd_3d = pvd
+        st.success(f"3D Simulation Complete! {len(history)} frames saved")
 
 # =============================================
-# Visualization & Export
+# 3D Interactive Visualization
 # =============================================
-if "frames" in st.session_state:
-    frames = st.session_state.frames
-    X, Y, Z = st.session_state.grid
-    np_mask = st.session_state.mask
+if 'history_3d' in st.session_state:
+    frame_idx = st.slider("Select Frame", 0, len(st.session_state.history_3d)-1, len(st.session_state.history_3d)-1)
+    eta_3d, sigma_3d = st.session_state.history_3d[frame_idx]
 
-    i = st.slider("Frame", 0, len(frames)-1, len(frames)-1)
-    eta, sigma = frames[i]
+    col1, col2 = st.columns(2)
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Max η", f"{eta.max():.3f}")
-    col2.metric("Max σ", f"{sigma.max():.2f} GPa")
-    col3.metric("Defect vol", f"{(eta>0.3).sum():,} vx")
+    with col1:
+        st.subheader("Defect Order Parameter η (Isosurface)")
+        fig_eta = go.Figure(data=go.Isosurface(
+            x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+            value=eta_3d.flatten(),
+            isomin=0.3, isomax=0.9,
+            surface_count=2,
+            colorscale='Blues',
+            opacity=0.7,
+            caps=dict(x_show=False, y_show=False, z_show=False)
+        ))
+        fig_eta.update_layout(scene_aspectmode='data', height=600)
+        st.plotly_chart(fig_eta, use_container_width=True)
 
-    if "2D" in mode:
-        st.subheader("2D Slice")
-        if axis == "X": e, s = eta[pos], sigma[pos]
-        elif axis == "Y": e, s = eta[:,pos,:], sigma[:,pos,:]
-        else: e, s = eta[:,:,pos], sigma[:,:,pos]
+    with col2:
+        st.subheader("Stress Magnitude |σ|")
+        fig_sig = go.Figure(data=go.Isosurface(
+            x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+            value=sigma_3d.flatten(),
+            isomin=sigma_3d.max()*0.3,
+            colorscale='Reds',
+            opacity=0.7
+        ))
+        fig_sig.update_layout(scene_aspectmode='data', height=600)
+        st.plotly_chart(fig_sig, use_container_width=True)
 
-        fig, (a1,a2) = plt.subplots(1,2,figsize=(15,6))
-        a1.imshow(e.T, extent=[-N*dx/2,N*dx/2]*2, cmap=cmap_eta, origin='lower')
-        a1.set_title("η")
-        a2.imshow(s.T, extent=[-N*dx/2,N*dx/2]*2, cmap=cmap_stress, origin='lower')
-        a2.set_title("Stress (GPa)")
-        st.pyplot(fig)
+    # Mid-slice
+    st.subheader("Mid-Plane Slice (z = center)")
+    fig, ax = plt.subplots(1, 2, figsize=(12,5))
+    ax[0].imshow(eta_3d[:, :, N//2], cmap='viridis', extent=[origin, origin+N*dx, origin, origin+N*dx])
+    ax[0].set_title("η"); ax[0].set_xlabel("x (nm)"); ax[0].set_ylabel("y (nm)")
+    im = ax[1].imshow(sigma_3d[:, :, N//2], cmap='hot', extent=[origin, origin+N*dx, origin, origin+N*dx])
+    ax[1].set_title("|σ| (GPa)"); ax[1].set_xlabel("x (nm)")
+    plt.colorbar(im, ax=ax[1])
+    st.pyplot(fig)
 
-    if "3D" in mode:
-        st.subheader("3D View")
-        fig = go.Figure()
-        fig.add_isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-                           value=np_mask.astype(float).flatten(), isomin=0.9,
-                           opacity=0.1, colorscale="Blues", showscale=False)
-        fig.add_isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-                           value=eta.flatten(), isomin=iso_eta,
-                           colorscale=cmap_eta, opacity=0.9)
-        fig.add_isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-                           value=sigma.flatten(), isomin=iso_sig,
-                           colorscale=cmap_stress, opacity=0.7)
-        fig.update_layout(scene_aspectmode='data', height=700)
-        st.plotly_chart(fig, use_container_width=True)
+    # =============================================
+    # PERFECT DOWNLOAD: PVD + VTI + CSV
+    # =============================================
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, (e, s) in enumerate(st.session_state.history_3d):
+            # CSV
+            df = pd.DataFrame({
+                'eta': e.flatten(order='F'),
+                'stress': s.flatten(order='F')
+            })
+            zf.writestr(f"frame_{i:04d}.csv", df.to_csv(index=False))
+            # VTI
+            zf.writestr(f"frame_{i:04d}.vti", st.session_state.vti_3d[i])
+        # PVD
+        zf.writestr("simulation_3d.pvd", st.session_state.pvd_3d)
 
-    # PARA VIEW EXPORT
-    st.markdown("### Download Full ParaView Dataset")
-    buf = BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for i, (e, s) in enumerate(frames):
-            z.writestr(f"frame_{i:04d}.vtu", write_vtu(e, s, X, Y, Z, i))
-        pvd = '<?xml version="1.0"?>\n<VTKFile type="Collection" version="1.0">\n<Collection>\n'
-        for i in range(len(frames)):
-            pvd += f'  <DataSet timestep="{i*save_every}" file="frame_{i:04d}.vtu"/>\n'
-        pvd += '</Collection>\n</VTKFile>'
-        z.writestr("simulation.pvd", pvd)
-        z.writestr("info.txt", f"Defect: {defect} | N={N} | dx={dx} nm | ε*={eps0}")
-
-    buf.seek(0)
+    buffer.seek(0)
     st.download_button(
-        "Download ParaView Files (open simulation.pvd)",
-        buf, f"AgNP_3D_{defect}.zip", "application/zip"
+        label="Download Full 3D Results (PVD + VTI + CSV)",
+        data=buffer,
+        file_name="Ag_Nanoparticle_3D_Defect_Simulation.zip",
+        mime="application/zip"
     )
 
-st.caption(" 3D Simulations 2025")
+st.caption("3D Spherical Ag NP • Planar Defect • Perfect ParaView Export • Interactive Plotly • 2025")
