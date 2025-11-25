@@ -9,256 +9,478 @@ import io
 import time
 from pathlib import Path
 import shutil
+from numba import jit, prange  # Added this import to fix NameError
 
-# =============================================
-# Advanced Phase-Field Model for Defect-Driven Multi-Particle Sintering
-# =============================================
-st.set_page_config(page_title="Advanced Defect-Driven Sintering Simulator", layout="wide")
-st.title("Advanced Phase-Field Modeling of Defects and Twins in Ag Nanoparticle Sintering")
-st.markdown("""
-**Simulates role of defects (ISF/ESF/Twins) in multi-particle sintering**  
-Custom geometry (NP radius, defect position) • Physical units (nm, GPa) • Colormap options  
-Run simulation • Download VTU/PVD/CSV
-""")
+# Streamlit app configuration
+st.title("2D Phase-Field Sintering Simulation (Increased Barrier Height)")
+st.write("Finite difference method to solve the PDEs related to sintering of two powder grains. Though the model is formulated for two grains, it is flexible to any N number of grains")
 
-# =============================================
-# Physical Parameters (Silver, nm/GPa units)
-# =============================================
-a = 0.4086  # nm (lattice constant)
-b = a / np.sqrt(6)  # Shockley partial magnitude (nm)
-d111 = a / np.sqrt(3)  # {111} spacing (nm)
-C44 = 46.1  # GPa (shear modulus)
+# Initialize session state for geometry
+if "geometry_confirmed" not in st.session_state:
+    st.session_state.geometry_confirmed = False
+if "N" not in st.session_state:
+    st.session_state.N = 5
+if "centers" not in st.session_state:
+    st.session_state.centers = []
+if "radii" not in st.session_state:
+    st.session_state.radii = []
 
-# Grid in nm
-N = 128
-dx = 0.1  # nm/voxel
-extent = [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
-X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
-                   np.linspace(extent[2], extent[3], N))
+# Sidebar for parameters
+st.sidebar.header("Simulation Parameters")
+nx = st.sidebar.slider("Grid Size (nx)", 50, 150, 100, step=10)
+ny = st.sidebar.slider("Grid Size (ny)", 50, 150, 100, step=10)
+dx = st.sidebar.slider("Grid Spacing (dx)", 0.05, 0.2, 0.1, step=0.01)
+dt = st.sidebar.slider("Time Step (dt)", 1e-7, 1e-5, 1e-6, step=1e-7, format="%.1e")
+total_time = st.sidebar.slider("Total Simulation Time", 0.01, 0.1, 0.05, step=0.01)
+output_interval = 0.01 # Fixed at 0.01 time units for outputs
 
-# =============================================
-# Sidebar: Geometry Tuning & Defect Role
-# =============================================
-st.sidebar.header("Geometry & Defect Controls")
-np_radius = st.sidebar.slider("Nanoparticle radius (nm)", 5.0, 15.0, 10.0, 0.5)
-n_particles = st.sidebar.slider("Number of NPs", 2, 5, 3)
-defect_type = st.sidebar.selectbox("Defect Type in NPs", ["None", "ISF", "ESF", "Twin"])
-defect_pos = st.sidebar.slider("Defect position offset (nm)", -5.0, 5.0, 0.0, 0.5)
-defect_size = st.sidebar.slider("Defect inclusion size (nm)", 1.0, 5.0, 2.0, 0.1)
+# Phase-field parameters (nondimensional, per Biswas et al.)
+A = st.sidebar.slider("Free Energy Constant A", 10.0, 20.0, 16.0)
+B = st.sidebar.slider("Free Energy Constant B", 0.5, 3.0, 2.0) # Increased for barrier
+kappa_c = st.sidebar.slider("Gradient Coefficient κ_c", 3.0, 12.0, 5.0)
+kappa_eta = st.sidebar.slider("Gradient Coefficient κ_η", 0.3, 0.7, 0.5)
+M_s = st.sidebar.slider("Surface Mobility M_s", 0.005, 0.095, 0.01)
+M_gb = st.sidebar.slider("Grain Boundary Mobility M_gb", 0.015, 0.055, 0.02)
+M_b = st.sidebar.slider("Bulk Mobility M_b", 0.005, 0.095, 0.001)
+M_v = st.sidebar.slider("Vapor Mobility M_v", 0.0005, 0.002, 0.001)
+mobility_exponent = st.sidebar.slider("Mobility Exponent (α = 10^exponent)", -7.0, -5.0, -6.0, step=0.1)
+alpha = 10 ** mobility_exponent # Exponential scaling factor
+L = st.sidebar.slider("Grain Boundary Mobility L", 50.0, 150.0, 100.0)
+k = st.sidebar.slider("Stiffness Constant k", 0.1, 0.2, 0.14)
+m_t = st.sidebar.slider("Translational Mobility m_t", 100.0, 300.0, 200.0)
+c_0 = st.sidebar.slider("Equilibrium Density c_0", 0.9, 1.0, 0.9816)
 
-# Physical defaults based on defect role
-if defect_type == "ISF":
-    default_eps = 0.707
-    default_kappa = 0.6
-elif defect_type == "ESF":
-    default_eps = 1.414
-    default_kappa = 0.7
-elif defect_type == "Twin":
-    default_eps = 2.121
-    default_kappa = 0.3  # Sharper for twins
-else:
-    default_eps = 0.0
-    default_kappa = 0.5
+# User-defined number of particles N
+N = st.sidebar.slider("Number of Powder Particles (N)", 1, 10, 2)
+st.session_state.N = N
 
-eps0 = st.sidebar.slider("Eigenstrain ε*", 0.0, 3.0, default_eps, 0.01)
-kappa = st.sidebar.slider("Interface κ (nm²)", 0.1, 2.0, default_kappa, 0.05)
+# Geometry input for N particles with normalized centers
+st.sidebar.header(f"Particle Geometry (η_2 to η_{N+1})")
+x_max = nx * dx
+y_max = ny * dx
+# Default centers in fractional coordinates (0 to 1)
+default_centers_frac = [(0.25, 0.75), (0.75, 0.75), (0.75, 0.25), (0.25, 0.25), (0.5, 0.5)] + [(0.5, 0.5)] * 5
+default_radii = [0.2 * x_max, 0.15 * x_max, 0.1 * x_max, 0.08 * x_max, 0.12 * x_max] + [0.1 * x_max] * 5
+max_radius = (x_max + y_max) / 2
+centers = []
+radii = []
+for i in range(N):
+    st.sidebar.subheader(f"Particle η_{i+2}")
+    # Input fractional coordinates
+    cx_frac = st.sidebar.number_input(f"Center x (fraction of x_max, η_{i+2})", min_value=0.0, max_value=1.0,
+                                     value=float(default_centers_frac[i][0]), step=0.01, key=f"cx_{i}")
+    cy_frac = st.sidebar.number_input(f"Center y (fraction of y_max, η_{i+2})", min_value=0.0, max_value=1.0,
+                                     value=float(default_centers_frac[i][1]), step=0.01, key=f"cy_{i}")
+    # Convert to physical coordinates
+    cx = cx_frac * x_max
+    cy = cy_frac * y_max
+    r = st.sidebar.slider(f"Radius (η_{i+2})", min_value=0.05*x_max, max_value=max_radius,
+                          value=default_radii[i], step=0.01, key=f"r_{i}")
+    centers.append((cx, cy))
+    radii.append(r)
 
-st.sidebar.header("Simulation")
-steps = st.sidebar.slider("Steps", 50, 500, 200, 50)
-dt = 0.01  # ns (fixed for stability)
+# Preview initial density field
+def generate_preview_c(nx, ny, dx, centers, radii, N):
+    c = np.zeros((nx, ny))
+    eta = [np.zeros((nx, ny)) for _ in range(N+1)] # eta_1 (vapor), eta_2 to eta_{N+1} (grains)
+    delta = 0.5 # Interface width > 5 * dx
+    x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+    for p, (cx, cy) in enumerate(centers):
+        r = np.sqrt((x - cx)**2 + (y - cy)**2)
+        eta[p+1] = 0.5 * (1 - np.tanh((r - radii[p]) / delta)) # eta_{p+2}
+    c = np.clip(sum(eta[1:]), 0, 1) # Sum eta_2 to eta_{N+1}
+    return c
 
-st.sidebar.header("Visualization Colors")
-cmap_list = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'hsv', 'coolwarm', 'bwr', 'seismic', 'twilight', 'spring', 'summer', 'autumn', 'winter', 'bone', 'copper', 'pink', 'gray', 'hot', 'cool', 'ocean', 'terrain', 'gist_earth', 'gist_rainbow', 'gist_ncar', 'gnuplot', 'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_yarg', 'binary', 'nipy_spectral', 'tab10', 'tab20', 'tab20b', 'tab20c', 'Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3', 'flag', 'prism', 'afmhot', 'RdBu', 'RdYlBu', 'RdYlGn', 'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'Spectral']
-eta_cmap = st.sidebar.selectbox("η colormap", cmap_list, index=0)
-sigma_cmap = st.sidebar.selectbox("|σ| colormap", cmap_list, index=cmap_list.index('hot'))
-hydro_cmap = st.sidebar.selectbox("Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
-vm_cmap = st.sidebar.selectbox("von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
+# Display preview
+st.subheader("Geometry Preview (c = Σ η_i for i=2 to N+1)")
+preview_c = generate_preview_c(nx, ny, dx, centers, radii, N)
+fig_preview = px.imshow(
+    preview_c,
+    color_continuous_scale="Viridis",
+    title="Initial Density Field (c)",
+    labels={"x": "x", "y": "y"},
+    zmin=0,
+    zmax=1
+)
+fig_preview.update_layout(width=400, height=400)
+st.plotly_chart(fig_preview, use_container_width=True)
 
-# =============================================
-# Create Initial Multi-Particle Geometry
-# =============================================
-def create_initial_multi_np(n_particles, np_radius, defect_type, defect_pos, defect_size):
-    eta = np.zeros((N, N))
-    # Random placement of NPs
-    np.random.seed(42)
-    centers = []
-    for _ in range(n_particles):
-        cx = np.random.uniform(np_radius, N*dx - np_radius)
-        cy = np.random.uniform(np_radius, N*dx - np_radius)
-        centers.append((cx, cy))
-        mask = (X - cx)**2 + (Y - cy)**2 <= np_radius**2
-        eta[mask] = 1.0
+# Completed Geometry button
+if st.sidebar.button("Completed Geometry"):
+    st.session_state.geometry_confirmed = True
+    st.session_state.centers = centers
+    st.session_state.radii = radii
+    st.sidebar.success("Geometry confirmed! Click 'Run Simulation' to proceed.")
 
-    # Add defects inside random NP if selected
-    if defect_type != "None":
-        np_idx = np.random.randint(0, n_particles)
-        cx, cy = centers[np_idx]
-        defect_mask = ((X - cx - defect_pos)**2 + (Y - cy)**2 <= defect_size**2)
-        eta[defect_mask] = 0.6  # Initial defect seed
+# Create temporary directory for outputs
+output_dir = Path("sintering_outputs")
+output_dir.mkdir(exist_ok=True)
 
-    eta += 0.02 * np.random.randn(N, N)
-    return np.clip(eta, 0.0, 1.0)
-
-st.subheader("Initial Multi-Particle Configuration")
-init_eta = create_initial_multi_np(n_particles, np_radius, defect_type, defect_pos, defect_size)
-fig0, ax0 = plt.subplots(figsize=(7,6))
-im0 = ax0.imshow(init_eta, extent=extent, cmap=eta_cmap, origin='lower')
-ax0.contour(X, Y, init_eta, levels=[0.4], colors='white', linewidths=2)
-ax0.set_title(f"Initial η – {defect_type} Defects in {n_particles} NPs", fontsize=16, fontweight='bold')
-ax0.set_xlabel("x (nm)", fontsize=14); ax0.set_ylabel("y (nm)", fontsize=14)
-plt.colorbar(im0, ax=ax0, shrink=0.8)
-ax0.tick_params(labelsize=13, width=2, length=6)
-for spine in ax0.spines.values():
-    spine.set_linewidth(2.5)
-st.pyplot(fig0)
-
-# =============================================
-# Numba-safe Allen-Cahn (full 2D)
-# =============================================
-@jit(nopython=True, parallel=True)
-def evolve_phase_field(eta, kappa, dt, dx, N):
-    eta_new = eta.copy()
-    dx2 = dx * dx
-    for i in prange(1, N-1):
-        for j in prange(1, N-1):
-            lap = (eta[i+1,j] + eta[i-1,j] + eta[i,j+1] + eta[i,j-1] - 4*eta[i,j]) / dx2
-            dF = 2*eta[i,j]*(1-eta[i,j])*(eta[i,j]-0.5)
-            eta_new[i,j] = eta[i,j] + dt * (-dF + kappa * lap)
-            eta_new[i,j] = np.maximum(0.0, np.minimum(1.0, eta_new[i,j]))
-    eta_new[0,:] = eta_new[-2,:]; eta_new[-1,:] = eta_new[1,:]
-    eta_new[:,0] = eta_new[:,-2]; eta_new[:,-1] = eta_new[:,1]
-    return eta_new
-
-# =============================================
-# FFT Stress Solver
-# =============================================
+# Cache simulation to avoid recomputation
 @st.cache_data
-def compute_stress_fields(eta, eps0):
-    eps_xy = eps0 * eta * 0.5
-    exy_hat = np.fft.fft2(eps_xy)
-    kx, ky = np.meshgrid(np.fft.fftfreq(N, dx), np.fft.fftfreq(N, dx))
-    k2 = kx**2 + ky**2 + 1e-12
-    kx, ky = 2j*np.pi*kx, 2j*np.pi*ky
+def run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, kappa_eta,
+                  M_s, M_gb, M_b, M_v, alpha, L, k, m_t, c_0, N, centers, radii):
+    n_steps = int(total_time / dt)
+    output_steps = int(output_interval / dt)
+    # Precompute Laplacian kernel
+    kernel = np.array([[0, 1, 0],
+                       [1, -4, 1],
+                       [0, 1, 0]]) / dx**2
+    # Interpolation function from Moelans et al. (2011)
+    def h(eta, i):
+        eta2_sum = sum(eta_j**2 for eta_j in eta)
+        return np.where(eta2_sum > 1e-10, eta[i]**2 / eta2_sum, 0.0)
+    # Initialize microstructure with user-defined geometry
+    def initialize_microstructure(nx, ny, dx, centers, radii, N):
+        c = np.zeros((nx, ny))
+        eta = [np.zeros((nx, ny)) for _ in range(N+1)] # eta_1 (vapor), eta_2 to eta_{N+1} (grains)
+        delta = 0.5 # Interface width > 5 * dx
+        x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+        for p, (cx, cy) in enumerate(centers):
+            r = np.sqrt((x - cx)**2 + (y - cy)**2)
+            eta[p+1] = 0.5 * (1 - np.tanh((r - radii[p]) / delta)) # eta_{p+2}
+        c = np.clip(sum(eta[1:]), 0, 1) # Sum eta_2 to eta_{N+1}
+        eta[0] = np.clip(1 - c, 0, 1) # eta_1 for vapor
+        return c, eta, centers, radii
+    # Compute free energy density
+    def free_energy_density(c, eta):
+        sum_eta2 = sum(eta_i**2 for eta_i in eta[1:]) # Powder phases
+        sum_eta3 = sum(eta_i**3 for eta_i in eta[1:])
+        f_vapor = A * c**2 * (1 - c)**2 # Vapor phase (eta_1)
+        f_powder = B * (c**2 + 6 * (1 - c) * sum_eta2 - 4 * (2 - c) * sum_eta3 + 3 * sum_eta2**2)
+        return f_vapor + 5 * f_powder # Increased barrier height
+    # Compute total free energy
+    def compute_total_free_energy(c, eta):
+        f = free_energy_density(c, eta)
+        grad_c = np.gradient(c, dx, dx, axis=(0, 1))
+        grad_energy_c = (kappa_c / 2) * (grad_c[0]**2 + grad_c[1]**2)
+        grad_energy_eta = sum((kappa_eta / 2) * (np.gradient(eta_i, dx, dx, axis=(0, 1))[0]**2 +
+                               np.gradient(eta_i, dx, dx, axis=(0, 1))[1]**2) for eta_i in eta)
+        F = np.sum(f + grad_energy_c + grad_energy_eta) * dx**2
+        return F
+    # Compute postprocessed variables
+    def compute_postprocessed(c, eta):
+        h_i = [h(eta, i) for i in range(N+1)] # Include eta_1 (vapor)
+        c_h_i2 = sum(c * h_i_j**2 for h_i_j in h_i[1:]) # Exclude vapor
+        eta_i2 = sum(eta_i**2 for eta_i in eta[1:]) # Powder phases
+        f = free_energy_density(c, eta) # Compute free energy density
+        f_h_i = [f * h_i_j for h_i_j in h_i] # For all eta_i
+        return c_h_i2, eta_i2, f_h_i
+    # Plot free energy vs. c
+    def plot_free_energy_vs_c(c, eta, nx, ny):
+        mid_y = ny // 2
+        c_line = c[:, mid_y]
+        eta_mid = [eta_i[:, mid_y] for eta_i in eta]
+        f_line = free_energy_density(c_line, eta_mid)
+        fig = px.scatter(x=c_line, y=f_line, labels={"x": "c", "y": "Free Energy Density f"},
+                         title="Free Energy Density vs. c (Middle Row)")
+        return fig
+    # Compute mobility with scaling factor
+    def mobility(c, eta):
+        sum_eta_ij = sum(eta[i] * eta[j] for i in range(1, N+1) for j in range(1, N+1) if i != j)
+        h_vapor = h(eta, 0) # eta_1
+        h_solid = sum(h(eta, i) for i in range(1, N+1)) # eta_2 to eta_{N+1}
+        M = alpha * (M_v * h_vapor + M_b * h_solid + M_s * c**2 * (1 - c)**2 + M_gb * sum_eta_ij)
+        return M
+    # Laplacian operator
+    def laplacian(field):
+        return convolve(field, kernel, mode='wrap')
+    # Functional derivatives
+    def dF_dc(c, eta):
+        sum_eta2 = sum(eta_i**2 for eta_i in eta[1:])
+        sum_eta3 = sum(eta_i**3 for eta_i in eta[1:])
+        df_dc_vapor = A * 2 * c * (1 - c) * (1 - 2 * c)
+        df_dc_powder = 2 * B * (2 * c - 6 * sum_eta2 + 4 * sum_eta3)
+        grad_term = -kappa_c * laplacian(c)
+        return df_dc_vapor + df_dc_powder + grad_term
+    def dF_deta_i(eta_i, c, eta, i):
+        if i == 0: # eta_1 (vapor)
+            return 0 # Passive
+        sum_eta2 = sum(eta_j**2 for eta_j in eta[1:])
+        df_deta_i = 2 * B * (12 * (1 - c) * eta_i - 12 * (2 - c) * eta_i**2 + 12 * sum_eta2 * eta_i)
+        grad_term = -kappa_eta * laplacian(eta_i)
+        return df_deta_i + grad_term
+    # Compute densification force and velocity
+    def compute_velocity(c, eta, centers, radii):
+        velocities = []
+        x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+        for p in range(N):
+            cx, cy = centers[p]
+            r_eff = radii[p]
+            r_cut = 2.2 * r_eff
+            dist = np.sqrt((x - cx)**2 + (y - cy)**2)
+            mask = dist <= r_cut
+            eta_idx = p + 1 # eta_{p+2}
+            force = np.zeros(2)
+            volume = np.sum(eta[eta_idx][mask] * dx**2)
+            c_ij_sum = np.zeros_like(c)
+            eta_diff = np.zeros_like(c)
+            for q in range(1, N+1):
+                if q != eta_idx:
+                    c_ij = eta[eta_idx] * eta[q]
+                    c_ij_sum += np.where(c_ij > 0, c_ij, 0)
+                    eta_diff += np.where(c_ij > 0, eta[eta_idx] - eta[q], 0)
+            dF_i = k * (c - c_0) * c_ij_sum * eta_diff
+            force[0] = np.sum(dF_i[mask] * dx**2)
+            force[1] = np.sum(dF_i[mask] * dx**2)
+            v_t = (m_t / volume) * force if volume > 0 else np.zeros(2)
+            velocities.append(v_t)
+        return velocities
+    # Advection term (upwind scheme)
+    def advection_term(field, v):
+        grad_x = (field - np.roll(field, 1, axis=0)) / dx if v[0] >= 0 else (np.roll(field, -1, axis=0) - field) / dx
+        grad_y = (field - np.roll(field, 1, axis=1) / dx if v[1] >= 0 else (np.roll(field, -1, axis=1) - field) / dx
+        div_v = 0.0
+        return v[0] * grad_x + v[1] * grad_y + field * div_v
+    # Save VTS file
+    def save_vts(c, eta, c_h_i2, eta_i2, f_h_i, t, output_dir, step):
+        x = np.arange(nx) * dx
+        y = np.arange(ny) * dx
+        z = np.array([0.0])
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        points = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
+        grid = pv.StructuredGrid()
+        grid.points = points
+        grid.dimensions = (nx, ny, 1)
+        grid.point_data["c"] = c.flatten(order='F')
+        for i in range(N+1):
+            grid.point_data[f"eta_{i+1}"] = eta[i].flatten(order='F')
+        grid.point_data["c_h_i2"] = c_h_i2.flatten(order='F')
+        grid.point_data["eta_i2"] = eta_i2.flatten(order='F')
+        for i in range(N+1):
+            grid.point_data[f"f_h_{i+1}"] = f_h_i[i].flatten(order='F')
+        filename = output_dir / f"sintering_t{t:.3f}.vts"
+        grid.save(filename)
+        return filename
+    # Main simulation
+    c, eta, centers, radii = initialize_microstructure(nx, ny, dx, centers, radii, N)
+    t = 0.0
+    outputs = []
+    free_energies = []
+    next_output_time = output_interval
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    for step in range(n_steps):
+        mu = dF_dc(c, eta)
+        dF_deta = [dF_deta_i(eta_i, c, eta, i) for i, eta_i in enumerate(eta)]
+        M = mobility(c, eta)
+        velocities = compute_velocity(c, eta, centers, radii)
+        # Update c
+        lap_mu = laplacian(mu)
+        advection = np.zeros_like(c)
+        for p in range(N):
+            eta_idx = p + 1 # eta_{p+2}
+            r_eff = radii[p]
+            r_cut = 2.2 * r_eff
+            x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+            cx, cy = centers[p]
+            mask = np.sqrt((x - cx)**2 + (y - cy)**2) <= r_cut
+            adv_term = advection_term(c, velocities[p])
+            advection += np.where(mask, adv_term * eta[eta_idx], 0)
+        dc_dt = laplacian(M * lap_mu) - advection
+        c += dt * dc_dt
+        c = np.clip(c, 0, 1)
+        # Update eta_i
+        for i in range(1, N+1): # eta_2 to eta_{N+1}
+            advection = np.zeros_like(eta[i])
+            for p in range(N):
+                if i == p + 1:
+                    r_eff = radii[p]
+                    r_cut = 2.2 * r_eff
+                    x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+                    cx, cy = centers[p]
+                    mask = np.sqrt((x - cx)**2 + (y - cy)**2) <= r_cut
+                    adv_term = advection_term(eta[i], velocities[p])
+                    advection += np.where(mask, adv_term, 0)
+            deta_dt = -L * dF_deta[i] - advection
+            eta[i] += dt * deta_dt
+            eta[i] = np.clip(eta[i], 0, 1)
+        # Update eta_1 to maintain sum constraint
+        eta[0] = np.clip(1 - sum(eta[1:]), 0, 1)
+        # Update centers
+        for p, v in enumerate(velocities):
+            centers[p] = (centers[p][0] + v[0] * dt, centers[p][1] + v[1] * dt)
+        t += dt
+        # Compute total free energy
+        F_total = compute_total_free_energy(c, eta)
+        free_energies.append((t, F_total))
+        # Output VTS and Plotly at intervals
+        if t >= next_output_time or step == n_steps - 1:
+            c_h_i2, eta_i2, f_h_i = compute_postprocessed(c, eta)
+            try:
+                vts_file = save_vts(c, eta, c_h_i2, eta_i2, f_h_i, t, output_dir, step)
+            except Exception as e:
+                st.error(f"Failed to save VTS file at t={t:.3f}: {str(e)}")
+                continue
+            # Create Plotly figures
+            fields = {
+                "c": c,
+                "eta_1": eta[0],
+                "eta_2": eta[1],
+                "eta_3": eta[2] if N >= 2 else np.zeros_like(c),
+                "eta_4": eta[3] if N >= 3 else np.zeros_like(c),
+                "eta_5": eta[4] if N >= 4 else np.zeros_like(c),
+                "c_h_i2": c_h_i2,
+                "eta_i2": eta_i2
+            }
+            plot_files = {}
+            for name, field in fields.items():
+                fig = px.imshow(
+                    field,
+                    color_continuous_scale="Viridis",
+                    title=f"{name} at t={t:.3f}",
+                    labels={"x": "x", "y": "y"},
+                    zmin=0,
+                    zmax=1 if name not in ["c_h_i2", "eta_i2"] else None
+                )
+                fig.update_layout(width=350, height=350)
+                plot_file = output_dir / f"{name}_t{t:.3f}.png"
+                try:
+                    fig.write_image(str(plot_file), engine="kaleido")
+                except Exception as e:
+                    st.warning(f"Failed to save Plotly image for {name} at t={t:.3f}: {str(e)}")
+                plot_files[name] = (fig, plot_file)
+            # Plot f_h_i fields
+            for i in range(min(N+1, 5)): # Limit to 5 for display
+                name = f"f_h_{i+1}"
+                field = f_h_i[i]
+                fig = px.imshow(
+                    field,
+                    color_continuous_scale="Viridis",
+                    title=f"f_h_{i+1} at t={t:.3f}",
+                    labels={"x": "x", "y": "y"}
+                )
+                fig.update_layout(width=350, height=350)
+                plot_file = output_dir / f"{name}_t{t:.3f}.png"
+                try:
+                    fig.write_image(str(plot_file), engine="kaleido")
+                except Exception as e:
+                    st.warning(f"Failed to save Plotly image for {name} at t={t:.3f}: {str(e)}")
+                plot_files[name] = (fig, plot_file)
+            # Free energy vs. c
+            fig_energy = plot_free_energy_vs_c(c, eta, nx, ny)
+            energy_plot_file = output_dir / f"free_energy_vs_c_t{t:.3f}.png"
+            try:
+                fig_energy.write_image(str(energy_plot_file), engine="kaleido")
+            except Exception as e:
+                st.warning(f"Failed to save free energy plot at t={t:.3f}: {str(e)}")
+            plot_files["free_energy_vs_c"] = (fig_energy, energy_plot_file)
+            outputs.append((t, vts_file, plot_files))
+            next_output_time += output_interval
+        # Update progress
+        progress_bar.progress(min(step / n_steps, 1.0))
+        status_text.text(f"Simulating... Step {step}/{n_steps}, Time {t:.3f}")
+    return outputs, free_energies
 
-    denom = 8 * C44**2 * k2**2
-    ux_hat = -(kx*ky*exy_hat*2*C44) / denom
-    uy_hat = -(ky*kx*exy_hat*2*C44) / denom
+# Run simulation on button click
+if st.button("Run Simulation"):
+    if not st.session_state.geometry_confirmed:
+        st.error("Please click 'Completed Geometry' to confirm particle geometry before running the simulation.")
+    else:
+        with st.spinner("Running simulation..."):
+            try:
+                outputs, free_energies = run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, kappa_eta,
+                                                        M_s, M_gb, M_b, M_v, alpha, L, k, m_t, c_0, N,
+                                                        st.session_state.centers, st.session_state.radii)
+            except Exception as e:
+                st.error(f"Simulation failed: {str(e)}")
+                st.stop()
+       
+        st.success("Simulation complete!")
+       
+        # Display results
+        st.header("Simulation Results")
+        for t, vts_file, plot_files in outputs:
+            st.subheader(f"Time t={t:.3f}")
+           
+            # Display Plotly plots
+            st.write("**Density and Phase Fields**")
+            cols = st.columns(4)
+            for i, name in enumerate(["c", "eta_1", "eta_2", "eta_3"]):
+                if name in plot_files:
+                    with cols[i]:
+                        st.plotly_chart(plot_files[name][0], use_container_width=True)
+           
+            if N >= 3:
+                st.write("**Additional Phase Fields and Postprocessed Variables**")
+                cols = st.columns(4)
+                for i, name in enumerate(["eta_4", "eta_5", "c_h_i2", "eta_i2"]):
+                    if name in plot_files:
+                        with cols[i]:
+                            st.plotly_chart(plot_files[name][0], use_container_width=True)
+           
+            st.write("**Free Energy Contributions**")
+            cols = st.columns(3)
+            for i in range(min(N+1, 3)):
+                name = f"f_h_{i+1}"
+                if name in plot_files:
+                    with cols[i]:
+                        st.plotly_chart(plot_files[name][0], use_container_width=True)
+            if N >= 3:
+                cols = st.columns(3)
+                for i in range(3, min(N+1, 5)):
+                    name = f"f_h_{i+1}"
+                    if name in plot_files:
+                        with cols[i-3]:
+                            st.plotly_chart(plot_files[name][0], use_container_width=True)
+           
+            st.write("**Free Energy Density vs. c**")
+            st.plotly_chart(plot_files["free_energy_vs_c"][0], use_container_width=True)
+           
+            # Provide download buttons
+            try:
+                with open(vts_file, "rb") as f:
+                    st.download_button(
+                        label=f"Download VTS (t={t:.3f})",
+                        data=f,
+                        file_name=vts_file.name,
+                        mime="application/xml"
+                    )
+            except FileNotFoundError:
+                st.warning(f"VTS file {vts_file.name} not found.")
+            for name, (_, plot_file) in plot_files.items():
+                try:
+                    with open(plot_file, "rb") as f:
+                        st.download_button(
+                            label=f"Download {name} Plot (t={t:.3f})",
+                            data=f,
+                            file_name=plot_file.name,
+                            mime="image/png"
+                        )
+                except FileNotFoundError:
+                    st.warning(f"Plot file {plot_file.name} not found.")
+        # Plot total free energy over time
+        st.header("Total Free Energy Over Time")
+        times, F_values = zip(*free_energies)
+        fig_total_energy = px.line(x=times, y=F_values, labels={"x": "Time", "y": "Total Free Energy"},
+                                   title="Total Free Energy Evolution")
+        st.plotly_chart(fig_total_energy, use_container_width=True)
 
-    ux = np.real(np.fft.ifft2(ux_hat))
-    uy = np.real(np.fft.ifft2(uy_hat))
+# Cleanup temporary directory
+if st.button("Clear Output Files"):
+    shutil.rmtree(output_dir, ignore_errors=True)
+    output_dir.mkdir(exist_ok=True)
+    st.success("Output files cleared!")
 
-    exx = np.gradient(ux, dx, axis=1)
-    eyy = np.gradient(uy, dx, axis=0)
-    exy = 0.5*(np.gradient(ux, dx, axis=0) + np.gradient(uy, dx, axis=1)) - eps_xy
-
-    lam = C44
-    sxx = lam*(exx + eyy) + 2*C44*exx
-    syy = lam*(exx + eyy) + 2*C44*eyy
-    sxy = 2*C44*exy
-
-    sigma_mag = np.sqrt(sxx**2 + syy**2 + 2*sxy**2)
-    sigma_hydro = (sxx + syy)/3
-    von_mises = np.sqrt(0.5*((sxx-sigma_hydro)**2 + (syy-sigma_hydro)**2 +
-                             (sxx+syy-2*sigma_hydro)**2 + 6*sxy**2))
-
-    return sigma_mag, sigma_hydro, von_mises
-
-# =============================================
-# Run Simulation
-# =============================================
-if st.button("Run Phase-Field Sintering", type="primary"):
-    with st.spinner("Running advanced sintering simulation..."):
-        eta = init_eta.copy()
-        history = []
-        for step in range(steps + 1):
-            if step > 0:
-                eta = evolve_phase_field(eta, kappa, dt=0.004, dx=dx, N=N)
-            if step % save_every == 0 or step == steps:
-                sm, sh, vm = compute_stress_fields(eta, eps0)
-                history.append((eta.copy(), sm.copy(), sh.copy(), vm.copy()))
-        st.session_state.history = history
-        st.success(f"Complete! {len(history)} frames – {defect_type} defects in {n_particles} NPs")
-
-# =============================================
-# Live Results
-# =============================================
-if 'history' in st.session_state:
-    frame = st.slider("Frame", 0, len(st.session_state.history)-1, len(st.session_state.history)-1)
-    eta, sigma_mag, sigma_hydro, von_mises = st.session_state.history[frame]
-
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    x = np.linspace(extent[0], extent[1], N)
-    y = np.linspace(extent[2], extent[3], N)
-
-    fields = [eta, sigma_mag, sigma_hydro, von_mises]
-    cmaps  = [eta_cmap, sigma_cmap, hydro_cmap, vm_cmap]
-    titles = [
-        "Phase Field η (Sintering Evolution)",
-        f"|σ| Magnitude – {sigma_mag.max():.2f} GPa",
-        f"Hydrostatic Stress – {sigma_hydro.mean():.2f} GPa",
-        f"von Mises – {von_mises.max():.2f} GPa"
-    ]
-
-    for ax, field, cmap, title in zip(axes.flat, fields, cmaps, titles):
-        im = ax.imshow(field, extent=extent, cmap=cmap, origin='lower')
-        ax.contour(x, y, eta, levels=[0.4], colors='white', linewidths=2)
-        ax.set_title(title, fontsize=18, fontweight='bold', pad=15)
-        ax.set_xlabel("x (nm)", fontsize=14)
-        ax.set_ylabel("y (nm)", fontsize=14)
-        ax.tick_params(labelsize=13, width=2, length=6)
-        for spine in ax.spines.values():
-            spine.set_linewidth(2.5)
-        ax.set_aspect('equal')
-        plt.colorbar(im, ax=ax, shrink=0.8)
-
-    plt.tight_layout()
-    st.pyplot(fig)
-
-    # Sintering metric: neck growth (interface area increase)
-    initial_interface = np.sum(np.abs(np.gradient(init_eta)[0]) + np.abs(np.gradient(init_eta)[1]))
-    final_interface = np.sum(np.abs(np.gradient(eta)[0]) + np.abs(np.gradient(eta)[1]))
-    metric = (initial_interface - final_interface) / initial_interface if initial_interface > 0 else 0
-    st.success(f"Sintering metric (relative interface reduction due to necking): {metric:.4f}")
-
-    # =============================================
-    # Download (all 4 fields)
-    # =============================================
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, (e, sm, sh, vm) in enumerate(st.session_state.history):
-            df = pd.DataFrame({
-                'eta': e.flatten(order='F'), 'stress_magnitude': sm.flatten(order='F'),
-                'hydrostatic': sh.flatten(order='F'), 'von_mises': vm.flatten(order='F')
-            })
-            zf.writestr(f"frame_{i:04d}.csv", df.to_csv(index=False))
-
-            flat = lambda a: ' '.join(f"{x:.6f}" for x in a.flatten(order='F'))
-            vti = f"""<VTKFile type="ImageData" version="1.0">
-<ImageData WholeExtent="0 {N-1} 0 {N-1} 0 0" Origin="{extent[0]} {extent[2]} 0" Spacing="{dx} {dx} 1">
-  <Piece Extent="0 {N-1} 0 {N-1} 0 0">
-    <PointData>
-      <DataArray type="Float32" Name="eta" format="ascii">{flat(e)}</DataArray>
-      <DataArray type="Float32" Name="stress_magnitude" format="ascii">{flat(sm)}</DataArray>
-      <DataArray type="Float32" Name="hydrostatic" format="ascii">{flat(sh)}</DataArray>
-      <DataArray type="Float32" Name="von_mises" format="ascii">{flat(vm)}</DataArray>
-    </PointData>
-  </Piece>
-</ImageData>
-</VTKFile>"""
-            zf.writestr(f"frame_{i:04d}.vti", vti)
-
-        pvd = '<VTKFile type="Collection" version="1.0">\n<Collection>\n'
-        for i in range(len(st.session_state.history)):
-            pvd += f'  <DataSet timestep="{i*save_every*dt:.6f}" file="frame_{i:04d}.vti"/>\n'
-        pvd += '</Collection>\n</VTKFile>'
-        zf.writestr("simulation.pvd", pvd)
-
-    buffer.seek(0)
-    st.download_button(
-        "Download Full Results (PVD + VTI + CSV)",
-        buffer,
-        "multi_np_sintering.zip",
-        "application/zip"
-    )
-
-st.caption("Advanced Multi-Particle Sintering • Defect Role • Geometry Tuning • Physical Units • 2025")
+# Instructions
+st.markdown("""
+### Instructions
+1. Adjust simulation parameters (nx, ny, dx, etc.) in the sidebar.
+2. Use Mobility Exponent=-6 (α=10^-6) to keep low mobility, and B=2.0 with free energy factor 5 for higher barrier height.
+3. Keep κ_c=5.0 for strong interface energy and M_b=0.002, M_s=3.0 for stable particles.
+4. Choose the number of powder particles (N) and define their centers (as fractions of domain size) and radii under 'Particle Geometry'. Default centers are set at (0.25, 0.75), (0.75, 0.75), (0.75, 0.25), (0.25, 0.25), (0.5, 0.5) for N=5.
+5. Use varying radii to observe larger particles growing.
+6. View the preview of the initial density field (c), with c=1 in particles and c=0 in vapor.
+7. Click 'Completed Geometry' to confirm the geometry.
+8. Click 'Run Simulation' to start the simulation.
+9. View Plotly heatmaps for c, η_1 (vapor), η_2 to η_{N+1} (grains), c·h_i², η_i², and f·h_i every 0.01 time units. Check η_1 to ensure it doesn't grow over powder phases.
+10. Observe the free energy density vs. c plot, noting higher peaks due to increased barrier.
+11. Check the total free energy plot to ensure it decreases, confirming thermodynamic consistency.
+12. Download .vts files for Paraview and PNG plots.
+13. Use 'Clear Output Files' to remove temporary files.
+### Notes on Barrier Height and Normalization
+- Free energy factor increased to 5 (from 3) and B=2.0 (from 1.0) to raise the powder phase free energy barrier, suppressing vapor phase (η_1) growth.
+- Mobility exponent=-6 (α=10^-6) maintains slow diffusion, enhancing stability.
+- δ=0.5 ensures numerical stability with dx=0.1.
+- Particle centers are normalized (0 to 1) relative to domain size (x_max = nx * dx, y_max = ny * dx) to maintain consistent initial conditions when nx or dx changes.
+""")
