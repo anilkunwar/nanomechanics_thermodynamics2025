@@ -1,5 +1,5 @@
 # =============================================
-# 3D Ag Nanoparticle Phase-Field + FFT – ENHANCED COLOR MAPS
+# 3D Ag Nanoparticle Phase-Field + FFT – ENHANCED COLOR MAPS (FIXED)
 # =============================================
 import streamlit as st
 import numpy as np
@@ -20,29 +20,19 @@ Interactive 3D Plotly • Enhanced Color Maps • Custom Color Scale Limits
 # =============================================
 # Enhanced Color Map Parameters
 # =============================================
-# Comprehensive list of color maps (50+ including jet, turbo, and many others)
 COLOR_MAPS = {
     'Plotly Built-in': ['plotly3', 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 
-                       'turbo', 'jet', 'hot', 'rainbow', 'portland', 'blackbody',
-                       'electric', 'bluered', 'reds', 'blues', 'greens'],
+                       'turbo', 'jet', 'hot', 'rainbow'],
     
     'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo',
                   'jet', 'hot', 'gray', 'pink', 'spring', 'summer', 'autumn',
-                  'winter', 'cool', 'wistia', 'copper', 'bone'],
+                  'winter', 'cool', 'wistia'],
     
     'Diverging': ['rdbu', 'rdylbu', 'rdylgn', 'brbg', 'piyg', 'prgn', 'puor',
                  'spectral', 'coolwarm', 'bwr', 'seismic'],
     
-    'Cyclic': ['twilight', 'twilight_shifted', 'hsv'],
-    
-    'Qualitative': ['pastel', 'set1', 'set2', 'set3', 'tab10', 'tab20',
-                   'dark24', 'light24']
+    'Cyclic': ['twilight', 'twilight_shifted', 'hsv']
 }
-
-# Flatten for selection
-all_cmaps = []
-for category, cmaps in COLOR_MAPS.items():
-    all_cmaps.extend(cmaps)
 
 # =============================================
 # Simulation Parameters with Enhanced Controls
@@ -64,13 +54,12 @@ save_every = st.sidebar.slider("Save every", 5, 20, 10)
 # =============================================
 st.sidebar.header("Visualization Controls")
 
-# Color map selection with categorization
+# Color map selection
 viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()))
 eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], 
-                               index=COLOR_MAPS[viz_category].index('blues') if 'blues' in COLOR_MAPS[viz_category] else 0)
+                               index=0)
 stress_cmap = st.sidebar.selectbox("Stress (σ) Color Map", COLOR_MAPS[viz_category], 
-                                  index=COLOR_MAPS[viz_category].index('reds') if 'reds' in COLOR_MAPS[viz_category] else 
-                                  COLOR_MAPS[viz_category].index('turbo') if 'turbo' in COLOR_MAPS[viz_category] else 0)
+                                  index=min(1, len(COLOR_MAPS[viz_category])-1))
 
 # Custom color scale limits
 st.sidebar.subheader("Color Scale Limits")
@@ -194,7 +183,7 @@ def create_vti(eta, sigma, step, time):
     return vti
 
 # =============================================
-# Enhanced Visualization Functions
+# FIXED Visualization Functions
 # =============================================
 def create_plotly_isosurface(X, Y, Z, values, title, colorscale, 
                            isomin=None, isomax=None, opacity=0.7, 
@@ -203,9 +192,9 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
     
     # Calculate automatic limits if not provided
     if isomin is None:
-        isomin = np.percentile(values[np_mask], 10)
+        isomin = np.percentile(values[np_mask], 10) if np.any(np_mask) else values.min()
     if isomax is None:
-        isomax = np.percentile(values[np_mask], 90)
+        isomax = np.percentile(values[np_mask], 90) if np.any(np_mask) else values.max()
     
     # Apply custom limits if specified
     if custom_min is not None and custom_max is not None:
@@ -216,8 +205,11 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
         values_clipped = values
         cmin, cmax = isomin, isomax
     
+    # Create the isosurface without problematic colorbar settings
     fig = go.Figure(data=go.Isosurface(
-        x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+        x=X.flatten(), 
+        y=Y.flatten(), 
+        z=Z.flatten(),
         value=values_clipped.flatten(),
         isomin=isomin,
         isomax=isomax,
@@ -225,11 +217,8 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
         colorscale=colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
-        colorbar=dict(
-            title=title,
-            titleside='right',
-            titlefont=dict(size=14)
-        )
+        # Use simpler colorbar configuration
+        colorbar=dict(title=title)
     ))
     
     fig.update_layout(
@@ -366,9 +355,16 @@ if 'history_3d' in st.session_state:
 
     with col2:
         st.subheader(f"Stress Magnitude |σ| ({stress_cmap})")
+        # Calculate reasonable stress limits
+        stress_data = sigma_3d[np_mask]
+        if len(stress_data) > 0:
+            stress_isomax = np.percentile(stress_data, 95)
+        else:
+            stress_isomax = sigma_3d.max()
+            
         fig_sig = create_plotly_isosurface(
             X, Y, Z, sigma_3d, "Stress |σ| (GPa)", 
-            stress_cmap, 
+            stress_cmap, isomin=0.0, isomax=stress_isomax,
             opacity=opacity_3d, surface_count=surface_count,
             custom_min=stress_lims[0] if stress_lims else None,
             custom_max=stress_lims[1] if stress_lims else None
