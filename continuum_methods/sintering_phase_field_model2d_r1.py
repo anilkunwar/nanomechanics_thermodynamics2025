@@ -34,6 +34,7 @@ centers = []
 radii = []
 while len(centers) < n_particles:
     radius = np.random.uniform(min_radius, max_radius)
+    overlap = False  # Moved outside if-else
     if len(centers) == 0:
         cx = np.random.uniform(radius, N - radius)
         cy = np.random.uniform(radius, N - radius)
@@ -50,7 +51,6 @@ while len(centers) < n_particles:
         cy = np.clip(cy, radius, N - radius)
         
         # Check excessive overlap
-        overlap = False
         for pcx, pcy, pr in zip([c[0] for c in centers], [c[1] for c in centers], radii):
             pdist = np.sqrt((cx - pcx)**2 + (cy - pcy)**2)
             if pdist < pr + radius - 15:  # Allow close but not too merged
