@@ -1,5 +1,5 @@
 # =============================================
-# 3D Ag Nanoparticle Phase-Field + FFT – ENHANCED COLOR MAPS (FIXED)
+# 3D Ag Nanoparticle Phase-Field + FFT – ENHANCED COLOR MAPS (FIXED MATPLOTLIB)
 # =============================================
 import streamlit as st
 import numpy as np
@@ -21,17 +21,16 @@ Interactive 3D Plotly • Enhanced Color Maps • Custom Color Scale Limits
 # Enhanced Color Map Parameters
 # =============================================
 COLOR_MAPS = {
-    'Plotly Built-in': ['plotly3', 'viridis', 'plasma', 'inferno', 'magma', 'cividis', 
-                       'turbo', 'jet', 'hot', 'rainbow'],
+    'Matplotlib Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 
+                           'jet', 'hot', 'cool', 'spring', 'summer', 'autumn', 'winter',
+                           'gray', 'bone', 'pink', 'copper', 'wistia'],
     
-    'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo',
-                  'jet', 'hot', 'gray', 'pink', 'spring', 'summer', 'autumn',
-                  'winter', 'cool', 'wistia'],
+    'Diverging': ['RdBu', 'RdYlBu', 'RdYlGn', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
+                 'Spectral', 'coolwarm', 'bwr', 'seismic'],
     
-    'Diverging': ['rdbu', 'rdylbu', 'rdylgn', 'brbg', 'piyg', 'prgn', 'puor',
-                 'spectral', 'coolwarm', 'bwr', 'seismic'],
-    
-    'Cyclic': ['twilight', 'twilight_shifted', 'hsv']
+    'Sequential': ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
+                  'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
+                  'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn']
 }
 
 # =============================================
@@ -54,7 +53,7 @@ save_every = st.sidebar.slider("Save every", 5, 20, 10)
 # =============================================
 st.sidebar.header("Visualization Controls")
 
-# Color map selection
+# Color map selection - using only Matplotlib compatible names
 viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()))
 eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], 
                                index=0)
@@ -217,7 +216,6 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
         colorscale=colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
-        # Use simpler colorbar configuration
         colorbar=dict(title=title)
     ))
     
@@ -241,6 +239,17 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
     
     return fig
 
+def safe_matplotlib_cmap(cmap_name, default='viridis'):
+    """Safely get matplotlib colormap with fallback"""
+    try:
+        # Try to get the colormap
+        plt.get_cmap(cmap_name)
+        return cmap_name
+    except (ValueError, AttributeError):
+        # Fallback to default if colormap doesn't exist
+        st.warning(f"Colormap '{cmap_name}' not found in Matplotlib. Using '{default}' instead.")
+        return default
+
 def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, 
                                eta_cmap, stress_cmap, eta_lims, stress_lims):
     """Create comprehensive Matplotlib visualization with multiple color maps"""
@@ -253,40 +262,74 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx,
     fig.suptitle(f'3D Stress Visualization Comparison - Frame {frame_idx}\n'
                 f'Matplotlib Color Maps (Slice z={slice_pos})', fontsize=16, y=0.95)
     
-    # Define color limits
-    eta_vmin, eta_vmax = (eta_lims if eta_lims else 
-                         (eta_3d[np_mask].min(), eta_3d[np_mask].max()))
-    stress_vmin, stress_vmax = (stress_lims if stress_lims else 
-                              (sigma_3d[np_mask].min(), sigma_3d[np_mask].max()))
+    # Define color limits with safety checks
+    eta_data = eta_3d[np_mask]
+    stress_data = sigma_3d[np_mask]
+    
+    if len(eta_data) > 0:
+        eta_vmin, eta_vmax = (eta_lims if eta_lims else (eta_data.min(), eta_data.max()))
+    else:
+        eta_vmin, eta_vmax = 0.0, 1.0
+        
+    if len(stress_data) > 0:
+        stress_vmin, stress_vmax = (stress_lims if stress_lims else (stress_data.min(), stress_data.max()))
+    else:
+        stress_vmin, stress_vmax = 0.0, 10.0
+    
+    # Use safe colormap names
+    safe_eta_cmap = safe_matplotlib_cmap(eta_cmap, 'Blues')
+    safe_stress_cmap = safe_matplotlib_cmap(stress_cmap, 'Reds')
     
     # Original visualization
-    im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], 
-                          cmap=eta_cmap, vmin=eta_vmin, vmax=eta_vmax,
-                          extent=[origin, origin+N*dx, origin, origin+N*dx])
-    axes[0,0].set_title(f'Defect η ({eta_cmap})')
-    axes[0,0].set_xlabel('x (nm)'); axes[0,0].set_ylabel('y (nm)')
-    plt.colorbar(im1, ax=axes[0,0], shrink=0.8)
+    try:
+        im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], 
+                              cmap=safe_eta_cmap, vmin=eta_vmin, vmax=eta_vmax,
+                              extent=[origin, origin+N*dx, origin, origin+N*dx])
+        axes[0,0].set_title(f'Defect η ({safe_eta_cmap})')
+        axes[0,0].set_xlabel('x (nm)'); axes[0,0].set_ylabel('y (nm)')
+        plt.colorbar(im1, ax=axes[0,0], shrink=0.8)
+    except Exception as e:
+        axes[0,0].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=axes[0,0].transAxes)
+        axes[0,0].set_title('Defect η (Error)')
     
-    im2 = axes[0,1].imshow(sigma_3d[:, :, slice_pos], 
-                          cmap=stress_cmap, vmin=stress_vmin, vmax=stress_vmax,
-                          extent=[origin, origin+N*dx, origin, origin+N*dx])
-    axes[0,1].set_title(f'Stress |σ| ({stress_cmap})')
-    axes[0,1].set_xlabel('x (nm)')
-    plt.colorbar(im2, ax=axes[0,1], shrink=0.8)
+    try:
+        im2 = axes[0,1].imshow(sigma_3d[:, :, slice_pos], 
+                              cmap=safe_stress_cmap, vmin=stress_vmin, vmax=stress_vmax,
+                              extent=[origin, origin+N*dx, origin, origin+N*dx])
+        axes[0,1].set_title(f'Stress |σ| ({safe_stress_cmap})')
+        axes[0,1].set_xlabel('x (nm)')
+        plt.colorbar(im2, ax=axes[0,1], shrink=0.8)
+    except Exception as e:
+        axes[0,1].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=axes[0,1].transAxes)
+        axes[0,1].set_title('Stress |σ| (Error)')
     
-    # Popular alternative color maps for comparison
-    alt_cmaps = ['jet', 'turbo', 'viridis']
-    alt_titles = ['Jet (Traditional)', 'Turbo (Modern)', 'Viridis (Perceptual)']
+    # Empty subplot for color map info
+    axes[0,2].axis('off')
+    info_text = f"""Color Map Information:
+• Selected η: {eta_cmap}
+• Selected σ: {stress_cmap}
+• Actual η: {safe_eta_cmap}
+• Actual σ: {safe_stress_cmap}
+• Using custom limits: {use_custom_limits}"""
+    axes[0,2].text(0.1, 0.5, info_text, va='center', ha='left', fontsize=10)
+    
+    # Popular alternative color maps for comparison (all Matplotlib standard)
+    alt_cmaps = ['jet', 'viridis', 'plasma']
+    alt_titles = ['Jet (Traditional)', 'Viridis (Perceptual)', 'Plasma (High Contrast)']
     
     for i, (cmap, title) in enumerate(zip(alt_cmaps, alt_titles)):
-        im = axes[1,i].imshow(sigma_3d[:, :, slice_pos], 
-                             cmap=cmap, vmin=stress_vmin, vmax=stress_vmax,
-                             extent=[origin, origin+N*dx, origin, origin+N*dx])
-        axes[1,i].set_title(f'Stress |σ| - {title}')
-        axes[1,i].set_xlabel('x (nm)')
-        if i == 0:
-            axes[1,i].set_ylabel('y (nm)')
-        plt.colorbar(im, ax=axes[1,i], shrink=0.8)
+        try:
+            im = axes[1,i].imshow(sigma_3d[:, :, slice_pos], 
+                                 cmap=cmap, vmin=stress_vmin, vmax=stress_vmax,
+                                 extent=[origin, origin+N*dx, origin, origin+N*dx])
+            axes[1,i].set_title(f'Stress |σ| - {title}')
+            axes[1,i].set_xlabel('x (nm)')
+            if i == 0:
+                axes[1,i].set_ylabel('y (nm)')
+            plt.colorbar(im, ax=axes[1,i], shrink=0.8)
+        except Exception as e:
+            axes[1,i].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center', transform=axes[1,i].transAxes)
+            axes[1,i].set_title(f'Stress |σ| - {title} (Error)')
     
     plt.tight_layout()
     return fig
@@ -376,21 +419,25 @@ if 'history_3d' in st.session_state:
     st.markdown("""
     **Comparison of different color maps for stress visualization:**  
     - **Top row:** Selected color maps for defect and stress  
-    - **Bottom row:** Popular alternatives (Jet, Turbo, Viridis) for comparison
+    - **Bottom row:** Popular alternatives (Jet, Viridis, Plasma) for comparison
     """)
     
-    fig_mpl = create_matplotlib_comparison(
-        eta_3d, sigma_3d, frame_idx, 
-        eta_cmap, stress_cmap, eta_lims, stress_lims
-    )
-    st.pyplot(fig_mpl)
+    try:
+        fig_mpl = create_matplotlib_comparison(
+            eta_3d, sigma_3d, frame_idx, 
+            eta_cmap, stress_cmap, eta_lims, stress_lims
+        )
+        st.pyplot(fig_mpl)
+    except Exception as e:
+        st.error(f"Error creating Matplotlib comparison: {str(e)}")
+        st.info("Try selecting different color maps from the sidebar.")
     
     # Color map information
     with st.expander("Color Map Information"):
         st.markdown("""
         **About Color Maps:**
-        - **Jet/Turbo:** High contrast but not perceptually uniform
-        - **Viridis/Plasma:** Perceptually uniform, better for scientific visualization
+        - **Jet:** Traditional high-contrast map (not perceptually uniform)
+        - **Viridis/Plasma:** Modern perceptually uniform maps (recommended)
         - **Sequential:** Good for ordered data from low to high
         - **Diverging:** Good for data with critical midpoint
         - **Custom Limits:** Enable direct comparison between different simulations
@@ -399,11 +446,20 @@ if 'history_3d' in st.session_state:
         # Show current statistics
         col_stat1, col_stat2 = st.columns(2)
         with col_stat1:
-            st.metric("Defect η Range", 
-                     f"{eta_3d[np_mask].min():.3f} - {eta_3d[np_mask].max():.3f}")
+            eta_data = eta_3d[np_mask]
+            if len(eta_data) > 0:
+                st.metric("Defect η Range", 
+                         f"{eta_data.min():.3f} - {eta_data.max():.3f}")
+            else:
+                st.metric("Defect η Range", "No data")
+                
         with col_stat2:
-            st.metric("Stress |σ| Range", 
-                     f"{sigma_3d[np_mask].min():.2f} - {sigma_3d[np_mask].max():.2f} GPa")
+            stress_data = sigma_3d[np_mask]
+            if len(stress_data) > 0:
+                st.metric("Stress |σ| Range", 
+                         f"{stress_data.min():.2f} - {stress_data.max():.2f} GPa")
+            else:
+                st.metric("Stress |σ| Range", "No data")
 
     # =============================================
     # Enhanced Download Section
