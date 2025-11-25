@@ -50,9 +50,9 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual3-streamlit-red)](https://defect-evolution-in-nanomaterial13.streamlit.app/) (3D  visualized, arbitrary units, Not working )
 
-[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual10-streamlit-red)](https://defect-evolution-in-nanomaterial14.streamlit.app/) (2D  visualized, orientation, Physics based meaning assessment )
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual10-streamlit-red)](https://defect-evolution-in-nanomaterial14.streamlit.app/) (2D  visualized, no orientation, only seed rotation)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial15.streamlit.app/) (2D  visualized, orientation)
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial15.streamlit.app/) (2D  visualized, orientation, orientation)
 
 # Phase field model for sintering
 [![continuummodelsintering2d](https://img.shields.io/badge/2dpfm-streamlit-red)](https://sintering-2dphasefieldmodel1.streamlit.app/) (basic model1 )
