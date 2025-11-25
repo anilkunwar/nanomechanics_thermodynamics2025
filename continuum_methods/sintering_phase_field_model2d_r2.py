@@ -9,12 +9,9 @@ import io
 import time
 from pathlib import Path
 import shutil
-from numba import jit, prange  # Added this import to fix NameError
-
 # Streamlit app configuration
 st.title("2D Phase-Field Sintering Simulation (Increased Barrier Height)")
 st.write("Finite difference method to solve the PDEs related to sintering of two powder grains. Though the model is formulated for two grains, it is flexible to any N number of grains")
-
 # Initialize session state for geometry
 if "geometry_confirmed" not in st.session_state:
     st.session_state.geometry_confirmed = False
@@ -24,7 +21,6 @@ if "centers" not in st.session_state:
     st.session_state.centers = []
 if "radii" not in st.session_state:
     st.session_state.radii = []
-
 # Sidebar for parameters
 st.sidebar.header("Simulation Parameters")
 nx = st.sidebar.slider("Grid Size (nx)", 50, 150, 100, step=10)
@@ -33,7 +29,6 @@ dx = st.sidebar.slider("Grid Spacing (dx)", 0.05, 0.2, 0.1, step=0.01)
 dt = st.sidebar.slider("Time Step (dt)", 1e-7, 1e-5, 1e-6, step=1e-7, format="%.1e")
 total_time = st.sidebar.slider("Total Simulation Time", 0.01, 0.1, 0.05, step=0.01)
 output_interval = 0.01 # Fixed at 0.01 time units for outputs
-
 # Phase-field parameters (nondimensional, per Biswas et al.)
 A = st.sidebar.slider("Free Energy Constant A", 10.0, 20.0, 16.0)
 B = st.sidebar.slider("Free Energy Constant B", 0.5, 3.0, 2.0) # Increased for barrier
@@ -49,11 +44,9 @@ L = st.sidebar.slider("Grain Boundary Mobility L", 50.0, 150.0, 100.0)
 k = st.sidebar.slider("Stiffness Constant k", 0.1, 0.2, 0.14)
 m_t = st.sidebar.slider("Translational Mobility m_t", 100.0, 300.0, 200.0)
 c_0 = st.sidebar.slider("Equilibrium Density c_0", 0.9, 1.0, 0.9816)
-
 # User-defined number of particles N
 N = st.sidebar.slider("Number of Powder Particles (N)", 1, 10, 2)
 st.session_state.N = N
-
 # Geometry input for N particles with normalized centers
 st.sidebar.header(f"Particle Geometry (η_2 to η_{N+1})")
 x_max = nx * dx
@@ -78,7 +71,6 @@ for i in range(N):
                           value=default_radii[i], step=0.01, key=f"r_{i}")
     centers.append((cx, cy))
     radii.append(r)
-
 # Preview initial density field
 def generate_preview_c(nx, ny, dx, centers, radii, N):
     c = np.zeros((nx, ny))
@@ -90,7 +82,6 @@ def generate_preview_c(nx, ny, dx, centers, radii, N):
         eta[p+1] = 0.5 * (1 - np.tanh((r - radii[p]) / delta)) # eta_{p+2}
     c = np.clip(sum(eta[1:]), 0, 1) # Sum eta_2 to eta_{N+1}
     return c
-
 # Display preview
 st.subheader("Geometry Preview (c = Σ η_i for i=2 to N+1)")
 preview_c = generate_preview_c(nx, ny, dx, centers, radii, N)
@@ -104,18 +95,15 @@ fig_preview = px.imshow(
 )
 fig_preview.update_layout(width=400, height=400)
 st.plotly_chart(fig_preview, use_container_width=True)
-
 # Completed Geometry button
 if st.sidebar.button("Completed Geometry"):
     st.session_state.geometry_confirmed = True
     st.session_state.centers = centers
     st.session_state.radii = radii
     st.sidebar.success("Geometry confirmed! Click 'Run Simulation' to proceed.")
-
 # Create temporary directory for outputs
 output_dir = Path("sintering_outputs")
 output_dir.mkdir(exist_ok=True)
-
 # Cache simulation to avoid recomputation
 @st.cache_data
 def run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, kappa_eta,
@@ -127,9 +115,15 @@ def run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, k
                        [1, -4, 1],
                        [0, 1, 0]]) / dx**2
     # Interpolation function from Moelans et al. (2011)
+    @jit(nopython=True)
     def h(eta, i):
-        eta2_sum = sum(eta_j**2 for eta_j in eta)
-        return np.where(eta2_sum > 1e-10, eta[i]**2 / eta2_sum, 0.0)
+        eta2_sum = 0.0
+        for eta_j in eta:
+            eta2_sum += eta_j**2
+        if eta2_sum > 1e-10:
+            return eta[i]**2 / eta2_sum
+        else:
+            return 0.0
     # Initialize microstructure with user-defined geometry
     def initialize_microstructure(nx, ny, dx, centers, radii, N):
         c = np.zeros((nx, ny))
@@ -203,7 +197,7 @@ def run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, k
     # Compute densification force and velocity
     def compute_velocity(c, eta, centers, radii):
         velocities = []
-        x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dx)
+        x, y = np.meshgrid(np.arange(nx) * dx, np.arange(ny) * dy)
         for p in range(N):
             cx, cy = centers[p]
             r_eff = radii[p]
@@ -229,7 +223,7 @@ def run_simulation(nx, ny, dx, dt, total_time, output_interval, A, B, kappa_c, k
     # Advection term (upwind scheme)
     def advection_term(field, v):
         grad_x = (field - np.roll(field, 1, axis=0)) / dx if v[0] >= 0 else (np.roll(field, -1, axis=0) - field) / dx
-        grad_y = (field - np.roll(field, 1, axis=1) / dx if v[1] >= 0 else (np.roll(field, -1, axis=1) - field) / dx
+        grad_y = (field - np.roll(field, 1, axis=1)) / dx if v[1] >= 0 else (np.roll(field, -1, axis=1) - field) / dx
         div_v = 0.0
         return v[0] * grad_x + v[1] * grad_y + field * div_v
     # Save VTS file
