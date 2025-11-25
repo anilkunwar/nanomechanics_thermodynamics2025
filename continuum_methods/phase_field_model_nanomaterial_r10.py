@@ -2,100 +2,72 @@ import streamlit as st
 import numpy as np
 from numba import jit, prange
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import pandas as pd
-import zipfile
 from io import BytesIO
-import base64
+import zipfile
+import os
+import tempfile
 
-# Configure page
+# =============================================
+# Page Config
+# =============================================
 st.set_page_config(page_title="3D Ag NP Defect Analyzer", layout="wide")
-st.title("🔮 3D Ag Nanoparticle Defect Mechanics")
+st.title("3D Ag Nanoparticle Defect Mechanics")
 st.markdown("""
-**3D Phase-Field + FFT Elasticity**
-**Spherical Nanoparticles • Multiple Defect Types • Interactive 3D Visualization**
+**Phase-Field + FFT Elasticity • Spherical NPs • Full ParaView .pvd Export**
 """)
 
 # =============================================
 # Sidebar Controls
 # =============================================
-st.sidebar.header("🔧 Simulation Parameters")
-
-# Grid and simulation parameters
+st.sidebar.header("Simulation Parameters")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    N = st.slider("Grid Size (N³)", 32, 128, 64, 16,
-                 help="Higher = better resolution but slower")
+    N = st.slider("Grid Size (N³)", 32, 128, 64, 16, help="64–96 recommended")
     dx = st.slider("Grid Spacing (nm)", 0.05, 0.2, 0.1, 0.01)
     dt = st.slider("Time Step", 0.001, 0.01, 0.005, 0.001)
-
 with col2:
-    steps = st.slider("Evolution Steps", 10, 200, 50, 10)
-    np_radius_ratio = st.slider("NP Radius Ratio", 0.5, 0.9, 0.8, 0.05,
-                               help="NP radius relative to domain size")
-    defect_radius_ratio = st.slider("Defect Radius Ratio", 0.1, 0.5, 0.33, 0.05,
-                                   help="Initial defect size relative to NP")
+    steps = st.slider("Evolution Steps", 10, 200, 80, 10)
+    np_radius_ratio = st.slider("NP Radius Ratio", 0.5, 0.9, 0.8, 0.05)
+    defect_radius_ratio = st.slider("Defect Radius Ratio", 0.1, 0.5, 0.33, 0.05)
 
-# Material parameters
-st.sidebar.header("🎛️ Material & Defect Properties")
-
+st.sidebar.header("Material & Defect Properties")
 defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin", "Custom"])
-
 if defect_type == "ISF":
-    eps0 = 0.707
-    kappa = 0.6
-    init_amplitude = 0.5
+    eps0, kappa, init_amplitude = 0.707, 0.6, 0.5
 elif defect_type == "ESF":
-    eps0 = 1.414
-    kappa = 0.7
-    init_amplitude = 0.6
+    eps0, kappa, init_amplitude = 1.414, 0.7, 0.6
 elif defect_type == "Twin":
-    eps0 = 2.121
-    kappa = 0.3
-    init_amplitude = 0.7
-else: # Custom
+    eps0, kappa, init_amplitude = 2.121, 0.3, 0.7
+else:
     eps0 = st.sidebar.slider("Eigenstrain ε*", 0.3, 3.0, 1.0, 0.01)
     kappa = st.sidebar.slider("Interface κ", 0.1, 2.0, 0.5, 0.05)
     init_amplitude = st.sidebar.slider("Initial Amplitude", 0.1, 1.0, 0.5, 0.1)
 
 C44 = st.sidebar.slider("Shear Modulus C₄₄ (GPa)", 10.0, 100.0, 46.1, 1.0)
 
-# =============================================
-# Visualization Controls
-# =============================================
-st.sidebar.header("🎨 Visualization Settings")
-
-viz_mode = st.sidebar.radio("Visualization Mode",
-                           ["2D Slices", "3D Isosurface", "Both"])
-
-# Color maps
-cmap_list = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'hsv', 'coolwarm', 'seismic', 'RdBu_r', 'bwr', 'cool', 'Wistia', 'spring', 'summer', 'autumn', 'winter', 'bone', 'copper', 'pink', 'gray', 'hot', 'cool', 'ocean', 'terrain', 'gist_earth', 'gist_ncar', 'gist_rainbow', 'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_yarg', 'binary', 'nipy_spectral', 'tab10', 'tab20', 'tab20b', 'tab20c', 'Accent', 'Dark2', 'Paired', 'Pastel1', 'Pastel2', 'Set1', 'Set2', 'Set3', 'flag', 'prism', 'afmhot']
+st.sidebar.header("Visualization")
+viz_mode = st.sidebar.radio("Mode", ["2D Slices", "3D Isosurface", "Both"])
+cmap_list = ['viridis', 'plasma', 'hot', 'jet', 'coolwarm', 'seismic', 'turbo']
 eta_cmap = st.sidebar.selectbox("η Colormap", cmap_list, index=0)
-stress_cmap = st.sidebar.selectbox("Stress Colormap", cmap_list, index=cmap_list.index('hot'))
+stress_cmap = st.sidebar.selectbox("Stress Colormap", cmap_list, index=2)
 
-# Isosurface settings
 if viz_mode in ["3D Isosurface", "Both"]:
-    st.sidebar.subheader("3D Settings")
-    iso_level_eta = st.sidebar.slider("η Isosurface Level", 0.1, 0.9, 0.4, 0.05)
-    iso_level_stress = st.sidebar.slider("Stress Isosurface Level", 0.1, 0.9, 0.5, 0.05)
-    show_stress_isosurface = st.sidebar.checkbox("Show Stress Isosurface", value=True)
+    iso_level_eta = st.sidebar.slider("η Isosurface", 0.1, 0.9, 0.4, 0.05)
+    iso_level_stress = st.sidebar.slider("Stress Iso Level", 0.1, 1.5, 0.6, 0.05)
+    show_stress_iso = st.sidebar.checkbox("Show Stress Isosurface", True)
 
-# 2D slice settings
 if viz_mode in ["2D Slices", "Both"]:
-    st.sidebar.subheader("2D Slice Settings")
-    slice_coord = st.sidebar.slider("Slice Coordinate", 0, N-1, N//2)
+    slice_coord = st.sidebar.slider("Slice Position", 0, N-1, N//2)
     slice_axis = st.sidebar.selectbox("Slice Axis", ["X", "Y", "Z"])
 
 # =============================================
-# Core 3D Simulation Functions
+# Core Simulation Functions
 # =============================================
 @jit(nopython=True, parallel=True)
 def evolve_3d(eta, kappa, dt, dx, N):
-    """3D Allen-Cahn evolution with periodic boundary conditions"""
     eta_new = eta.copy()
-    dx2 = dx**2
+    dx2 = dx * dx
     for i in prange(1, N-1):
         for j in prange(1, N-1):
             for k in prange(1, N-1):
@@ -105,185 +77,64 @@ def evolve_3d(eta, kappa, dt, dx, N):
                 dF = 2*eta[i,j,k]*(1-eta[i,j,k])*(eta[i,j,k]-0.5)
                 eta_new[i,j,k] = eta[i,j,k] + dt * (-dF + kappa * lap)
                 eta_new[i,j,k] = max(0.0, min(1.0, eta_new[i,j,k]))
-   
-    # Periodic boundary conditions
-    eta_new[0,:,:] = eta_new[-2,:,:]
-    eta_new[-1,:,:] = eta_new[1,:,:]
-    eta_new[:,0,:] = eta_new[:,-2,:]
-    eta_new[:,-1,:] = eta_new[:,1,:]
-    eta_new[:,:,0] = eta_new[:,:,-2]
-    eta_new[:,:, -1] = eta_new[:,:,1]
-   
+    # Periodic BC
+    eta_new[[0, -1], :, :] = eta_new[[-2, 1], :, :]
+    eta_new[:, [0, -1], :] = eta_new[:, [-2, 1], :]
+    eta_new[:, :, [0, -1]] = eta_new[:, :, [-2, 1]]
     return eta_new
 
 def compute_stress_3d(eta, eps0, C44, N, dx):
-    """3D stress computation using FFT"""
     eps_star = eps0 * eta
     eps_fft = np.fft.fftn(eps_star)
-   
-    kx = np.fft.fftfreq(N, dx) * 2*np.pi
-    ky = kx.copy()
-    kz = kx.copy()
-    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
-   
+    k = np.fft.fftfreq(N, dx) * 2 * np.pi
+    KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
     k2 = KX**2 + KY**2 + KZ**2 + 1e-12
     strain_fft = -eps_fft / (2 * k2)
     strain = np.real(np.fft.ifftn(strain_fft))
-    sigma = C44 * strain
-   
-    return sigma
+    return C44 * np.abs(strain)  # magnitude for visualization
 
-def create_spherical_mask(N, dx, radius_ratio):
+def create_spherical_mask(N, dx, ratio):
+    x = np.linspace(-N*dx/2, N*dx/2, N)
+    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
+    return np.sqrt(X**2 + Y**2 + Z**2) <= (N*dx/2 * ratio)
+
+def create_initial_defect(N, dx, np_mask, defect_ratio, amp):
     x = np.linspace(-N*dx/2, N*dx/2, N)
     X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
     r = np.sqrt(X**2 + Y**2 + Z**2)
-    np_radius = N*dx/2 * radius_ratio
-    return r <= np_radius
-
-def create_initial_defect(N, dx, np_mask, defect_radius_ratio, init_amplitude):
-    x = np.linspace(-N*dx/2, N*dx/2, N)
-    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
-    r = np.sqrt(X**2 + Y**2 + Z**2)
-   
-    defect_radius = (N*dx/2 * np_radius_ratio) * defect_radius_ratio
-    defect_mask = r < defect_radius
-   
-    eta = np.zeros((N, N, N))
-    eta[defect_mask] = init_amplitude
-    eta += 0.01 * np.random.randn(N, N, N) # Small noise
+    defect_r = N*dx/2 * np_radius_ratio * defect_ratio
+    eta = np.zeros_like(r)
+    eta[r < defect_r] = amp
+    eta += 0.01 * np.random.randn(N, N, N)
     eta = np.clip(eta, 0.0, 1.0)
-   
     eta[~np_mask] = 0.0
-   
     return eta
 
 # =============================================
-# Visualization Functions
+# VTU & PVD Export Functions (ASCII fallback – works everywhere)
 # =============================================
-def create_2d_slice_plot(eta, sigma, slice_coord, slice_axis, extent):
-    if slice_axis == "X":
-        eta_slice = eta[slice_coord, :, :]
-        sigma_slice = sigma[slice_coord, :, :]
-        xlabel, ylabel = "Y (nm)", "Z (nm)"
-    elif slice_axis == "Y":
-        eta_slice = eta[:, slice_coord, :]
-        sigma_slice = sigma[:, slice_coord, :]
-        xlabel, ylabel = "X (nm)", "Z (nm)"
-    else: # Z
-        eta_slice = eta[:, :, slice_coord]
-        sigma_slice = sigma[:, :, slice_coord]
-        xlabel, ylabel = "X (nm)", "Y (nm)"
-   
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-   
-    im1 = ax1.imshow(eta_slice.T, extent=extent, cmap=eta_cmap, origin='lower',
-                    vmin=0, vmax=1)
-    ax1.set_title(f"Order Parameter η - {slice_axis}={slice_coord}", fontsize=14, fontweight='bold')
-    ax1.set_xlabel(xlabel, fontsize=12)
-    ax1.set_ylabel(ylabel, fontsize=12)
-    plt.colorbar(im1, ax=ax1, shrink=0.8, label='η')
-   
-    im2 = ax2.imshow(sigma_slice.T, extent=extent, cmap=stress_cmap, origin='lower')
-    ax2.set_title(f"Stress Magnitude - {slice_axis}={slice_coord}", fontsize=14, fontweight='bold')
-    ax2.set_xlabel(xlabel, fontsize=12)
-    ax2.set_ylabel(ylabel, fontsize=12)
-    cbar2 = plt.colorbar(im2, ax=ax2, shrink=0.8)
-    cbar2.set_label('Stress (GPa)', fontsize=10)
-   
-    plt.tight_layout()
-    return fig
-
-def create_3d_isosurface_plot(eta, sigma, np_mask, iso_level_eta, iso_level_stress,
-                              show_stress_isosurface):
-    N = eta.shape[0]
+def create_vtu_ascii(eta, sigma, np_mask, N, dx, step):
     x = np.linspace(-N*dx/2, N*dx/2, N)
-    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
-   
-    fig = go.Figure()
-   
-    # Nanoparticle surface (transparent)
-    fig.add_trace(go.Isosurface(
-        x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-        value=np_mask.astype(float).flatten(),
-        isomin=0.5,
-        opacity=0.1,
-        surface_count=1,
-        colorscale='blues',
-        showscale=False,
-        name="Nanoparticle Surface"
-    ))
-   
-    # Defect isosurface
-    fig.add_trace(go.Isosurface(
-        x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-        value=eta.flatten(),
-        isomin=iso_level_eta,
-        opacity=0.8,
-        surface_count=3,
-        colorscale=eta_cmap,
-        colorbar=dict(title="η", x=0.85, len=0.4),
-        name="Defect Region"
-    ))
-   
-    if show_stress_isosurface:
-        fig.add_trace(go.Isosurface(
-            x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
-            value=sigma.flatten(),
-            isomin=iso_level_stress * sigma.max(),
-            opacity=0.6,
-            surface_count=3,
-            colorscale=stress_cmap,
-            colorbar=dict(title="Stress", x=0.95, len=0.4),
-            name="High Stress Regions"
-        ))
-   
-    fig.update_layout(
-        title="3D Defect and Stress Distribution in Nanoparticle",
-        scene=dict(
-            xaxis_title="X (nm)",
-            yaxis_title="Y (nm)",
-            zaxis_title="Z (nm)",
-            aspectmode='data'
-        ),
-        width=900,
-        height=700,
-        margin=dict(l=0, r=0, b=0, t=40)
-    )
-   
-    return fig
-
-def create_vtu_file(eta, sigma, np_mask, N, dx):
-    """Create VTU file for ParaView - CORRECTED VERSION"""
-    # Create coordinate arrays
-    x_coords = np.linspace(-N*dx/2, N*dx/2, N)
-    y_coords = x_coords.copy()
-    z_coords = x_coords.copy()
-    
-    # Generate grid points
-    points = []
-    for i in range(N):
-        for j in range(N):
-            for k in range(N):
-                points.append(f"{x_coords[i]:.6f} {y_coords[j]:.6f} {z_coords[k]:.6f}")
-    
+    points = [f"{x[i]:.6f} {x[j]:.6f} {x[k]:.6f}" 
+              for i in range(N) for j in range(N) for k in range(N)]
     points_str = "\n".join(points)
-    
-    # Flatten arrays in Fortran order (column-major for VTK)
-    def flat(a):
-        return ' '.join(f"{x:.6f}" for x in a.flatten(order='F'))
-    
-    vtu_content = f'''<VTKFile type="StructuredGrid" version="0.1" byte_order="LittleEndian">
+
+    def flatten_fortran(arr):
+        return ' '.join(f"{x:.6f}" for x in arr.flatten(order='F'))
+
+    content = f'''<?xml version="1.0"?>
+<VTKFile type="StructuredGrid" version="1.0" byte_order="LittleEndian">
   <StructuredGrid WholeExtent="0 {N-1} 0 {N-1} 0 {N-1}">
     <Piece Extent="0 {N-1} 0 {N-1} 0 {N-1}">
-      <PointData Scalars="fields">
+      <PointData>
         <DataArray type="Float32" Name="eta" format="ascii">
-          {flat(eta)}
+          {flatten_fortran(eta)}
         </DataArray>
-        <DataArray type="Float32" Name="sigma" format="ascii">
-          {flat(sigma)}
+        <DataArray type="Float32" Name="stress_magnitude" format="ascii">
+          {flatten_fortran(sigma)}
         </DataArray>
-        <DataArray type="Float32" Name="np_mask" format="ascii">
-          {flat(np_mask.astype(float))}
+        <DataArray type="Float32" Name="nanoparticle" format="ascii">
+          {flatten_fortran(np_mask.astype(float))}
         </DataArray>
       </PointData>
       <Points>
@@ -294,156 +145,181 @@ def create_vtu_file(eta, sigma, np_mask, N, dx):
     </Piece>
   </StructuredGrid>
 </VTKFile>'''
-    
-    return vtu_content
+    return content
+
+def create_pvd_file(vtu_files_with_time):
+    lines = ['<?xml version="1.0"?>',
+             '<VTKFile type="Collection" version="1.0">',
+             '  <Collection>']
+    for t, filename in vtu_files_with_time:
+        lines.append(f'    <DataSet timestep="{t:.6f}" file="{filename}"/>')
+    lines += ['  </Collection>', '</VTKFile>']
+    return '\n'.join(lines)
 
 # =============================================
 # Main Simulation
 # =============================================
-st.header("🚀 3D Simulation")
-
 if st.button("Run 3D Simulation", type="primary"):
-    with st.spinner("Running 3D phase-field simulation... This may take a while."):
-        # Initialize
+    with st.spinner("Running simulation..."):
         np_mask = create_spherical_mask(N, dx, np_radius_ratio)
         eta = create_initial_defect(N, dx, np_mask, defect_radius_ratio, init_amplitude)
-       
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-       
-        # Evolution loop
+
+        progress = st.progress(0)
+        status = st.empty()
         history = []
+        stress_compute_interval = max(1, steps // 50)  # at least 50 frames
+
         for step in range(steps):
             eta = evolve_3d(eta, kappa, dt, dx, N)
-           
-            # Compute stress every 10 steps to save time
-            if step % 10 == 0 or step == steps - 1:
+
+            if step % stress_compute_interval == 0 or step == steps - 1:
                 sigma = compute_stress_3d(eta, eps0, C44, N, dx)
-                # Apply nanoparticle mask
                 eta[~np_mask] = 0.0
                 sigma[~np_mask] = 0.0
-                history.append((eta.copy(), sigma.copy()))
-           
-            # Update progress
-            progress = (step + 1) / steps
-            progress_bar.progress(progress)
-            status_text.text(f"Step {step+1}/{steps} - Max η: {eta.max():.3f}")
-       
-        st.session_state.history_3d = history
+                history.append((eta.copy(), sigma.copy(), step * dt * stress_compute_interval))
+
+            progress.progress((step + 1) / steps)
+            status.text(f"Step {step+1}/{steps} | Max η = {eta.max():.3f}")
+
+        st.session_state.history = history
         st.session_state.np_mask = np_mask
-        st.success(f"✅ 3D Simulation Complete! {len(history)} frames saved")
+        st.session_state.params = {
+            "N": N, "dx": dx, "dt": dt, "steps": steps,
+            "defect_type": defect_type, "eps0": eps0, "kappa": kappa,
+            "C44": C44, "np_radius_ratio": np_radius_ratio,
+            "defect_radius_ratio": defect_radius_ratio
+        }
+        st.success(f"Simulation complete! {len(history)} frames ready.")
 
 # =============================================
-# Results Visualization
+# Visualization & Download
 # =============================================
-if 'history_3d' in st.session_state:
-    st.header("📊 Results")
-   
-    history = st.session_state.history_3d
+if 'history' in st.session_state:
+    history = st.session_state.history
     np_mask = st.session_state.np_mask
-   
-    # Frame selector
-    frame = st.slider("Select Frame", 0, len(history)-1, len(history)-1)
-    eta, sigma = history[frame]
-   
-    # Display metrics
+    params = st.session_state.params
+
+    frame_idx = st.slider("Frame", 0, len(history)-1, len(history)-1)
+    eta, sigma, current_time = history[frame_idx]
+
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Max η", f"{eta.max():.3f}")
-    with col2:
-        st.metric("Defect Volume", f"{np.sum(eta > 0.1):,} voxels")
-    with col3:
-        st.metric("Max Stress", f"{sigma.max():.2f} GPa")
-    with col4:
-        st.metric("NP Volume", f"{np.sum(np_mask):,} voxels")
-   
+    col1.metric("Max η", f"{eta.max():.3f}")
+    col2.metric("Defect Volume", f"{(eta>0.3).sum():,} voxels")
+    col3.metric("Max Stress", f"{sigma.max():.2f} GPa")
+    col4.metric("Time", f"{current_time:.4f}")
+
     extent = [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
-   
-    # Visualization based on selected mode
-    if viz_mode == "2D Slices":
-        st.subheader("2D Slice Visualization")
-        fig_2d = create_2d_slice_plot(eta, sigma, slice_coord, slice_axis, extent)
-        st.pyplot(fig_2d)
-       
-    elif viz_mode == "3D Isosurface":
-        st.subheader("3D Isosurface Visualization")
-        fig_3d = create_3d_isosurface_plot(eta, sigma, np_mask,
-                                         iso_level_eta, iso_level_stress,
-                                         show_stress_isosurface)
-        st.plotly_chart(fig_3d, use_container_width=True)
-       
-    else: # Both
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("2D Slice")
-            fig_2d = create_2d_slice_plot(eta, sigma, slice_coord, slice_axis, extent)
-            st.pyplot(fig_2d)
-       
-        with col2:
-            st.subheader("3D Isosurface")
-            fig_3d = create_3d_isosurface_plot(eta, sigma, np_mask,
-                                             iso_level_eta, iso_level_stress,
-                                             show_stress_isosurface)
-            st.plotly_chart(fig_3d, use_container_width=True)
-   
-    # Download section
-    st.header("💾 Download Results")
-   
-    # Create ZIP with all frames
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, (e, s) in enumerate(history):
-            vtu_frame = create_vtu_file(e, s, np_mask, N, dx)
-            zf.writestr(f"frame_{i:04d}.vtu", vtu_frame)
-       
-        # Add parameter summary
-        params = f"""3D Simulation Parameters:
-Grid Size: {N}³
-Grid Spacing: {dx} nm
-Time Step: {dt}
-Steps: {steps}
-Defect Type: {defect_type}
-Eigenstrain ε*: {eps0}
-Interface κ: {kappa}
-Shear Modulus C44: {C44} GPa
-NP Radius Ratio: {np_radius_ratio}
-Defect Radius Ratio: {defect_radius_ratio}
-Initial Amplitude: {init_amplitude}
+
+    if viz_mode in ["2D Slices", "Both"]:
+        st.subheader("2D Slice")
+        axis_map = {"X": (eta[slice_coord,:,:], sigma[slice_coord,:,:], "Y", "Z"),
+                    "Y": (eta[:,slice_coord,:], sigma[:,slice_coord,:], "X", "Z"),
+                    "Z": (eta[:,:,slice_coord], sigma[:,:,slice_coord], "X", "Y")}
+        eta_sl, sigma_sl, xlab, ylab = axis_map[slice_axis]
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+        ax1.imshow(eta_sl.T, extent=extent, cmap=eta_cmap, origin='lower', vmin=0, vmax=1)
+        ax1.set_title(f"η — {slice_axis} slice at {slice_coord}")
+        ax1.set_xlabel(xlab); ax1.set_ylabel(ylab)
+        plt.colorbar(ax1.images[0], ax=ax1, label="η")
+
+        im = ax2.imshow(sigma_sl.T, extent=extent, cmap=stress_cmap, origin='lower')
+        ax2.set_title(f"Stress Magnitude — {slice_axis} slice")
+        ax2.set_xlabel(xlab); ax2.set_ylabel(ylab)
+        plt.colorbar(im, ax=ax2, label="Stress (GPa)")
+        plt.tight_layout()
+        st.pyplot(fig)
+
+    if viz_mode in ["3D Isosurface", "Both"]:
+        st.subheader("3D Interactive View")
+        x = np.linspace(-N*dx/2, N*dx/2, N)
+        X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
+
+        fig = go.Figure()
+        # NP surface
+        fig.add_trace(go.Isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+                                    value=np_mask.flatten(),
+                                    isomin=0.9, isomax=1.1,
+                                    opacity=0.15, colorscale='Blues', showscale=False,
+                                    name="Nanoparticle"))
+
+        # Defect
+        fig.add_trace(go.Isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+                                    value=eta.flatten(),
+                                    isomin=iso_level_eta, opacity=0.8,
+                                    colorscale=eta_cmap, caps=dict(x_show=False, y_show=False, z_show=False),
+                                    name="Defect"))
+
+        if show_stress_iso:
+            fig.add_trace(go.Isosurface(x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+                                        value=sigma.flatten(),
+                                        isomin=iso_level_stress,
+                                        opacity=0.6, colorscale=stress_cmap,
+                                        name="High Stress"))
+
+        fig.update_layout(scene_aspectmode='data', height=700)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # =============================================
+    # Professional ParaView Export (.pvd + .vtu)
+    # =============================================
+    st.header("Download Full ParaView Dataset")
+    if st.button("Generate .pvd + .vtu Package"):
+        with st.spinner("Creating ParaView files..."):
+            buffer = BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                vtu_list = []
+
+                for idx, (e, s, t) in enumerate(history):
+                    vtu_name = f"frame_{idx:04d}.vtu"
+                    vtu_content = create_vtu_ascii(e, s, np_mask, N, dx, idx)
+                    zf.writestr(vtu_name, vtu_content)
+                    vtu_list.append((t, vtu_name))
+
+                # Create master .pvd
+                pvd_content = create_pvd_file(vtu_list)
+                zf.writestr("simulation.pvd", pvd_content)
+
+                # Parameters
+                param_text = f"""3D Ag Nanoparticle Defect Simulation
+Grid: {N}^3
+dx = {dx} nm
+Total steps: {steps}
+Defect type: {defect_type}
+Eigenstrain ε* = {eps0}
+Interface energy κ = {kappa}
+C44 = {C44} GPa
+NP radius ratio = {np_radius_ratio}
+Initial defect radius ratio = {defect_radius_ratio}
+Generated with Streamlit + Numba + NumPy
 """
-        zf.writestr("simulation_parameters.txt", params)
-   
-    buffer.seek(0)
-   
-    st.download_button(
-        "📥 Download All Frames (VTU + Parameters)",
-        buffer,
-        f"3D_AgNP_{defect_type}_Simulation.zip",
-        "application/zip"
-    )
+                zf.writestr("README.txt", param_text)
+
+            buffer.seek(0)
+            st.download_button(
+                label="Download Complete ParaView Dataset (.pvd + .vtu)",
+                data=buffer,
+                file_name=f"AgNP_3D_{defect_type}_N{N}_ParaView.zip",
+                mime="application/zip"
+            )
+
+        st.success("Package ready!")
+        st.info("""
+        **How to use in ParaView:**
+        1. Extract the ZIP
+        2. Open **simulation.pvd** → full timeline loads instantly
+        3. Play animation, apply Threshold/Clip/Slice, color by any field
+        4. Export movies, screenshots, or data
+        """)
 
 # =============================================
-# Theoretical Background
+# Theory
 # =============================================
-with st.expander("🔬 3D Model Theory"):
+with st.expander("Model Details & References"):
     st.markdown("""
-    ### **3D Phase-Field Model for Spherical Nanoparticles**
-   
-    **Governing Equations:**
-    - **Allen-Cahn in 3D**: `∂η/∂t = -M[∂f/∂η - κ∇²η]`
-    - **3D Laplacian**: `∇²η = (∂²η/∂x² + ∂²η/∂y² + ∂²η/∂z²)`
-    - **FFT Elasticity**: Solves mechanical equilibrium in Fourier space
-   
-    **Key Features:**
-    - **Spherical boundary conditions**: Realistic nanoparticle geometry
-    - **3D eigenstrains**: Full stress tensor computation
-    - **Multiple visualization modes**: 2D slices + 3D isosurfaces
-    - **Physical parameters**: Crystallographically accurate for Ag
-   
-    **Computational Considerations:**
-    - **Memory**: N³ grid requires O(N³) memory
-    - **Performance**: Numba JIT compilation for 3D loops
-    - **Visualization**: Plotly for interactive 3D, Matplotlib for 2D
+    **Phase-field model** based on Allen-Cahn with eigenstrain-driven elasticity solved via FFT.
+    - Spherical nanoparticle with free surfaces approximated via mask
+    - Elastic solution valid for isotropic media (valid for FCC Ag in <100> orientation)
+    - Stress = C₄₄ × |ε_el| (magnitude shown for clarity)
     """)
 
-st.caption("🔮 3D Crystallographically Accurate • Spherical Nanoparticles • Interactive Visualization • 2025")
+st.caption("Professional 3D Phase-Field Simulator • Full .pvd ParaView Export • 2025")
