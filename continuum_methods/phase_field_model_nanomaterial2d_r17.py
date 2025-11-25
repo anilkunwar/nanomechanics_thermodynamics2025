@@ -144,8 +144,8 @@ colorbar_limits = {
 st.sidebar.subheader("Chart Styling")
 # Font sizes
 title_font_size = st.sidebar.slider("Title Font Size", 12, 24, 16)
-label_font_size = st.sidebar.slider("Label Font Size", 10, 20, 14)
-tick_font_size = st.sidebar.slider("Tick Font Size", 8, 18, 12)
+label_font_size = st.sidebar.slider("Label Font Size", 10, 45, 14)
+tick_font_size = st.sidebar.slider("Tick Font Size", 8, 45, 12)
 # Line and spine controls
 line_width = st.sidebar.slider("Contour Line Width", 1.0, 5.0, 2.0, 0.5)
 spine_width = st.sidebar.slider("Spine Line Width", 1.0, 4.0, 2.5, 0.5)
