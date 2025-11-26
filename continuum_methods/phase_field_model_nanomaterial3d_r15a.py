@@ -50,15 +50,18 @@ st.sidebar.header("Simulation Parameters")
 N = 64
 dx = 0.25  # nm
 dt = 0.005
-kappa = 0.6
 M = 1.0
 defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
 eps0_defaults = {"ISF": 0.707, "ESF": 1.414, "Twin": 2.121}
 eps0 = st.sidebar.slider("Eigenstrain ε*", 0.3, 3.0, eps0_defaults[defect_type], 0.01)
+kappa = st.sidebar.slider("Interface coeff κ", 0.1, 2.0, 0.6, 0.05)
 steps = st.sidebar.slider("Evolution steps", 20, 200, 80, 10)
 save_every = st.sidebar.slider("Save every", 5, 20, 10)
 
-st.sidebar.header("Habit Plane Orientation")
+st.sidebar.header("Defect Shape")
+shape = st.sidebar.selectbox("Initial Defect Shape", ["Sphere", "Cuboid", "Ellipsoid", "Cube", "Cylinder", "Planar"])
+
+st.sidebar.header("Habit Plane Orientation (for Planar)")
 col1, col2 = st.sidebar.columns(2)
 with col1:
     theta_deg = st.slider("Polar angle θ (°)", 0, 180, 55, help="54.7° = exact {111}")
@@ -89,6 +92,10 @@ else:
 st.sidebar.subheader("3D Rendering")
 opacity_3d = st.sidebar.slider("3D Opacity", 0.1, 1.0, 0.7, 0.1)
 surface_count = st.sidebar.slider("Surface Count", 1, 10, 2)
+show_grid = st.sidebar.checkbox("Show Grid in Plotly", value=True)
+show_matrix = st.sidebar.checkbox("Show Nanoparticle Matrix", value=True)
+eta_threshold = st.sidebar.slider("η Visualization Threshold", 0.0, 1.0, 0.1, 0.05)
+stress_threshold = st.sidebar.slider("Stress Visualization Threshold (GPa)", 0.0, 5.0, 0.0, 0.1)
 
 # =============================================
 # Physical Domain Setup
@@ -107,20 +114,43 @@ R_np = N * dx / 4
 r = np.sqrt(X**2 + Y**2 + Z**2)
 np_mask = r <= R_np
 
-# Initial 3D defect (ellipsoidal for more volumetric shape)
-def create_initial_eta(shape="Ellipse"):
+# Initial defect based on shape
+def create_initial_eta(shape):
     eta = np.zeros((N, N, N))
     cx, cy, cz = N//2, N//2, N//2
-    a, b, c = 16, 16, 8  # Ellipsoid radii for 3D defect
-    mask = ((X/a)**2 + (Y/b)**2 + (Z/c)**2) <= 1
-    eta[mask] = 0.7
+    if shape == "Sphere":
+        mask = r <= 8 * dx
+        eta[mask] = 0.7
+    elif shape == "Cuboid":
+        w, h, d = 16, 8, 8
+        mask = (np.abs(X) <= w/2) & (np.abs(Y) <= h/2) & (np.abs(Z) <= d/2)
+        eta[mask] = 0.7
+    elif shape == "Ellipsoid":
+        a, b, c = 16, 8, 8
+        mask = (X**2/a**2 + Y**2/b**2 + Z**2/c**2) <= 1
+        eta[mask] = 0.7
+    elif shape == "Cube":
+        side = 12
+        mask = (np.abs(X) <= side/2) & (np.abs(Y) <= side/2) & (np.abs(Z) <= side/2)
+        eta[mask] = 0.7
+    elif shape == "Cylinder":
+        radius = 8
+        height = 16
+        mask = (X**2 + Y**2 <= radius**2) & (np.abs(Z) <= height/2)
+        eta[mask] = 0.7
+    elif shape == "Planar":
+        n = np.array([np.cos(phi)*np.sin(theta), np.sin(phi)*np.sin(theta), np.cos(theta)])
+        dist = n[0]*X + n[1]*Y + n[2]*Z
+        thickness = 3 * dx
+        mask = np.abs(dist) <= thickness / 2
+        eta[mask] = 0.7
     eta[~np_mask] = 0.0
     np.random.seed(42)
     eta += 0.02 * np.random.randn(N, N, N) * np_mask
     eta = np.clip(eta, 0.0, 1.0)
     return eta
 
-eta = create_initial_eta()
+eta = create_initial_eta(shape)
 
 # =============================================
 # 3D Phase-Field Evolution (Numba)
@@ -144,7 +174,7 @@ def evolve_3d(eta, kappa, dt, dx, N):
     return eta_new
 
 # =============================================
-# EXACT 3D SPECTRAL STRESS SOLVER (Improved Theory)
+# EXACT 3D SPECTRAL STRESS SOLVER (Improved Theory with scaling)
 # =============================================
 @st.cache_data
 def compute_stress_3d_exact(eta, eps0, theta, phi):
@@ -247,7 +277,7 @@ def create_vti(eta, sigma, step, time):
 # =============================================
 def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
                              isomin=None, isomax=None, opacity=0.7,
-                             surface_count=2, custom_min=None, custom_max=None):
+                             surface_count=2, custom_min=None, custom_max=None, show_grid=False):
     values_masked = values[np_mask]
     if len(values_masked) == 0 or not np.all(np.isreal(values_masked)):
         values_masked = np.real(values.flatten())
@@ -277,13 +307,23 @@ def create_plotly_isosurface(X, Y, Z, values, title, colorscale,
         colorbar=dict(title=title)
     ))
 
+    if show_matrix:
+        theta = np.linspace(0, np.pi, 50)
+        phi = np.linspace(0, 2*np.pi, 50)
+        theta, phi = np.meshgrid(theta, phi)
+        x = R_np * np.sin(theta) * np.cos(phi) + origin + N*dx/2
+        y = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2
+        z = R_np * np.cos(theta) + origin + N*dx/2
+        fig.add_trace(go.Surface(x=x, y=y, z=z, surfacecolor=np.ones_like(x), colorscale='gray', opacity=0.3, showscale=False))
+
     fig.update_layout(
         scene=dict(
             xaxis_title='X (nm)',
             yaxis_title='Y (nm)',
             zaxis_title='Z (nm)',
             aspectmode='data',
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5))
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.5)),
+            xaxis_showgrid=show_grid, yaxis_showgrid=show_grid, zaxis_showgrid=show_grid
         ),
         height=600,
         title=dict(text=title, x=0.5, font=dict(size=16))
@@ -416,29 +456,35 @@ if 'history_3d' in st.session_state:
     col1, col2 = st.columns(2)
     with col1:
         st.subheader(f"Defect Order Parameter η ({eta_cmap})")
+        eta_vis = eta_3d.copy()
+        eta_vis[eta_vis < eta_threshold] = np.nan
         fig_eta = create_plotly_isosurface(
-            X, Y, Z, eta_3d, "Defect Parameter η",
+            X, Y, Z, eta_vis, "Defect Parameter η",
             eta_cmap, isomin=0.3, isomax=0.9,
             opacity=opacity_3d, surface_count=surface_count,
             custom_min=eta_lims[0] if eta_lims else None,
-            custom_max=eta_lims[1] if eta_lims else None
+            custom_max=eta_lims[1] if eta_lims else None,
+            show_grid=show_grid
         )
         st.plotly_chart(fig_eta, use_container_width=True)
     with col2:
         st.subheader(f"Stress Magnitude |σ| ({stress_cmap})")
-        stress_data = sigma_3d[np_mask]
+        stress_vis = sigma_3d.copy()
+        stress_vis[stress_vis < stress_threshold] = np.nan
+        stress_data = stress_vis[np_mask]
         stress_data = np.real(stress_data) if np.any(np.iscomplex(stress_data)) else stress_data
         if len(stress_data) > 0:
-            stress_isomax = safe_percentile(stress_data, 95, sigma_3d.max())
+            stress_isomax = safe_percentile(stress_data, 95, stress_vis.max())
         else:
-            stress_isomax = np.nanmax(sigma_3d) if np.any(sigma_3d) else 10.0
+            stress_isomax = np.nanmax(stress_vis) if np.any(stress_vis) else 10.0
         
         fig_sig = create_plotly_isosurface(
-            X, Y, Z, sigma_3d, "Stress |σ| (GPa)",
+            X, Y, Z, stress_vis, "Stress |σ| (GPa)",
             stress_cmap, isomin=0.0, isomax=stress_isomax,
             opacity=opacity_3d, surface_count=surface_count,
             custom_min=stress_lims[0] if stress_lims else None,
-            custom_max=stress_lims[1] if stress_lims else None
+            custom_max=stress_lims[1] if stress_lims else None,
+            show_grid=show_grid
         )
         st.plotly_chart(fig_sig, use_container_width=True)
     
