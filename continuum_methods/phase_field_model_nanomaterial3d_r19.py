@@ -366,7 +366,8 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
     slice_pos = N // 2
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx}")
-Slice z={slice_pos}', fontsize=16, y=0.95)
+    ax.set_title(f"Slice z={slice_pos}", fontsize=16, y=0.95)
+
 
     eta_data = eta_3d[np_mask]
     stress_data = sigma_3d[np_mask]
