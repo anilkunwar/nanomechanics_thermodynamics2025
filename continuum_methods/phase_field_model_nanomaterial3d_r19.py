@@ -365,7 +365,7 @@ def safe_matplotlib_cmap(cmap_name, default='viridis'):
 def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_cmap, eta_lims, stress_lims):
     slice_pos = N // 2
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle(f'3D Stress Visualization Comparison - Frame {frame_idx}
+    fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx}")
 Slice z={slice_pos}', fontsize=16, y=0.95)
 
     eta_data = eta_3d[np_mask]
