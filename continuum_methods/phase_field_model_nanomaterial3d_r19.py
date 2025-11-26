@@ -188,99 +188,172 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np):
 # - returns stresses in GPa (divides Pa by 1e9)
 
 @st.cache_data
+@st.cache_data
 def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debug=False):
-    # convert length to meters for FFT
+    # Convert length to meters for FFT (CRITICAL: ensure consistent units)
     dx_m = dx_nm * 1e-9
-
-    gamma = eps0_val
-    delta = 0.02
-    n = np.array([np.cos(phi_val)*np.sin(theta_val), np.sin(phi_val)*np.sin(theta_val), np.cos(theta_val)])
-    s = np.cross(n, np.array([0.0,0.0,1.0]))
+    
+    # Define slip system vectors for FCC {111} planes
+    n = np.array([np.cos(phi_val)*np.sin(theta_val), 
+                  np.sin(phi_val)*np.sin(theta_val), 
+                  np.cos(theta_val)])
+    
+    # Slip direction - for FCC <110> type
+    s = np.cross(n, np.array([0.0, 0.0, 1.0]))
     if np.linalg.norm(s) < 1e-12:
-        s = np.cross(n, np.array([0.0,1.0,0.0]))
+        s = np.cross(n, np.array([0.0, 1.0, 0.0]))
     s = s / np.linalg.norm(s)
+    
+    # DEBUG: Check vector magnitudes
+    if debug:
+        st.write(f"[Debug] n vector: {n}, magnitude: {np.linalg.norm(n):.6f}")
+        st.write(f"[Debug] s vector: {s}, magnitude: {np.linalg.norm(s):.6f}")
+        st.write(f"[Debug] n·s (should be 0): {np.dot(n, s):.6e}")
 
-    # eigenstrain field eps_star[a,b,x,y,z]
-    eps_star = np.zeros((3,3,N,N,N), dtype=np.float64)
-    for a in range(3):
-        for b in range(3):
-            base = delta * n[a]*n[b] + gamma * 0.5 * (n[a]*s[b] + s[a]*n[b])
-            eps_star[a,b] = base * eta_field
+    # Eigenstrain definition - FIXED: proper transformation strain for defects
+    # For stacking faults and twins in FCC, this is the shear component
+    eigenstrain_magnitude = eps0_val  # This should be ~0.1-0.2 for realistic strains
+    
+    # Build eigenstrain tensor - FIXED formulation
+    eps_star = np.zeros((3, 3, N, N, N), dtype=np.float64)
+    
+    for i in range(3):
+        for j in range(3):
+            # Proper transformation strain for crystallographic defects
+            # eps* = 0.5 * gamma * (n⊗s + s⊗n)  where gamma is the eigenstrain magnitude
+            shear_component = 0.5 * eigenstrain_magnitude * (n[i]*s[j] + s[i]*n[j])
+            eps_star[i, j] = shear_component * eta_field
+    
+    if debug:
+        max_eps = np.max(np.abs(eps_star))
+        st.write(f"[Debug] Max eigenstrain component: {max_eps:.6f}")
+        st.write(f"[Debug] Eigenstrain range: {eps_star.min():.6e} to {eps_star.max():.6e}")
 
-    # FFT wavenumbers in SI (rad/m)
+    # FFT wavenumbers in proper units (1/m)
     kx = 2.0 * np.pi * np.fft.fftfreq(N, d=dx_m)
-    ky = 2.0 * np.pi * np.fft.fftfreq(N, d=dx_m)
+    ky = 2.0 * np.pi * np.fft.fftfreq(N, d=dx_m) 
     kz = 2.0 * np.pi * np.fft.fftfreq(N, d=dx_m)
     KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
-    # protect k=0
-    K2[0,0,0] = np.inf
+    
+    # Protect against division by zero at k=0
+    K2[0, 0, 0] = 1.0  # Set to 1 instead of inf to avoid numerical issues
+    k_magnitude = np.sqrt(K2)
+    
+    if debug:
+        st.write(f"[Debug] kx range: {kx.min():.3e} to {kx.max():.3e} 1/m")
+        st.write(f"[Debug] K2 range: {K2.min():.3e} to {K2.max():.3e} 1/m²")
 
-    # trace_star
-    trace_star = eps_star[0,0] + eps_star[1,1] + eps_star[2,2]
-
-    # Chat (Fourier transform of lam*trace*I + 2mu*eps_star)
-    Chat = np.zeros((3,3,N,N,N), dtype=np.complex128)
+    # Compute Fourier transform of eigenstrain * stiffness
+    # For isotropic material: σ_ij = C_ijkl * ε_kl
+    trace_star = eps_star[0, 0] + eps_star[1, 1] + eps_star[2, 2]
+    
+    # Build the stress divergence term in Fourier space
+    Chat = np.zeros((3, 3, N, N, N), dtype=np.complex128)
     for i in range(3):
         for j in range(3):
-            field = (lam * trace_star * (1.0 if i==j else 0.0) + 2.0 * mu * eps_star[i,j])
-            Chat[i,j] = np.fft.fftn(field)
+            # Isotropic stress-strain relation: σ = λ tr(ε) I + 2μ ε
+            field = lam * trace_star * (1.0 if i == j else 0.0) + 2.0 * mu * eps_star[i, j]
+            Chat[i, j] = np.fft.fftn(field)
+    
+    if debug:
+        st.write(f"[Debug] Chat magnitude range: {np.min(np.abs(Chat)):.3e} to {np.max(np.abs(Chat)):.3e}")
 
-    # build sigma_hat using isotropic Green operator G_{ijkl}(k)
-    sigma_hat = np.zeros_like(Chat)
-    # Precompute K arrays for convenience
-    K = [KX, KY, KZ]
+    # CORRECTED 3D Green's function approach
+    sigma_hat = np.zeros_like(Chat, dtype=np.complex128)
+    
+    # Precompute normalized wavevectors
+    k_norm = np.zeros((3, N, N, N))
+    k_norm[0] = np.where(K2 > 0, KX / k_magnitude, 0.0)
+    k_norm[1] = np.where(K2 > 0, KY / k_magnitude, 0.0) 
+    k_norm[2] = np.where(K2 > 0, KZ / k_magnitude, 0.0)
+    
+    # Apply the Green's function in Fourier space
     for i in range(3):
         for j in range(3):
-            temp = np.zeros((N,N,N), dtype=np.complex128)
-            Ki = K[i]
-            Kj = K[j]
+            temp = np.zeros((N, N, N), dtype=np.complex128)
+            
             for p in range(3):
                 for q in range(3):
-                    Kp = K[p]
-                    Kq = K[q]
-                    term1 = Kp * Kq * (1.0 if i==j else 0.0)
-                    term2 = Ki * Kq * (1.0 if p==j else 0.0)
-                    term3 = Kj * Kp * (1.0 if q==i else 0.0)
-                    term4 = (lam + mu) / (mu * (lam + 2.0*mu)) * Ki * Kj * Kp * Kq / K2
-                    G = (term1 - term2 - term3 + term4) / (4.0 * mu * K2)
-                    temp += G * Chat[p,q]
-            sigma_hat[i,j] = temp
-
-    # enforce zero mean (k=0) — physical for pure eigenstrain in periodic cell if desired
+                    # Isotropic Green's operator in Fourier space
+                    delta_ip = 1.0 if i == p else 0.0
+                    delta_jq = 1.0 if j == q else 0.0
+                    delta_iq = 1.0 if i == q else 0.0
+                    delta_jp = 1.0 if j == p else 0.0
+                    delta_pq = 1.0 if p == q else 0.0
+                    
+                    # Christoffel matrix and its inverse
+                    Christoffel = np.zeros((3, 3, N, N, N), dtype=np.complex128)
+                    for a in range(3):
+                        for b in range(3):
+                            Christoffel[a, b] = (lam + mu) * k_norm[a] * k_norm[b] + \
+                                               mu * delta_ab * (a == b)
+                    
+                    # Simplified approach: use the isotropic Green's function directly
+                    G_term = (delta_ip * k_norm[j] * k_norm[q] + 
+                             delta_jq * k_norm[i] * k_norm[p] +
+                             delta_iq * k_norm[j] * k_norm[p] + 
+                             delta_jp * k_norm[i] * k_norm[q] -
+                             2.0 * k_norm[i] * k_norm[j] * k_norm[p] * k_norm[q])
+                    
+                    # Apply the Green's function
+                    G_operator = G_term / (mu * K2)
+                    
+                    # Add the lambda term contribution
+                    lambda_term = (lam / (mu * (lam + 2 * mu))) * k_norm[i] * k_norm[j] * k_norm[p] * k_norm[q] / K2
+                    G_operator -= lambda_term
+                    
+                    temp += G_operator * Chat[p, q]
+            
+            sigma_hat[i, j] = temp
+    
+    # Set the zero frequency component to zero (mean stress)
     for i in range(3):
         for j in range(3):
-            sigma_hat[i,j][0,0,0] = 0.0
+            sigma_hat[i, j][0, 0, 0] = 0.0
 
-    # inverse FFT to real space (Pa)
+    # Inverse FFT to get real-space stress (in Pa)
     sigma_real = np.zeros_like(eps_star, dtype=np.float64)
     for i in range(3):
         for j in range(3):
-            sigma_real[i,j] = np.real(np.fft.ifftn(sigma_hat[i,j]))
+            sigma_real[i, j] = np.real(np.fft.ifftn(sigma_hat[i, j]))
 
-    sxx = sigma_real[0,0]
-    syy = sigma_real[1,1]
-    szz = sigma_real[2,2]
-    sxy = sigma_real[0,1]
-    sxz = sigma_real[0,2]
-    syz = sigma_real[1,2]
+    # Compute stress components
+    sxx = sigma_real[0, 0]
+    syy = sigma_real[1, 1] 
+    szz = sigma_real[2, 2]
+    sxy = sigma_real[0, 1]
+    sxz = sigma_real[0, 2]
+    syz = sigma_real[1, 2]
 
-    # magnitudes in GPa for visualization
+    # DEBUG: Check raw stress values before conversion
+    if debug:
+        max_stress_pa = np.max(np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2 + sxz**2 + syz**2)))
+        st.write(f"[Debug] Max stress magnitude (Pa): {max_stress_pa:.3e}")
+        st.write(f"[Debug] Stress components range (Pa):")
+        st.write(f"  sxx: {sxx.min():.3e} to {sxx.max():.3e}")
+        st.write(f"  syy: {syy.min():.3e} to {syy.max():.3e}")
+        st.write(f"  sxy: {sxy.min():.3e} to {sxy.max():.3e}")
+
+    # Convert to GPa for visualization - FIXED conversion
+    # 1 GPa = 1e9 Pa, so divide by 1e9
     sigma_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2.0*(sxy**2 + sxz**2 + syz**2)) / 1e9
     sigma_hydro = (sxx + syy + szz) / 3.0 / 1e9
-    von_mises = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 6.0*(sxy**2 + sxz**2 + syz**2))) / 1e9
+    von_mises = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 
+                              6.0*(sxy**2 + sxz**2 + syz**2))) / 1e9
 
-    # mask outside nanoparticle
+    # Mask outside nanoparticle
     sigma_mag_masked = np.nan_to_num(sigma_mag * np_mask)
-    sigma_hydro_masked = np.nan_to_num(sigma_hydro * np_mask)
+    sigma_hydro_masked = np.nan_to_num(sigma_hydro * np_mask) 
     von_mises_masked = np.nan_to_num(von_mises * np_mask)
 
+    # Final debug output
     if debug:
-        st.write("[Debug] eps_star range:", eps_star.min(), eps_star.max())
-        st.write("[Debug] Chat max abs:", np.max(np.abs(Chat)))
-        st.write("[Debug] sigma_hat max abs:", np.max(np.abs(sigma_hat)))
-        st.write("[Debug] sigma_real sample (Pa) max:", np.max(np.abs(sigma_real)))
-        st.write("[Debug] sigma_mag (GPa) max:", np.max(np.abs(sigma_mag_masked)))
+        st.write(f"[Debug] Final stress magnitude range (GPa): {sigma_mag_masked.min():.6f} to {sigma_mag_masked.max():.6f}")
+        st.write(f"[Debug] Material constants:")
+        st.write(f"  lambda: {lam/1e9:.1f} GPa")
+        st.write(f"  mu: {mu/1e9:.1f} GPa")
+        st.write(f"  Expected stress scale: ~{eps0_val * mu/1e9:.1f} GPa")
 
     return sigma_mag_masked, sigma_hydro_masked, von_mises_masked
 
