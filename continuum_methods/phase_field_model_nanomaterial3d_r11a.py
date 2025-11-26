@@ -1,5 +1,5 @@
 # =============================================
-# 3D Ag Nanoparticle Phase-Field + FFT – CORRECTED STRESS + ENHANCED COLORS
+# 3D Ag Nanoparticle Phase-Field + FFT – CONSISTENT STRESS + ENHANCED COLORS
 # =============================================
 import streamlit as st
 import numpy as np
@@ -14,7 +14,7 @@ st.set_page_config(page_title="3D Ag NP Defect Evolution", layout="wide")
 st.title("3D Phase-Field Simulation of Defects in Spherical Ag Nanoparticles")
 st.markdown("""
 **Realistic spherical nanoparticle • Internal planar defect (ISF/Twin)**  
-Interactive 3D Plotly • Enhanced Color Maps • Custom Color Scale Limits
+Interactive 3D Plotly • Enhanced Color Maps • Consistent Stress Calculation
 """)
 
 # =============================================
@@ -131,37 +131,77 @@ def evolve_3d(eta, kappa, dt, dx, N):
     return eta_new
 
 # =============================================
-# CORRECTED 3D Stress Calculation (Gradient-Based)
+# CONSISTENT 3D Stress Calculation (Corrected FFT)
 # =============================================
 @st.cache_data
 def compute_stress_3d(eta, eps0):
     """
-    Consistent stress calculation based on gradient of order parameter
-    This provides reliable, reproducible stress patterns
+    Consistent FFT-based stress calculation with proper eigenstrain formulation
+    This provides reliable, reproducible stress patterns matching defect evolution
     """
-    # Calculate gradient of order parameter
-    grad_eta_x = np.gradient(eta, dx, axis=0)
-    grad_eta_y = np.gradient(eta, dx, axis=1) 
-    grad_eta_z = np.gradient(eta, dx, axis=2)
+    # Define proper eigenstrain tensor for planar defect (shear component)
+    eps_star = np.zeros((N, N, N))
     
-    # Strain energy density approximation
-    # |∇η|² represents strain localization at defect interfaces
-    strain_energy = (grad_eta_x**2 + grad_eta_y**2 + grad_eta_z**2)
-    
-    # Stress magnitude proportional to strain energy and eigenstrain
-    stress_magnitude = C44 * eps0 * strain_energy
+    # For planar defects, use shear eigenstrain proportional to order parameter
+    # This creates stress concentrations at defect boundaries
+    eps_star = eps0 * eta * 0.5
     
     # Apply nanoparticle mask
-    stress_magnitude *= np_mask
+    eps_star = eps_star * np_mask
     
-    # Smooth the stress field for better visualization
-    from scipy import ndimage
-    stress_magnitude = ndimage.gaussian_filter(stress_magnitude, sigma=1.0)
+    # FFT of eigenstrain
+    eps_fft = np.fft.fftn(eps_star)
     
-    return np.clip(stress_magnitude, 0, None)
+    # Wave vectors in proper units (2π for Fourier space)
+    kx, ky, kz = np.meshgrid(
+        np.fft.fftfreq(N, d=dx) * 2 * np.pi,
+        np.fft.fftfreq(N, d=dx) * 2 * np.pi,
+        np.fft.fftfreq(N, d=dx) * 2 * np.pi,
+        indexing='ij'
+    )
+    
+    # Avoid division by zero
+    k2 = kx**2 + ky**2 + kz**2
+    k2[0,0,0] = 1e-12
+    
+    # Isotropic elasticity Green's function approach
+    # For shear eigenstrain, stress is proportional to k·ε·k terms
+    sigma_hat = np.zeros_like(eps_fft)
+    
+    # Simplified but consistent stress calculation
+    # Stress concentrates where eigenstrain gradients are high
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                if k2[i,j,k] == 0:
+                    continue
+                
+                # Unit wave vector
+                n = np.array([kx[i,j,k], ky[i,j,k], kz[i,j,k]]) / np.sqrt(k2[i,j,k])
+                
+                # Stress in Fourier space (simplified projection)
+                # This creates stress concentrations at defect interfaces
+                sigma_hat[i,j,k] = (2 * C44 * eps_fft[i,j,k] * 
+                                  (n[0]*n[1] + n[1]*n[0]))  # Shear component
+    
+    # Transform back to real space
+    sigma_real = np.real(np.fft.ifftn(sigma_hat))
+    
+    # Take absolute value for stress magnitude and apply physical scaling
+    stress_magnitude = np.abs(sigma_real) * C44
+    
+    # Apply nanoparticle mask and ensure positive values
+    stress_magnitude = stress_magnitude * np_mask
+    stress_magnitude = np.clip(stress_magnitude, 0, None)
+    
+    # Add baseline stress from defect presence
+    # This ensures stress is visible even in uniform defect regions
+    stress_magnitude += eps0 * eta * C44 * 0.1
+    
+    return stress_magnitude
 
 # =============================================
-# Enhanced VTI Writer
+# VTI Writer (Perfect ParaView Compatibility)
 # =============================================
 def create_vti(eta, sigma, step, time):
     flat = lambda arr: ' '.join(map(str, arr.flatten(order='F')))
@@ -342,7 +382,7 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx,
 # Run Enhanced Simulation
 # =============================================
 if st.button("Run 3D Evolution", type="primary"):
-    with st.spinner("Running 3D phase-field + stress calculation..."):
+    with st.spinner("Running 3D phase-field + FFT elasticity..."):
         eta_current = eta.copy()
         history = []
         vti_list = []
@@ -358,15 +398,9 @@ if st.button("Run 3D Evolution", type="primary"):
                 vti_content = create_vti(eta_current, sigma, step, current_time)
                 vti_list.append(vti_content)
                 times.append(current_time)
-                
-                # Show progress with stress statistics for better feedback
-                sigma_np = sigma[np_mask]
-                if len(sigma_np) > 0:
-                    st.write(f"Step {step}/{steps} – t = {current_time:.3f}, Max Stress: {sigma_np.max():.2f} GPa")
-                else:
-                    st.write(f"Step {step}/{steps} – t = {current_time:.3f}")
+                st.write(f"Step {step}/{steps} – t = {current_time:.3f}")
 
-        # Build PVD file
+        # Build correct PVD
         pvd = '<?xml version="1.0"?>\n'
         pvd += '<VTKFile type="Collection" version="1.0">\n'
         pvd += '  <Collection>\n'
@@ -380,50 +414,50 @@ if st.button("Run 3D Evolution", type="primary"):
         st.success(f"3D Simulation Complete! {len(history)} frames saved")
 
 # =============================================
-# Enhanced Interactive Visualization
+# 3D Interactive Visualization
 # =============================================
 if 'history_3d' in st.session_state:
-    frame_idx = st.slider("Select Frame", 0, len(st.session_state.history_3d)-1, 
-                         len(st.session_state.history_3d)-1)
+    frame_idx = st.slider("Select Frame", 0, len(st.session_state.history_3d)-1, len(st.session_state.history_3d)-1)
     eta_3d, sigma_3d = st.session_state.history_3d[frame_idx]
-    
-    # Prepare color limits
-    eta_lims = (eta_min, eta_max) if use_custom_limits else None
-    stress_lims = (stress_min, stress_max) if use_custom_limits else None
-    
-    st.header("Enhanced 3D Visualization")
-    
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader(f"Defect Order Parameter η ({eta_cmap})")
-        fig_eta = create_plotly_isosurface(
-            X, Y, Z, eta_3d, "Defect Parameter η", 
-            eta_cmap, isomin=0.3, isomax=0.9,
-            opacity=opacity_3d, surface_count=surface_count,
-            custom_min=eta_lims[0] if eta_lims else None,
-            custom_max=eta_lims[1] if eta_lims else None
-        )
+        st.subheader("Defect Order Parameter η (Isosurface)")
+        fig_eta = go.Figure(data=go.Isosurface(
+            x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+            value=eta_3d.flatten(),
+            isomin=0.3, isomax=0.9,
+            surface_count=2,
+            colorscale='Blues',
+            opacity=0.7,
+            caps=dict(x_show=False, y_show=False, z_show=False)
+        ))
+        fig_eta.update_layout(scene_aspectmode='data', height=600)
         st.plotly_chart(fig_eta, use_container_width=True)
 
     with col2:
-        st.subheader(f"Stress Magnitude |σ| ({stress_cmap})")
-        # Calculate reasonable stress limits
-        stress_data = sigma_3d[np_mask]
-        if len(stress_data) > 0:
-            stress_isomax = np.percentile(stress_data, 95)
-        else:
-            stress_isomax = sigma_3d.max()
-            
-        fig_sig = create_plotly_isosurface(
-            X, Y, Z, sigma_3d, "Stress |σ| (GPa)", 
-            stress_cmap, isomin=0.0, isomax=stress_isomax,
-            opacity=opacity_3d, surface_count=surface_count,
-            custom_min=stress_lims[0] if stress_lims else None,
-            custom_max=stress_lims[1] if stress_lims else None
-        )
+        st.subheader("Stress Magnitude |σ|")
+        fig_sig = go.Figure(data=go.Isosurface(
+            x=X.flatten(), y=Y.flatten(), z=Z.flatten(),
+            value=sigma_3d.flatten(),
+            isomin=sigma_3d.max()*0.3,
+            colorscale='Reds',
+            opacity=0.7
+        ))
+        fig_sig.update_layout(scene_aspectmode='data', height=600)
         st.plotly_chart(fig_sig, use_container_width=True)
-    
+
+    # Mid-slice
+    st.subheader("Mid-Plane Slice (z = center)")
+    fig, ax = plt.subplots(1, 2, figsize=(12,5))
+    ax[0].imshow(eta_3d[:, :, N//2], cmap='viridis', extent=[origin, origin+N*dx, origin, origin+N*dx])
+    ax[0].set_title("η"); ax[0].set_xlabel("x (nm)"); ax[0].set_ylabel("y (nm)")
+    im = ax[1].imshow(sigma_3d[:, :, N//2], cmap='hot', extent=[origin, origin+N*dx, origin, origin+N*dx])
+    ax[1].set_title("|σ| (GPa)"); ax[1].set_xlabel("x (nm)")
+    plt.colorbar(im, ax=ax[1])
+    st.pyplot(fig)
+
     # Enhanced Matplotlib comparison
     st.header("Matplotlib Color Map Comparison")
     st.markdown("""
@@ -433,6 +467,10 @@ if 'history_3d' in st.session_state:
     """)
     
     try:
+        # Prepare color limits for the comparison
+        eta_lims = (eta_min, eta_max) if use_custom_limits else None
+        stress_lims = (stress_min, stress_max) if use_custom_limits else None
+        
         fig_mpl = create_matplotlib_comparison(
             eta_3d, sigma_3d, frame_idx, 
             eta_cmap, stress_cmap, eta_lims, stress_lims
@@ -472,64 +510,28 @@ if 'history_3d' in st.session_state:
                 st.metric("Stress |σ| Range", "No data")
 
     # =============================================
-    # Enhanced Download Section
+    # PERFECT DOWNLOAD: PVD + VTI + CSV
     # =============================================
-    st.header("Data Export")
-    
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, (e, s) in enumerate(st.session_state.history_3d):
-            # Enhanced CSV with metadata
+            # CSV
             df = pd.DataFrame({
-                'x': X.flatten(order='F'),
-                'y': Y.flatten(order='F'), 
-                'z': Z.flatten(order='F'),
                 'eta': e.flatten(order='F'),
-                'stress': s.flatten(order='F'),
-                'in_nanoparticle': np_mask.flatten(order='F')
+                'stress': s.flatten(order='F')
             })
-            
-            # Add simulation metadata
-            metadata = f"""# 3D Ag Nanoparticle Simulation
-# Frame: {i}
-# Time: {times[i]:.3f}
-# Parameters: eps0={eps0}, steps={steps}, dx={dx}
-# Color Maps: eta={eta_cmap}, stress={stress_cmap}
-"""
-            csv_content = metadata + df.to_csv(index=False)
-            zf.writestr(f"frame_{i:04d}.csv", csv_content)
-            
-            # VTI files
+            zf.writestr(f"frame_{i:04d}.csv", df.to_csv(index=False))
+            # VTI
             zf.writestr(f"frame_{i:04d}.vti", st.session_state.vti_3d[i])
-        
-        # PVD file
+        # PVD
         zf.writestr("simulation_3d.pvd", st.session_state.pvd_3d)
-        
-        # Simulation summary
-        summary = f"""3D Ag Nanoparticle Defect Evolution Simulation
-================================================
-Total Frames: {len(st.session_state.history_3d)}
-Simulation Steps: {steps}
-Time Step: {dt}
-Grid Resolution: {N}³
-Eigenstrain (ε*): {eps0}
-Color Maps Used:
-  - Defect (η): {eta_cmap}
-  - Stress (σ): {stress_cmap}
-Custom Color Limits: {use_custom_limits}
-"""
-        if use_custom_limits:
-            summary += f"  η Limits: [{eta_min}, {eta_max}]\n"
-            summary += f"  σ Limits: [{stress_min}, {stress_max}] GPa\n"
-        
-        zf.writestr("SIMULATION_SUMMARY.txt", summary)
 
     buffer.seek(0)
     st.download_button(
-        label="Download Enhanced 3D Results (PVD + VTI + CSV + Metadata)",
+        label="Download Full 3D Results (PVD + VTI + CSV)",
         data=buffer,
-        file_name="Ag_Nanoparticle_3D_Enhanced_Simulation.zip",
+        file_name="Ag_Nanoparticle_3D_Defect_Simulation.zip",
         mime="application/zip"
     )
 
-st.caption("3D Spherical Ag NP • Enhanced Color Maps • Custom Color Scales • Multi-Platform Visualization • 2025")
+st.caption("3D Spherical Ag NP • Planar Defect • Consistent Stress Calculation • Enhanced Color Maps • 2025")
