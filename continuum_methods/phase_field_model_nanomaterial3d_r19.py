@@ -366,8 +366,7 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
     slice_pos = N // 2
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx}")
-    ax.set_title(f"Slice z={slice_pos}", fontsize=16, y=0.95)
-
+Slice z={slice_pos}', fontsize=16, y=0.95)
 
     eta_data = eta_3d[np_mask]
     stress_data = sigma_3d[np_mask]
@@ -397,8 +396,7 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
         axes[0,1].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
 
     axes[0,2].axis('off')
-    axes[0,2].text(0.1, 0.5, f'Stress Method: Exact 3D Spectral
-Frame: {frame_idx}', va='center', ha='left')
+    axes[0,2].text(0.1, 0.5, "Stress Method: Exact 3D Spectral", fontsize=10))
 
     alt_cmaps = ['jet', 'viridis', 'plasma']
     alt_titles = ['Jet (Traditional)', 'Viridis (Perceptual)', 'Plasma (High Contrast)']
