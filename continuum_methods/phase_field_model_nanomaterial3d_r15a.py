@@ -107,13 +107,13 @@ R_np = N * dx / 4
 r = np.sqrt(X**2 + Y**2 + Z**2)
 np_mask = r <= R_np
 
-# Initial tilted planar defect
-def create_initial_eta():
+# Initial 3D defect (ellipsoidal for more volumetric shape)
+def create_initial_eta(shape="Ellipse"):
     eta = np.zeros((N, N, N))
-    n = np.array([np.cos(phi)*np.sin(theta), np.sin(phi)*np.sin(theta), np.cos(theta)])
-    dist = n[0]*X + n[1]*Y + n[2]*Z
-    thickness = 3 * dx
-    eta[np.abs(dist) <= thickness / 2] = 0.7
+    cx, cy, cz = N//2, N//2, N//2
+    a, b, c = 16, 16, 8  # Ellipsoid radii for 3D defect
+    mask = ((X/a)**2 + (Y/b)**2 + (Z/c)**2) <= 1
+    eta[mask] = 0.7
     eta[~np_mask] = 0.0
     np.random.seed(42)
     eta += 0.02 * np.random.randn(N, N, N) * np_mask
