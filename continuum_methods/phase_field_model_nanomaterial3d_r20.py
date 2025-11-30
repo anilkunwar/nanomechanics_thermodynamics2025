@@ -226,7 +226,7 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
     return eta_new
 
 # =============================================
-# Corrected exact 3D anisotropic spectral stress solver (units-consistent, realistic stresses)
+# Robust exact 3D anisotropic spectral stress solver with singular matrix handling
 @st.cache_data
 def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debug=False):
     dx_m = dx_nm * 1e-9
@@ -267,10 +267,30 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
     # Acoustic tensor A_ij = C_ikjl khat_k khat_l
     A = np.einsum('ikjl,kxyz,lxyz->ijxyz', C, khat, khat)
     
-    # CORRECTED: Use np.moveaxis instead of np.moveaxes (which doesn't exist)
+    # Move axes for inversion
     A_moved = np.moveaxis(A, [0,1], [3,4])  # shape (N,N,N,3,3)
     
-    invA = np.linalg.inv(A_moved)
+    # Robust matrix inversion with singular value decomposition (SVD)
+    invA = np.zeros_like(A_moved)
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                A_mat = A_moved[i, j, k]
+                # Skip zero frequency (already handled)
+                if i == 0 and j == 0 and k == 0:
+                    invA[i, j, k] = np.zeros((3, 3))
+                    continue
+                
+                try:
+                    # Regular inversion for well-conditioned matrices
+                    if np.linalg.cond(A_mat) < 1e12:  # Reasonable condition number threshold
+                        invA[i, j, k] = np.linalg.inv(A_mat)
+                    else:
+                        # Use pseudo-inverse for ill-conditioned matrices
+                        invA[i, j, k] = np.linalg.pinv(A_mat, rcond=1e-12)
+                except np.linalg.LinAlgError:
+                    # Fallback to pseudo-inverse for singular matrices
+                    invA[i, j, k] = np.linalg.pinv(A_mat, rcond=1e-12)
     
     # Displacement Green G_ij = inv(A)_ij / K2
     G = invA / K2[..., np.newaxis, np.newaxis]
