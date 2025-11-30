@@ -63,12 +63,15 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual5-streamlit-red)](https://defect-evolution-in-nanomaterial19.streamlit.app/) 
 
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual6-streamlit-red)](https://defect-evolution-in-nanomaterial20.streamlit.app/) [correction after debugging the previous snippet]
+
 Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison-streamlit-red)](https://comparison-of-numerical-simulations2d3d.streamlit.app/) 
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison2-streamlit-red)](https://comparison-of-numerical-simulations2d3d2.streamlit.app/) 
 
+[![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison3-streamlit-red)](https://comparison-of-numerical-simulations2d3d3.streamlit.app/) (less accurate than version 2)
 
 # Phase field model for sintering
 [![continuummodelsintering2d](https://img.shields.io/badge/2dpfm-streamlit-red)](https://sintering-2dphasefieldmodel1.streamlit.app/) (basic model1 )
