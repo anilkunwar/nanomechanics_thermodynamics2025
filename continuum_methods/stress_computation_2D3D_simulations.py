@@ -69,7 +69,7 @@ def compute_stress_3d(eta, eps0, theta, phi, dx):
     n = np.array([np.cos(phi)*np.sin(theta),
                   np.sin(phi)*np.sin(theta),
                   np.cos(theta)])
-    s = np perpendicular vector
+    s = np.perpendicular vector
     s = np.cross(n, [0,0,1])
     if np.linalg.norm(s) < 1e-12:
         s = np.cross(n, [1,0,0])
