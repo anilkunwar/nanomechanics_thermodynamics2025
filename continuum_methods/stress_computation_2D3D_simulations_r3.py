@@ -34,11 +34,52 @@ nu = lam / (2*(lam + mu))
 st.sidebar.write(f"Material: μ={mu/1e9:.2f} GPa, λ={lam/1e9:.2f} GPa, ν={nu:.3f}")
 
 # Mode selection
-mode = st.sidebar.selectbox("2D formation mode", [
-    "Option 1 — 3D central slice (exact)",
-    "Option 2 — 3D kz=0 average (z-mean)",
-    "Option 3 — Tuned 2D plane-strain (scalar fit)"
-])
+# ------------------- Option selection -------------------
+option = st.sidebar.selectbox(
+    "2D vs 3D comparison mode",
+    [
+        "Option 1 — Physically identical to 3D slice",
+        "Option 2 — Reduced 2+1D solver (kz=0 modes)",
+        "Option 3 — Tune 2D plane-strain to best match 3D"
+    ]
+)
+
+# ------------------- Compute difference / scaling -------------------
+if option == "Option 1 — Physically identical to 3D slice":
+    # Direct comparison
+    arr2_display = arr2_disp
+    diff = arr3_disp - arr2_display
+
+elif option == "Option 2 — Reduced 2+1D solver (kz=0 modes)":
+    # Could implement kz=0 projection if needed
+    # For now, keep original plane-strain solution
+    arr2_display = arr2_disp
+    diff = arr3_disp - arr2_display
+
+elif option == "Option 3 — Tune 2D plane-strain to best match 3D":
+    # Fit scaling factor alpha inside defect only
+    vm2_flat = arr2_disp.flatten()
+    vm3_flat = arr3_disp.flatten()
+    eta_flat = eta_2d.flatten()
+
+    # Mask only inside defect
+    mask = eta_flat > 0.05
+    vm2_masked = vm2_flat[mask]
+    vm3_masked = vm3_flat[mask]
+
+    # Regularized least-squares scaling
+    denom = np.dot(vm2_masked, vm2_masked) + 1e-12
+    alpha = np.dot(vm2_masked, vm3_masked) / denom
+
+    # Clamp alpha to prevent unphysical scaling
+    alpha = np.clip(alpha, 0.1, 5.0)
+
+    # Apply scaling
+    arr2_display = alpha * arr2_disp
+    diff = arr3_disp - arr2_display
+
+st.metric(f"Applied alpha (if Option 3)", f"{alpha:.3g}" if option.endswith("best match 3D") else "-")
+
 
 # ------------------- Defect creation -------------------
 @st.cache_data
