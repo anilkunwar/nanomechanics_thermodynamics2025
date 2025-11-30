@@ -64,48 +64,58 @@ eta_3d, eta_2d, X2d, Y2d = create_defect(N, dx_nm)
 
 # ------------------- 3D Isotropic Solver -------------------
 @st.cache_data
-def compute_stress_3d(eta, eps0, theta, phi, dx):
-    dx_m = dx * 1e-9
-    n = np.array([np.cos(phi)*np.sin(theta),
-                  np.sin(phi)*np.sin(theta),
-                  np.cos(theta)])
-    #s = npperpendicular vector
-    s = np.cross(n, [0,0,1])
-    if np.linalg.norm(s) < 1e-12:
-        s = np.cross(n, [1,0,0])
-    s = s / np.linalg.norm(s)
+def compute_stress_3d_correct(eta_3d, eps0, theta, phi, dx_nm):
+    N = eta_3d.shape[0,0,:].size
+    dx = dx_nm * 1e-9
+    
+    # unit normal and shear direction of the fault
+    n = np.array([np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)])
+    s = np.array([-np.sin(phi), np.cos(phi), 0.0])  # in-plane shear direction
+    s = s - np.dot(s,n)*n
+    s /= np.linalg.norm(s) + 1e-20
 
-    gamma = eps0 * 0.1
+    # eigenstrain tensor (only shear part that matters)
     eps_star = np.zeros((3,3,N,N,N))
+    gamma = eps0 / np.sqrt(2)                # correct normalisation for {111}<112> shear
     for i in range(3):
         for j in range(3):
-            eps_star[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j]) * eta
+            eps_star[i,j] = gamma * (n[i]*s[j] + s[i]*n[j]) / 2.0 * eta_3d
 
-    k = 2*np.pi * np.fft.fftfreq(N, d=dx_m)
-    KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
+    # Fourier grid
+    k1 = 2*np.pi*np.fft.fftfreq(N, d=dx)
+    KX, KY, KZ = np.meshgrid(k1, k1, k1, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
     K2[0,0,0] = 1.0
+    k_vec = np.array([KX, KY, KZ])
 
-    sigma = np.zeros((3,3,N,N,N))
+    # C : ε*
+    trace = eps_star[0,0] + eps_star[1,1] + eps_star[2,2]
+    Chat = np.zeros((3,3,N,N,N), dtype=complex)
+    Chat[0,0] = np.fft.fftn(lam*trace + 2*mu*eps_star[0,0])
+    Chat[1,1] = np.fft.fftn(lam*trace + 2*mu*eps_star[1,1])
+    Chat[2,2] = np.fft.fftn(lam*trace + 2*mu*eps_star[2,2])
+    Chat[0,1] = Chat[1,0] = np.fft.fftn(lam*trace + 2*mu*eps_star[0,1])
+    Chat[0,2] = Chat[2,0] = np.fft.fftn(lam*trace + 2*mu*eps_star[0,2])
+    Chat[1,2] = Chat[2,1] = np.fft.fftn(lam*trace + 2*mu*eps_star[1,2])
+
+    # Correct Green operator (Moulinec–Suquet 1998)
+    sigma_hat = np.zeros_like(Chat)
     for i in range(3):
         for j in range(3):
-            ki = [KX, KY, KZ][i]
-            kj = [KX, KY, KZ][j]
-            for p in range(3):
-                for q in range(3):
-                    kp = [KX, KY, KZ][p]
-                    kq = [KX, KY, KZ][q]
-                    eps_hat = np.fft.fftn(eps_star[p,q])
-                    term = -(lam + 2*mu) * (ki*kj*kp*kq / K2) * eps_hat
-                    term += lam * (ki*kj * kp*kq / K2) * eps_hat
-                    sigma[i,j] += np.real(np.fft.ifftn(term))
+            proj = (Chat[0,0]*KX*KX + Chat[1,1]*KY*KY + Chat[2,2]*KZ*KZ +
+                    Chat[0,1]*(KX*KY + KY*KX) + Chat[0,2]*(KX*KZ + KZ*KX) +
+                    Chat[1,2]*(KY*KZ + KZ*KY))
+            sigma_hat[i,j] = -Chat[i,j] + (lam/(2*(lam + mu))) * proj * k_vec[i]*k_vec[j]/K2
 
-    sxx, syy, szz = sigma[0,0], sigma[1,1], sigma[2,2]
+    sigma_hat[:,:,:,:,0,0,0] = 0.0
+
+    sigma = np.real(np.fft.ifftn(sigma_hat, axes=(2,3,4)))
+
+    sxx = sigma[0,0]; syy = sigma[1,1]; szz = sigma[2,2]
     sxy = sigma[0,1]; sxz = sigma[0,2]; syz = sigma[1,2]
-
-    vm = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
-                       6*(sxy**2 + sxz**2 + syz**2))) / 1e9
+    vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2 + sxz**2 + syz**2))) / 1e9
     return vm
+
 
 # ------------------- 2D Plane-Strain Solver -------------------
 @st.cache_data
