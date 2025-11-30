@@ -63,7 +63,10 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual5-streamlit-red)](https://defect-evolution-in-nanomaterial19.streamlit.app/) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual6-streamlit-red)](https://defect-evolution-in-nanomaterial20.streamlit.app/) [correction after debugging the previous snippet]
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual6-streamlit-red)](https://defect-evolution-in-nanomaterial20.streamlit.app/) [correction after debugging the previous snippet, only contains stress magnitude 3D]
+
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual7-streamlit-red)](https://defect-evolution-in-nanomaterial21.streamlit.app/) [correction after debugging the previous snippet,contains sigma_h, sigma_vm, sigma_magnitude in 3D]
+
 
 Comparison codes
 
