@@ -74,7 +74,7 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison2-streamlit-red)](https://comparison-of-numerical-simulations2d3d2.streamlit.app/) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison3-streamlit-red)](https://comparison-of-numerical-simulations2d3d3.streamlit.app/) (less accurate than version 2)
+[![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison3-streamlit-red)](https://comparison-of-numerical-simulations2d3d3.streamlit.app/) (different types of stress visualization)
 
 # Phase field model for sintering
 [![continuummodelsintering2d](https://img.shields.io/badge/2dpfm-streamlit-red)](https://sintering-2dphasefieldmodel1.streamlit.app/) (basic model1 )
