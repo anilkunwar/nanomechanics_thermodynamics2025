@@ -1,16 +1,17 @@
 # =============================================
-# 2D vs 3D Stress Solver Comparison – EXPANDED
-# Adds: hydrostatic stress, von Mises, stress magnitude (Frobenius),
-# principal stresses, principal strains (2D & 3D). Export and selectable fields.
-# Fully self-contained Streamlit app (replace your script with this file).
+# 2D vs 3D Stress Solver Comparison – UPGRADED & STABLE
+# - Fixed 2D numerical instabilities (k=0 handling, safe divisions)
+# - Returns many diagnostics: hydrostatic, von Mises, Frobenius norm,
+#   principal stresses/strains, CSV export of central slice.
+# - Keep N moderate (>=32, <=96 advised) to avoid long runtimes.
 # =============================================
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
 
-st.set_page_config(page_title="2D vs 3D Stress Debug (Expanded)", layout="wide")
-st.title("2D vs 3D FFT Elasticity – Expanded Diagnostics")
+st.set_page_config(page_title="2D vs 3D Stress Debug (Upgraded)", layout="wide")
+st.title("2D vs 3D FFT Elasticity – Upgraded & Stable")
 st.markdown("**Planar defect in Ag nanoparticle • Compare many stress/strain measures**")
 
 # ------------------- Parameters -------------------
@@ -59,14 +60,15 @@ def create_defect(N, dx, theta, phi):
 eta_3d, eta_2d = create_defect(N, dx_nm, theta, phi)
 
 # ------------------- Utilities -------------------
-def frobenius_norm_tensor_components(components):
-    # components: array-like of independent components or full tensor
-    return np.sqrt(np.sum(components**2, axis=0))
+def _zero_mode_mask_2d(N):
+    # returns boolean mask where kx==0 and ky==0
+    k = np.fft.fftfreq(N)
+    KX, KY = np.meshgrid(k, k, indexing='ij')
+    return (KX == 0) & (KY == 0)
 
-# ------------------- 3D Solver (returns many fields) -------------------
+# ------------------- 3D Solver (unchanged handling of zero mode) -------------------
 @st.cache_data
 def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
-    # Returns a dict of arrays (shape: (N,N,N) or per-component (3,3,N,N,N))
     dx_m = dx * 1e-9
     N = eta.shape[0]
 
@@ -79,28 +81,27 @@ def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
     s = s / np.linalg.norm(s)
 
     gamma = eps0 * 0.1
-    # eigenstrain tensor (3x3 per voxel)
     eps_star = np.zeros((3,3,N,N,N))
     for i in range(3):
         for j in range(3):
             eps_star[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j]) * eta
 
-    # Fourier of eigenstrain
     eps_hat = np.fft.fftn(eps_star, axes=(2,3,4))
 
-    # wavevectors
     k = 2*np.pi * np.fft.fftfreq(N, d=dx_m)
     KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
-    K2[0,0,0] = 1.0
+    # safe handling: set K2[0,0,0] to 1 to avoid division by zero when forming khat
+    K2_safe = K2.copy()
+    K2_safe[0,0,0] = 1.0
 
     khat = np.zeros((3,N,N,N))
-    khat[0] = KX / np.sqrt(K2)
-    khat[1] = KY / np.sqrt(K2)
-    khat[2] = KZ / np.sqrt(K2)
-    khat[:,0,0,0] = 0
+    khat[0] = KX / np.sqrt(K2_safe)
+    khat[1] = KY / np.sqrt(K2_safe)
+    khat[2] = KZ / np.sqrt(K2_safe)
+    khat[:,0,0,0] = 0.0
 
-    # Green tensor Gamma (approx for isotropic elasticity) — keep structure but avoid expensive loops where possible
+    # Green tensor (isotropic approximation)
     Gamma = np.zeros((3,3,3,3,N,N,N), dtype=complex)
     nu = 0.37
     for i in range(3):
@@ -109,13 +110,11 @@ def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
                 for l in range(3):
                     term1 = 0.25*(khat[i]*khat[k_]*khat[j]*khat[l] + khat[i]*khat[l]*khat[j]*khat[k_])
                     term2 = khat[i]*khat[j]*khat[k_]*khat[l] / (1 - nu)
-                    Gamma[i,j,k_,l] = (term1 / mu) - (term2 / (4*mu*(1 - nu))) / K2
+                    Gamma[i,j,k_,l] = (term1 / mu) - (term2 / (4*mu*(1 - nu))) / K2_safe
 
-    # Constitutive product C : eps_hat (isotropic)
     trace_hat = eps_hat[0,0] + eps_hat[1,1] + eps_hat[2,2]
     Ceps_hat = lam * np.eye(3)[:, :, None, None, None] * trace_hat[None, None, :, :, :] + 2*mu * eps_hat
 
-    # induced strain in Fourier space
     eps_ind_hat = np.zeros_like(Ceps_hat)
     for i in range(3):
         for j in range(3):
@@ -128,58 +127,56 @@ def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
     eps_ind = np.real(np.fft.ifftn(eps_ind_hat, axes=(2,3,4)))
     eps_total = eps_ind - eps_star
 
-    # stress
     trace = eps_total[0,0] + eps_total[1,1] + eps_total[2,2]
     I = np.eye(3)
     sigma = lam * trace[None, None, :, :, :] * I[:, :, None, None, None] + 2*mu * eps_total
 
-    # Extract components
     sxx, syy, szz = sigma[0,0], sigma[1,1], sigma[2,2]
     sxy, sxz, syz = sigma[0,1], sigma[0,2], sigma[1,2]
 
-    # hydrostatic (mean) stress
     hydro = (sxx + syy + szz) / 3.0
-
-    # von Mises
     vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2 + sxz**2 + syz**2)))
-
-    # stress magnitude: Frobenius norm
     stress_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2 + sxz**2 + syz**2))
 
-    # principal stresses (symmetric 3x3) — compute eigenvalues per voxel
-    # reshape for vectorized eigenvalue computation
+    # principal stresses per voxel
     tot_vox = N*N*N
     sigma_mat = np.zeros((tot_vox, 3, 3))
-    for idx,(i,j,k_) in enumerate(np.ndindex(N,N,N)):
-        sigma_mat[idx,0,0] = sxx[i,j,k_]
-        sigma_mat[idx,1,1] = syy[i,j,k_]
-        sigma_mat[idx,2,2] = szz[i,j,k_]
-        sigma_mat[idx,0,1] = sxy[i,j,k_]
-        sigma_mat[idx,1,0] = sxy[i,j,k_]
-        sigma_mat[idx,0,2] = sxz[i,j,k_]
-        sigma_mat[idx,2,0] = sxz[i,j,k_]
-        sigma_mat[idx,1,2] = syz[i,j,k_]
-        sigma_mat[idx,2,1] = syz[i,j,k_]
+    idx = 0
+    for i in range(N):
+        for j in range(N):
+            for k_ in range(N):
+                sigma_mat[idx,0,0] = sxx[i,j,k_]
+                sigma_mat[idx,1,1] = syy[i,j,k_]
+                sigma_mat[idx,2,2] = szz[i,j,k_]
+                sigma_mat[idx,0,1] = sxy[i,j,k_]
+                sigma_mat[idx,1,0] = sxy[i,j,k_]
+                sigma_mat[idx,0,2] = sxz[i,j,k_]
+                sigma_mat[idx,2,0] = sxz[i,j,k_]
+                sigma_mat[idx,1,2] = syz[i,j,k_]
+                sigma_mat[idx,2,1] = syz[i,j,k_]
+                idx += 1
 
-    # use np.linalg.eigvalsh for symmetric matrices
     princ_vals = np.linalg.eigvalsh(sigma_mat)
-    # princ_vals shape (tot_vox,3) sorted ascending — reshape back
     p1 = princ_vals[:,2].reshape((N,N,N))
     p2 = princ_vals[:,1].reshape((N,N,N))
     p3 = princ_vals[:,0].reshape((N,N,N))
 
-    # principal strains from eps_total
+    # principal strains
     eps_tot_flat = np.zeros((tot_vox,3,3))
-    for idx,(i,j,k_) in enumerate(np.ndindex(N,N,N)):
-        eps_tot_flat[idx,0,0] = eps_total[0,0,i,j,k_]
-        eps_tot_flat[idx,1,1] = eps_total[1,1,i,j,k_]
-        eps_tot_flat[idx,2,2] = eps_total[2,2,i,j,k_]
-        eps_tot_flat[idx,0,1] = eps_total[0,1,i,j,k_]
-        eps_tot_flat[idx,1,0] = eps_total[0,1,i,j,k_]
-        eps_tot_flat[idx,0,2] = eps_total[0,2,i,j,k_]
-        eps_tot_flat[idx,2,0] = eps_total[0,2,i,j,k_]
-        eps_tot_flat[idx,1,2] = eps_total[1,2,i,j,k_]
-        eps_tot_flat[idx,2,1] = eps_total[1,2,i,j,k_]
+    idx = 0
+    for i in range(N):
+        for j in range(N):
+            for k_ in range(N):
+                eps_tot_flat[idx,0,0] = eps_total[0,0,i,j,k_]
+                eps_tot_flat[idx,1,1] = eps_total[1,1,i,j,k_]
+                eps_tot_flat[idx,2,2] = eps_total[2,2,i,j,k_]
+                eps_tot_flat[idx,0,1] = eps_total[0,1,i,j,k_]
+                eps_tot_flat[idx,1,0] = eps_total[0,1,i,j,k_]
+                eps_tot_flat[idx,0,2] = eps_total[0,2,i,j,k_]
+                eps_tot_flat[idx,2,0] = eps_total[0,2,i,j,k_]
+                eps_tot_flat[idx,1,2] = eps_total[1,2,i,j,k_]
+                eps_tot_flat[idx,2,1] = eps_total[1,2,i,j,k_]
+                idx += 1
 
     eps_princ_vals = np.linalg.eigvalsh(eps_tot_flat)
     ep1 = eps_princ_vals[:,2].reshape((N,N,N))
@@ -187,7 +184,7 @@ def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
     ep3 = eps_princ_vals[:,0].reshape((N,N,N))
 
     out = {
-        'sigma_comp': sigma, # full tensor
+        'sigma_comp': sigma,
         'sxx': sxx, 'syy': syy, 'szz': szz, 'sxy': sxy, 'sxz': sxz, 'syz': syz,
         'hydro': hydro, 'vm': vm, 'stress_mag': stress_mag,
         'p1': p1, 'p2': p2, 'p3': p3,
@@ -196,9 +193,10 @@ def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
     }
     return out
 
-# ------------------- 2D Plane-Strain Solver (returns many fields) -------------------
+# ------------------- 2D Plane-Strain Solver (STABLE) -------------------
 @st.cache_data
 def compute_stress_2d_full(eta2d, eps0, theta, dx, mu, lam):
+    # Robust plane-strain FFT solver with safe handling of k=0 and near-zero denom
     N = eta2d.shape[0]
     n = np.array([np.cos(theta), np.sin(theta)])
     s = np.array([-np.sin(theta), np.cos(theta)])
@@ -208,31 +206,55 @@ def compute_stress_2d_full(eta2d, eps0, theta, dx, mu, lam):
     eyy_star = gamma * n[1]*s[1] * eta2d
     exy_star = 0.5 * gamma * (n[0]*s[1] + s[0]*n[1]) * eta2d
 
-    # Use plane-strain elastic constants from isotropic lam, mu
+    # isotropic plane-strain constants
     Cp11 = lam + 2*mu
     Cp12 = lam
     Cp66 = mu
 
+    # wavevectors in SI units (1/m)
     k = 2*np.pi * np.fft.fftfreq(N, d=dx*1e-9)
     KX, KY = np.meshgrid(k, k, indexing='ij')
-    K2 = KX**2 + KY**2 + 1e-20
+    K2 = KX**2 + KY**2
 
-    n1 = KX / np.sqrt(K2)
-    n2 = KY / np.sqrt(K2)
+    # zero-frequency (rigid) mode mask
+    zero = (KX == 0) & (KY == 0)
+
+    # safe normalization for direction cosines
+    K2_safe = np.where(zero, 1.0, K2)
+    n1 = KX / np.sqrt(K2_safe)
+    n2 = KY / np.sqrt(K2_safe)
+    n1[zero] = 0.0
+    n2[zero] = 0.0
+
+    # Acoustic tensor entries
     A11 = Cp11*n1**2 + Cp66*n2**2
     A22 = Cp11*n2**2 + Cp66*n1**2
     A12 = (Cp12 + Cp66)*n1*n2
-    det = A11*A22 - A12**2
-    G11 = np.where(det != 0, A22/det, 0)
-    G22 = np.where(det != 0, A11/det, 0)
-    G12 = np.where(det != 0, -A12/det, 0)
 
+    det = A11*A22 - A12**2
+    # avoid division by zero: use np.where to place safe large denom
+    det_safe = np.where(np.abs(det) < 1e-30, np.inf, det)
+
+    G11 = A22 / det_safe
+    G22 = A11 / det_safe
+    G12 = -A12 / det_safe
+
+    # enforce zero for rigid (k=0) mode
+    G11[zero] = 0.0
+    G22[zero] = 0.0
+    G12[zero] = 0.0
+
+    # compute traction-like fields in Fourier space
     txx = Cp11*exx_star + Cp12*eyy_star
     tyy = Cp12*exx_star + Cp11*eyy_star
     txy = 2*Cp66*exy_star
 
     Sx = np.fft.fft2(txx)*KX + np.fft.fft2(txy)*KY
     Sy = np.fft.fft2(txy)*KX + np.fft.fft2(tyy)*KY
+
+    # zero rigid-mode tractions to avoid large displacements
+    Sx[zero] = 0.0
+    Sy[zero] = 0.0
 
     ux = np.fft.ifft2(-1j * (G11*Sx + G12*Sy))
     uy = np.fft.ifft2(-1j * (G12*Sx + G22*Sy))
@@ -241,43 +263,42 @@ def compute_stress_2d_full(eta2d, eps0, theta, dx, mu, lam):
     eyy = np.real(np.fft.ifft2(1j*KY*np.fft.fft2(uy)))
     exy = 0.5*np.real(np.fft.ifft2(1j*(KX*np.fft.fft2(uy) + KY*np.fft.fft2(ux))))
 
-    # plane-strain sigma_zz
+    # plane-strain out-of-plane component
     szz = lam*(exx + eyy)
 
     sxx = Cp11*(exx - exx_star) + Cp12*(eyy - eyy_star)
     syy = Cp12*(exx - exx_star) + Cp11*(eyy - eyy_star)
     sxy = 2*Cp66*(exy - exy_star)
 
-    # hydrostatic (mean) using 3 components (plane-strain)
     hydro = (sxx + syy + szz) / 3.0
-
     vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2)))
     stress_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2))
 
-    # principal stresses (2x2 -> but include szz if user wants full 3D princ)
-    # compute 2D principal stresses from 2x2 tensor
-    # eigenvalues for each point
-    princ1 = np.zeros_like(sxx)
-    princ2 = np.zeros_like(sxx)
+    # principal stresses (2D) via eigenvalues of 2x2 tensor
     tot = N*N
     sigma2_mat = np.zeros((tot,2,2))
-    for idx,(i,j) in enumerate(np.ndindex(N,N)):
-        sigma2_mat[idx,0,0] = sxx[i,j]
-        sigma2_mat[idx,1,1] = syy[i,j]
-        sigma2_mat[idx,0,1] = sxy[i,j]
-        sigma2_mat[idx,1,0] = sxy[i,j]
-
+    idx = 0
+    for i in range(N):
+        for j in range(N):
+            sigma2_mat[idx,0,0] = sxx[i,j]
+            sigma2_mat[idx,1,1] = syy[i,j]
+            sigma2_mat[idx,0,1] = sxy[i,j]
+            sigma2_mat[idx,1,0] = sxy[i,j]
+            idx += 1
     pv = np.linalg.eigvalsh(sigma2_mat)
     princ1 = pv[:,1].reshape((N,N))
     princ2 = pv[:,0].reshape((N,N))
 
-    # principal strains (2x2)
+    # principal strains (2D)
     eps2_mat = np.zeros((tot,2,2))
-    for idx,(i,j) in enumerate(np.ndindex(N,N)):
-        eps2_mat[idx,0,0] = exx[i,j]
-        eps2_mat[idx,1,1] = eyy[i,j]
-        eps2_mat[idx,0,1] = exy[i,j]
-        eps2_mat[idx,1,0] = exy[i,j]
+    idx = 0
+    for i in range(N):
+        for j in range(N):
+            eps2_mat[idx,0,0] = exx[i,j]
+            eps2_mat[idx,1,1] = eyy[i,j]
+            eps2_mat[idx,0,1] = exy[i,j]
+            eps2_mat[idx,1,0] = exy[i,j]
+            idx += 1
     epv = np.linalg.eigvalsh(eps2_mat)
     ep1 = epv[:,1].reshape((N,N))
     ep2 = epv[:,0].reshape((N,N))
@@ -335,7 +356,6 @@ if st.button("Run 2D vs 3D Stress Comparison", type="primary"):
         arr2_disp = arr2 / 1e9
         units = "GPa"
     else:
-        # show strains scaled (ep1 is small) — we'll display in 1e-3 units if requested
         arr3_disp = arr3 * 1e3
         arr2_disp = arr2 * 1e3
         units = "×10^-3"
@@ -374,11 +394,6 @@ if st.button("Run 2D vs 3D Stress Comparison", type="primary"):
     st.success(f"Done — compared {field3d_choice} vs {field2d_choice}. Max diff = {maxdiff:.3f} {units}.")
 
     # Offer CSV download of the central slice comparison
-    df_out = pd.DataFrame({
-        'x_index': np.arange(N),
-        'y_index': np.arange(N)  # placeholder — we'll flatten properly below
-    })
-    # Flatten arrays and produce CSV
     flat3 = arr3_disp.flatten()
     flat2 = arr2_disp.flatten()
     flat_eta = eta_2d.flatten()
