@@ -12,6 +12,8 @@ import pandas as pd
 import zipfile
 from io import BytesIO
 import time
+import os
+
 st.set_page_config(page_title="3D Ag NP Defect Evolution – Upgraded", layout="wide")
 st.title("3D Phase-Field Simulation of Defects in Spherical Ag Nanoparticles — Upgraded")
 st.markdown("""
@@ -20,6 +22,7 @@ st.markdown("""
 **Units fixed: spatial units (nm) in UI, FFT uses meters internally • Enhanced visualization**
 **Corrected for realistic stresses (~ GPa scale) • Optional elastic driving in phase-field**
 """)
+
 # =============================================
 # Color maps
 COLOR_MAPS = {
@@ -33,11 +36,13 @@ COLOR_MAPS = {
                   'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn'],
     'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis']
 }
+
 # =============================================
 # Material properties (Silver - cubic anisotropic)
 C11 = 124e9  # Pa
 C12 = 93.4e9
 C44 = 46.1e9
+
 # Define the full 4th-rank stiffness tensor C_ijkl
 C = np.zeros((3, 3, 3, 3))
 for i in range(3):
@@ -53,6 +58,7 @@ for i in range(3):
             C[i, j, j, i] = C44
             C[j, i, i, j] = C44
             C[j, i, j, i] = C44
+
 # =============================================
 # UI - simulation controls
 st.sidebar.header("Simulation Parameters")
@@ -61,32 +67,39 @@ with col1:
     N = st.number_input("Grid size N (per dim)", min_value=32, max_value=128, value=64, step=16)
 with col2:
     dx = st.number_input("Grid spacing dx (nm)", min_value=0.05, max_value=5.0, value=0.25, step=0.05)
+
 dt = st.sidebar.number_input("Time step dt (arb)", min_value=1e-4, max_value=0.1, value=0.005, step=0.001)
 M = st.sidebar.number_input("Mobility M", min_value=1e-3, max_value=10.0, value=1.0, step=0.1)
 defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
 eps0_defaults = {"ISF": 0.707, "ESF": 1.414, "Twin": 2.121}
 eps0 = st.sidebar.slider("Eigenstrain ε*", 0.01, 3.0, float(eps0_defaults[defect_type]), 0.01)
 kappa = st.sidebar.slider("Interface coeff κ", 0.01, 5.0, 0.6, 0.01)
+
 col1, col2 = st.sidebar.columns(2)
 with col1:
     steps = st.slider("Evolution steps", 1, 1000, 80, 1)
 with col2:
     save_every = st.slider("Save every (steps)", 1, 200, 10, 1)
+
 st.sidebar.header("Defect Shape")
 shape = st.sidebar.selectbox("Initial Defect Shape", ["Sphere", "Cuboid", "Ellipsoid", "Cube", "Cylinder", "Planar"])
+
 st.sidebar.header("Habit Plane Orientation (for Planar)")
 col1, col2 = st.sidebar.columns(2)
 with col1:
     theta_deg = st.slider("Polar angle θ (°)", 0, 180, 55, help="54.7° = exact {111}")
 with col2:
     phi_deg = st.slider("Azimuthal angle φ (°)", 0, 360, 0, step=5)
+
 theta = np.deg2rad(theta_deg)
 phi = np.deg2rad(phi_deg)
+
 st.sidebar.header("Visualization Controls")
 viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()))
 eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], index=0)
 stress_cmap = st.sidebar.selectbox("Stress (σ) Color Map", COLOR_MAPS[viz_category],
                                   index=min(1, len(COLOR_MAPS[viz_category])-1))
+
 use_custom_limits = st.sidebar.checkbox("Use Custom Color Scale Limits", False)
 if use_custom_limits:
     col1, col2 = st.sidebar.columns(2)
@@ -98,6 +111,7 @@ if use_custom_limits:
         stress_max = st.number_input("σ Max (GPa)", value=10.0, format="%.2f")
 else:
     eta_min, eta_max, stress_min, stress_max = None, None, None, None
+
 st.sidebar.subheader("3D Rendering")
 opacity_3d = st.sidebar.slider("3D Opacity", 0.05, 1.0, 0.7, 0.05)
 surface_count = st.sidebar.slider("Surface Count", 1, 10, 2)
@@ -105,11 +119,13 @@ show_grid = st.sidebar.checkbox("Show Grid in Plotly", value=True)
 show_matrix = st.sidebar.checkbox("Show Nanoparticle Matrix", value=True)
 eta_threshold = st.sidebar.slider("η Visualization Threshold", 0.0, 1.0, 0.1, 0.01)
 stress_threshold = st.sidebar.slider("Stress Visualization Threshold (GPa)", 0.0, 50.0, 0.0, 0.1)
+
 st.sidebar.header("Advanced Options")
 debug_mode = st.sidebar.checkbox("Debug: print diagnostics", value=False)
 enable_progress_bar = st.sidebar.checkbox("Show Progress Bar", value=True)
 enable_real_time_viz = st.sidebar.checkbox("Real-time Visualization", value=False)
 enable_elastic_coupling = st.sidebar.checkbox("Enable Elastic Coupling in PF Evolution", value=False)
+
 # =============================================
 # Physical domain setup (keep dx in nm for coordinate arrays used in UI/VTK)
 origin = -N * dx / 2.0
@@ -119,14 +135,17 @@ X, Y, Z = np.meshgrid(
     np.linspace(origin, origin + (N-1)*dx, N),
     indexing='ij'
 )
+
 # spherical nanoparticle mask (units: nm)
 R_np = N * dx / 4.0
 r = np.sqrt(X**2 + Y**2 + Z**2)
 np_mask = r <= R_np
+
 # =============================================
 # Initial condition generator
 def create_initial_eta(shape_in):
     eta = np.zeros((N, N, N), dtype=np.float64)
+    
     if shape_in == "Sphere":
         mask = r <= 8 * dx
         eta[mask] = 0.7
@@ -153,12 +172,15 @@ def create_initial_eta(shape_in):
         thickness = 3 * dx
         mask = np.abs(dist) <= thickness / 2
         eta[mask] = 0.7
+        
     eta[~np_mask] = 0.0
     np.random.seed(42)
     eta += 0.02 * np.random.randn(N, N, N) * np_mask
     eta = np.clip(eta, 0.0, 1.0)
     return eta
+
 eta = create_initial_eta(shape)
+
 # =============================================
 # Vectorized phase-field evolution with optional elastic coupling
 def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, theta, phi, dx_nm, enable_elastic, debug=False):
@@ -168,13 +190,16 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
         np.roll(eta_in, -1, axis=1) + np.roll(eta_in, 1, axis=1) +
         np.roll(eta_in, -1, axis=2) + np.roll(eta_in, 1, axis=2) - 6.0*eta_in
     ) / (dx_in*dx_in)
+    
     # Double-well derivative
     dF = 2*eta_in*(1-eta_in)*(eta_in-0.5)
+    
     # Elastic driving force
     elastic_driving = np.zeros_like(eta_in)
     if enable_elastic:
         # Compute stress (in GPa)
         _, _, _, sigma_gpa = compute_stress_3d_exact(eta_in, eps0, theta, phi, dx_nm, debug)
+        
         # Shear tensor
         n = np.array([np.cos(phi)*np.sin(theta), np.sin(phi)*np.sin(theta), np.cos(theta)])
         s = np.cross(n, [0,0,1])
@@ -182,23 +207,30 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
             s = np.cross(n, [1,0,0])
         s /= np.linalg.norm(s)
         gamma = eps0 * 0.1
+        
         shear_tensor = np.zeros((3,3))
         for i in range(3):
             for j in range(3):
                 shear_tensor[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j])
+                
         # Driving force (note: sigma_gpa in GPa, but since units are arbitrary, proceed; adjust M if needed)
         elastic_driving = np.einsum('ij,ijxyz->xyz', shear_tensor, sigma_gpa)
+    
     # Update
     eta_new = eta_in + dt_in * M_in * (-dF + kappa_in * lap + elastic_driving)
+    
     # Apply mask and clip
     eta_new[~mask_np] = 0.0
     eta_new = np.clip(eta_new, 0.0, 1.0)
+    
     return eta_new
+
 # =============================================
 # Corrected exact 3D anisotropic spectral stress solver (units-consistent, realistic stresses)
 @st.cache_data
 def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debug=False):
     dx_m = dx_nm * 1e-9
+    
     # Define vectors
     n = np.array([np.cos(phi_val)*np.sin(theta_val), np.sin(phi_val)*np.sin(theta_val), np.cos(theta_val)])
     s = np.cross(n, [0,0,1])
@@ -206,33 +238,44 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
         s = np.cross(n, [1,0,0])
     s /= np.linalg.norm(s)
     gamma = eps0_val * 0.1
+    
     shear_tensor = np.zeros((3,3))
     for i in range(3):
         for j in range(3):
             shear_tensor[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j])
+            
     # Eigenstrain
     eps_star = np.einsum('ij,xyz->ijxyz', shear_tensor, eta_field)
+    
     # Polarization tau = C : eps_star
     tau = np.einsum('ijkl,klxyz->ijxyz', C, eps_star)
     tau_hat = np.fft.fftn(tau, axes=(2,3,4))
+    
     # Wavenumbers
     k = 2 * np.pi * np.fft.fftfreq(N, d=dx_m)
     KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
     K2[0,0,0] = np.inf
     sqrtK2 = np.sqrt(K2)
+    
     khat_x = KX / sqrtK2
     khat_y = KY / sqrtK2
     khat_z = KZ / sqrtK2
     khat_x[0,0,0] = khat_y[0,0,0] = khat_z[0,0,0] = 0.0
     khat = np.stack([khat_x, khat_y, khat_z], axis=0)
+    
     # Acoustic tensor A_ij = C_ikjl khat_k khat_l
     A = np.einsum('ikjl,kxyz,lxyz->ijxyz', C, khat, khat)
-    A_moved = np.moveaxes(A, [0,1], [3,4])  # shape (N,N,N,3,3)
+    
+    # CORRECTED: Use np.moveaxis instead of np.moveaxes (which doesn't exist)
+    A_moved = np.moveaxis(A, [0,1], [3,4])  # shape (N,N,N,3,3)
+    
     invA = np.linalg.inv(A_moved)
+    
     # Displacement Green G_ij = inv(A)_ij / K2
     G = invA / K2[..., np.newaxis, np.newaxis]
     G[0,0,0, :, :] = 0.0
+    
     # Strain Green operator Gamma_ijkl
     # term1: khat[j] * G[i,k] * khat[l]
     term1 = np.einsum('jxyz,xyzik,lxyz->ijklxyz', khat, G, khat)
@@ -244,17 +287,23 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
     # term4: khat[i] * G[j,l] * khat[k]
     term4 = np.einsum('ixyz,xyzjl,kxyz->jilkxyz', khat, G, khat)
     term4 = np.transpose(term4, (1,0,3,2,4,5,6))
+    
     Gamma = (term1 + term2 + term3 + term4) / 4.0
+    
     # Induced strain eps_ind_hat = - Gamma : tau_hat
     eps_ind_hat = -np.einsum('ijklxyz,klxyz->ijxyz', Gamma, tau_hat)
     eps_ind = np.real(np.fft.ifftn(eps_ind_hat, axes=(2,3,4)))
+    
     # Total strain
     eps_total = eps_ind - eps_star
+    
     # Stress sigma = C : eps_total
     sigma = np.einsum('ijkl,klxyz->ijxyz', C, eps_total)
+    
     if debug:
         max_stress_pa = np.max(np.sqrt(sigma[0,0]**2 + sigma[1,1]**2 + sigma[2,2]**2 + 2*(sigma[0,1]**2 + sigma[0,2]**2 + sigma[1,2]**2)))
         st.write(f"[Debug] Max stress magnitude (Pa): {max_stress_pa:.3e}")
+    
     # Compute scalars in GPa
     sxx = sigma[0,0] / 1e9
     syy = sigma[1,1] / 1e9
@@ -262,17 +311,22 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
     sxy = sigma[0,1] / 1e9
     sxz = sigma[0,2] / 1e9
     syz = sigma[1,2] / 1e9
+    
     vm = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 6 * (sxy**2 + sxz**2 + syz**2)))
     sigma_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2 * (sxy**2 + sxz**2 + syz**2))
     sigma_hydro = (sxx + syy + szz) / 3
+    
     # Mask
     sigma_mag_masked = np.nan_to_num(sigma_mag * np_mask)
     sigma_hydro_masked = np.nan_to_num(sigma_hydro * np_mask)
     von_mises_masked = np.nan_to_num(vm * np_mask)
     sigma_gpa = sigma / 1e9
+    
     if debug:
         st.write(f"[Debug] Final von Mises range (GPa): {von_mises_masked.min():.6f} to {von_mises_masked.max():.6f}")
+        
     return sigma_mag_masked, sigma_hydro_masked, von_mises_masked, sigma_gpa
+
 # =============================================
 # Safe helpers and visualization utilities
 def safe_percentile(arr, percentile, default=0.0):
@@ -280,6 +334,7 @@ def safe_percentile(arr, percentile, default=0.0):
     if len(arr) == 0:
         return default
     return np.percentile(arr, percentile)
+
 def create_vti(eta_field, sigma_field, step_idx, time_val):
     # Write VTK ImageData ASCII with spacing in nm (user-facing units)
     flat = lambda arr: ' '.join(map(str, arr.flatten(order='F')))
@@ -302,6 +357,7 @@ def create_vti(eta_field, sigma_field, step_idx, time_val):
   </ImageData>
 </VTKFile>"""
     return vti
+
 def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
                              isomin=None, isomax=None, opacity=0.7,
                              surface_count=2, custom_min=None, custom_max=None, show_grid=False):
@@ -309,6 +365,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
     vals = np.asarray(values, dtype=float)
     if custom_min is not None and custom_max is not None:
         vals = np.clip(vals, custom_min, custom_max)
+        
     # compute sensible isomin/isomax if not provided
     vals_mask = vals[np_mask]
     if vals_mask.size == 0:
@@ -319,6 +376,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
             isomin = float(safe_percentile(vals_mask, 10, np.nanmin(vals_mask)))
         if isomax is None:
             isomax = float(safe_percentile(vals_mask, 90, np.nanmax(vals_mask)))
+            
     fig = go.Figure(data=go.Isosurface(
         x=Xa.flatten(), y=Ya.flatten(), z=Za.flatten(),
         value=vals.flatten(),
@@ -329,6 +387,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         caps=dict(x_show=False, y_show=False, z_show=False),
         colorbar=dict(title=title)
     ))
+    
     if show_matrix:
         theta = np.linspace(0, np.pi, 50)
         phi = np.linspace(0, 2*np.pi, 50)
@@ -337,6 +396,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         y = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2.0
         z = R_np * np.cos(theta) + origin + N*dx/2.0
         fig.add_trace(go.Surface(x=x, y=y, z=z, surfacecolor=np.ones_like(x), colorscale='gray', opacity=0.25, showscale=False))
+        
     fig.update_layout(
         scene=dict(
             xaxis_title='X (nm)', yaxis_title='Y (nm)', zaxis_title='Z (nm)',
@@ -346,6 +406,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         height=600, title=dict(text=title, x=0.5, font=dict(size=16))
     )
     return fig
+
 def safe_matplotlib_cmap(cmap_name, default='viridis'):
     try:
         plt.get_cmap(cmap_name)
@@ -353,16 +414,21 @@ def safe_matplotlib_cmap(cmap_name, default='viridis'):
     except (ValueError, AttributeError):
         st.warning(f"Colormap '{cmap_name}' not found. Using '{default}'.")
         return default
+
 def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_cmap, eta_lims, stress_lims):
     slice_pos = N // 2
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx} - Slice z={slice_pos}", fontsize=16, y=0.95)
+    
     eta_data = eta_3d[np_mask]
     stress_data = sigma_3d[np_mask]
+    
     eta_vmin, eta_vmax = eta_lims if eta_lims else (safe_percentile(eta_data, 0, 0.0), safe_percentile(eta_data, 100, 1.0))
     stress_vmin, stress_vmax = stress_lims if stress_lims else (safe_percentile(stress_data, 0, 0.0), safe_percentile(stress_data, 100, 10.0))
+    
     safe_eta = safe_matplotlib_cmap(eta_cmap, 'Blues')
     safe_stress = safe_matplotlib_cmap(stress_cmap, 'Reds')
+    
     try:
         im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], cmap=safe_eta, vmin=eta_vmin, vmax=eta_vmax,
                                 extent=[origin, origin+N*dx, origin, origin+N*dx])
@@ -371,6 +437,7 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
         plt.colorbar(im1, ax=axes[0,0], shrink=0.8)
     except Exception as e:
         axes[0,0].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
+        
     try:
         im2 = axes[0,1].imshow(sigma_3d[:, :, slice_pos], cmap=safe_stress, vmin=stress_vmin, vmax=stress_vmax,
                                 extent=[origin, origin+N*dx, origin, origin+N*dx])
@@ -379,10 +446,13 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
         plt.colorbar(im2, ax=axes[0,1], shrink=0.8)
     except Exception as e:
         axes[0,1].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
+        
     axes[0,2].axis('off')
     axes[0,2].text(0.1, 0.5, "Stress Method: Exact 3D Anisotropic Spectral", fontsize=10)
+    
     alt_cmaps = ['jet', 'viridis', 'plasma']
     alt_titles = ['Jet (Traditional)', 'Viridis (Perceptual)', 'Plasma (High Contrast)']
+    
     for i, (cmap, title) in enumerate(zip(alt_cmaps, alt_titles)):
         try:
             im = axes[1,i].imshow(sigma_3d[:, :, slice_pos], cmap=cmap, vmin=stress_vmin, vmax=stress_vmax,
@@ -394,8 +464,10 @@ def create_matplotlib_comparison(eta_3d, sigma_3d, frame_idx, eta_cmap, stress_c
             plt.colorbar(im, ax=axes[1,i], shrink=0.8)
         except Exception as e:
             axes[1,i].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
+            
     plt.tight_layout()
     return fig
+
 def create_stress_analysis_plot(eta_3d, sigma_3d, frame_idx):
     """Enhanced stress analysis with multiple visualization types"""
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -467,6 +539,7 @@ def create_stress_analysis_plot(eta_3d, sigma_3d, frame_idx):
    
     plt.tight_layout()
     return fig
+
 # =============================================
 # Run simulation button
 if st.button("Run 3D Evolution", type="primary"):
@@ -539,6 +612,7 @@ if st.button("Run 3D Evolution", type="primary"):
         - Using Exact 3D Anisotropic Spectral Elasticity
         - Elastic Coupling Enabled: {enable_elastic_coupling}
         """)
+
 # =============================================
 # Enhanced Interactive Visualization
 if 'history_3d' in st.session_state:
@@ -551,8 +625,10 @@ if 'history_3d' in st.session_state:
                               len(st.session_state.history_3d)-1, key="viz_frame")
         eta_3d, sigma_3d = st.session_state.history_3d[frame_idx]
         times = st.session_state.times_3d
+        
         eta_lims = (eta_min, eta_max) if use_custom_limits else None
         stress_lims = (stress_min, stress_max) if use_custom_limits else None
+        
         col1, col2 = st.columns(2)
         with col1:
             st.subheader(f"Defect Order Parameter η ({eta_cmap})")
@@ -728,4 +804,5 @@ Custom Color Limits: {use_custom_limits}
             file_name=f"Ag_Nanoparticle_3D_{defect_type}_N{N}_upgraded.zip",
             mime="application/zip"
         )
+
 st.caption("🎯 3D Spherical Ag NP • Crystallographically Perfect Stress • Upgraded Version • 2025")
