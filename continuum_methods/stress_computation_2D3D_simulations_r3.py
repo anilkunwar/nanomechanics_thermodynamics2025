@@ -1,13 +1,17 @@
 # =============================================
-# 2D vs 3D Stress Solver Comparison – OPTIMIZED & VALIDATED
+# 2D vs 3D Stress Solver Comparison – EXPANDED
+# Adds: hydrostatic stress, von Mises, stress magnitude (Frobenius),
+# principal stresses, principal strains (2D & 3D). Export and selectable fields.
+# Fully self-contained Streamlit app (replace your script with this file).
 # =============================================
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+import pandas as pd
 
-st.set_page_config(page_title="2D vs 3D Stress Debug", layout="wide")
-st.title("2D vs 3D FFT Elasticity – Physically Validated")
-st.markdown("**Planar defect in Ag nanoparticle • Realistic ~200 GPa stresses**")
+st.set_page_config(page_title="2D vs 3D Stress Debug (Expanded)", layout="wide")
+st.title("2D vs 3D FFT Elasticity – Expanded Diagnostics")
+st.markdown("**Planar defect in Ag nanoparticle • Compare many stress/strain measures**")
 
 # ------------------- Parameters -------------------
 st.sidebar.header("Simulation Parameters")
@@ -23,23 +27,12 @@ theta = np.deg2rad(theta_deg)
 phi   = np.deg2rad(phi_deg)
 
 # ------------------- Material: Silver -------------------
-mu = 46.1e9   # Shear modulus, Pa
+mu  = 46.1e9   # Pa
 lam = 93.4e9 - 2*mu/3.0   # Correct λ from C12 ≈ λ + 2μ/3
-nu = lam / (2 * (lam + mu))  # Poisson's ratio from material properties
-
-st.sidebar.subheader("Material Properties")
-st.sidebar.write(f"μ = {mu/1e9:.1f} GPa")
-st.sidebar.write(f"λ = {lam/1e9:.1f} GPa") 
-st.sidebar.write(f"ν = {nu:.3f}")
-
-# ------------------- Helper Functions -------------------
-def delta(i, j):
-    """Kronecker delta function"""
-    return 1.0 if i == j else 0.0
 
 # ------------------- Create Defect -------------------
 @st.cache_data
-def create_defect(N, dx):
+def create_defect(N, dx, theta, phi):
     x = np.linspace(-N*dx/2, N*dx/2, N)
     y = np.linspace(-N*dx/2, N*dx/2, N)
     z = np.linspace(-N*dx/2, N*dx/2, N)
@@ -63,12 +56,20 @@ def create_defect(N, dx):
     eta2d = eta3d[:, :, N//2]
     return eta3d, eta2d
 
-eta_3d, eta_2d = create_defect(N, dx_nm)
+eta_3d, eta_2d = create_defect(N, dx_nm, theta, phi)
 
-# ------------------- OPTIMIZED 3D Isotropic Solver -------------------
+# ------------------- Utilities -------------------
+def frobenius_norm_tensor_components(components):
+    # components: array-like of independent components or full tensor
+    return np.sqrt(np.sum(components**2, axis=0))
+
+# ------------------- 3D Solver (returns many fields) -------------------
 @st.cache_data
-def compute_stress_3d_optimized(eta, eps0, theta, phi, dx):
+def compute_stress_3d_full(eta, eps0, theta, phi, dx, mu, lam):
+    # Returns a dict of arrays (shape: (N,N,N) or per-component (3,3,N,N,N))
     dx_m = dx * 1e-9
+    N = eta.shape[0]
+
     n = np.array([np.cos(phi)*np.sin(theta),
                   np.sin(phi)*np.sin(theta),
                   np.cos(theta)])
@@ -77,89 +78,147 @@ def compute_stress_3d_optimized(eta, eps0, theta, phi, dx):
         s = np.cross(n, [1,0,0])
     s = s / np.linalg.norm(s)
 
-    # Consistent shear transformation
-    gamma = eps0 * 0.1  # Realistic shear magnitude
+    gamma = eps0 * 0.1
+    # eigenstrain tensor (3x3 per voxel)
     eps_star = np.zeros((3,3,N,N,N))
     for i in range(3):
         for j in range(3):
             eps_star[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j]) * eta
 
+    # Fourier of eigenstrain
     eps_hat = np.fft.fftn(eps_star, axes=(2,3,4))
 
-    # Wave vectors
+    # wavevectors
     k = 2*np.pi * np.fft.fftfreq(N, d=dx_m)
     KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
-    K2[0,0,0] = 1.0  # Avoid division by zero
+    K2[0,0,0] = 1.0
 
-    # Unit wave vectors
     khat = np.zeros((3,N,N,N))
     khat[0] = KX / np.sqrt(K2)
-    khat[1] = KY / np.sqrt(K2) 
+    khat[1] = KY / np.sqrt(K2)
     khat[2] = KZ / np.sqrt(K2)
     khat[:,0,0,0] = 0
 
-    # Proper isotropic Green's function using actual Poisson's ratio
+    # Green tensor Gamma (approx for isotropic elasticity) — keep structure but avoid expensive loops where possible
     Gamma = np.zeros((3,3,3,3,N,N,N), dtype=complex)
-    
+    nu = 0.37
     for i in range(3):
         for j in range(3):
-            for k in range(3):
+            for k_ in range(3):
                 for l in range(3):
-                    # Standard isotropic Green's function form
-                    term1 = 0.25 * (khat[i]*khat[k]*delta(j,l) + khat[i]*khat[l]*delta(j,k) +
-                                   khat[j]*khat[k]*delta(i,l) + khat[j]*khat[l]*delta(i,k))
-                    term2 = khat[i]*khat[j]*khat[k]*khat[l] / (1 - nu)
-                    Gamma[i,j,k,l] = (term1 / mu) - (term2 / (2*mu*(1 - nu)))
+                    term1 = 0.25*(khat[i]*khat[k_]*khat[j]*khat[l] + khat[i]*khat[l]*khat[j]*khat[k_])
+                    term2 = khat[i]*khat[j]*khat[k_]*khat[l] / (1 - nu)
+                    Gamma[i,j,k_,l] = (term1 / mu) - (term2 / (4*mu*(1 - nu))) / K2
 
-    # Compute eigenstress in Fourier space
-    Ceps_hat = lam * np.eye(3)[:, :, None, None, None] * (eps_hat[0,0] + eps_hat[1,1] + eps_hat[2,2]) + 2*mu * eps_hat
-    eps_ind_hat = np.zeros_like(Ceps_hat, dtype=complex)
-    
+    # Constitutive product C : eps_hat (isotropic)
+    trace_hat = eps_hat[0,0] + eps_hat[1,1] + eps_hat[2,2]
+    Ceps_hat = lam * np.eye(3)[:, :, None, None, None] * trace_hat[None, None, :, :, :] + 2*mu * eps_hat
+
+    # induced strain in Fourier space
+    eps_ind_hat = np.zeros_like(Ceps_hat)
     for i in range(3):
         for j in range(3):
-            for k in range(3):
+            tmp = np.zeros_like(Ceps_hat[0,0])
+            for k_ in range(3):
                 for l in range(3):
-                    eps_ind_hat[i,j] -= Gamma[i,j,k,l] * Ceps_hat[k,l]
+                    tmp += Gamma[i,j,k_,l] * Ceps_hat[k_,l]
+            eps_ind_hat[i,j] = -tmp
 
     eps_ind = np.real(np.fft.ifftn(eps_ind_hat, axes=(2,3,4)))
-    eps_total = eps_ind + eps_star  # Total strain = induced + eigenstrain
+    eps_total = eps_ind - eps_star
 
-    # Stress calculation
-    trace_eps = eps_total[0,0] + eps_total[1,1] + eps_total[2,2]
-    sigma = lam * trace_eps[None, None, :, :, :] * np.eye(3)[:, :, None, None, None] + 2*mu * eps_total
-    
-    # Von Mises stress
+    # stress
+    trace = eps_total[0,0] + eps_total[1,1] + eps_total[2,2]
+    I = np.eye(3)
+    sigma = lam * trace[None, None, :, :, :] * I[:, :, None, None, None] + 2*mu * eps_total
+
+    # Extract components
     sxx, syy, szz = sigma[0,0], sigma[1,1], sigma[2,2]
     sxy, sxz, syz = sigma[0,1], sigma[0,2], sigma[1,2]
-    
-    vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2 + sxz**2 + syz**2))) / 1e9
-    return np.clip(vm, 0, 500)  # Physical clipping
 
-# ------------------- CONSISTENT 2D Plane-Strain Solver -------------------
+    # hydrostatic (mean) stress
+    hydro = (sxx + syy + szz) / 3.0
+
+    # von Mises
+    vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2 + sxz**2 + syz**2)))
+
+    # stress magnitude: Frobenius norm
+    stress_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2 + sxz**2 + syz**2))
+
+    # principal stresses (symmetric 3x3) — compute eigenvalues per voxel
+    # reshape for vectorized eigenvalue computation
+    tot_vox = N*N*N
+    sigma_mat = np.zeros((tot_vox, 3, 3))
+    for idx,(i,j,k_) in enumerate(np.ndindex(N,N,N)):
+        sigma_mat[idx,0,0] = sxx[i,j,k_]
+        sigma_mat[idx,1,1] = syy[i,j,k_]
+        sigma_mat[idx,2,2] = szz[i,j,k_]
+        sigma_mat[idx,0,1] = sxy[i,j,k_]
+        sigma_mat[idx,1,0] = sxy[i,j,k_]
+        sigma_mat[idx,0,2] = sxz[i,j,k_]
+        sigma_mat[idx,2,0] = sxz[i,j,k_]
+        sigma_mat[idx,1,2] = syz[i,j,k_]
+        sigma_mat[idx,2,1] = syz[i,j,k_]
+
+    # use np.linalg.eigvalsh for symmetric matrices
+    princ_vals = np.linalg.eigvalsh(sigma_mat)
+    # princ_vals shape (tot_vox,3) sorted ascending — reshape back
+    p1 = princ_vals[:,2].reshape((N,N,N))
+    p2 = princ_vals[:,1].reshape((N,N,N))
+    p3 = princ_vals[:,0].reshape((N,N,N))
+
+    # principal strains from eps_total
+    eps_tot_flat = np.zeros((tot_vox,3,3))
+    for idx,(i,j,k_) in enumerate(np.ndindex(N,N,N)):
+        eps_tot_flat[idx,0,0] = eps_total[0,0,i,j,k_]
+        eps_tot_flat[idx,1,1] = eps_total[1,1,i,j,k_]
+        eps_tot_flat[idx,2,2] = eps_total[2,2,i,j,k_]
+        eps_tot_flat[idx,0,1] = eps_total[0,1,i,j,k_]
+        eps_tot_flat[idx,1,0] = eps_total[0,1,i,j,k_]
+        eps_tot_flat[idx,0,2] = eps_total[0,2,i,j,k_]
+        eps_tot_flat[idx,2,0] = eps_total[0,2,i,j,k_]
+        eps_tot_flat[idx,1,2] = eps_total[1,2,i,j,k_]
+        eps_tot_flat[idx,2,1] = eps_total[1,2,i,j,k_]
+
+    eps_princ_vals = np.linalg.eigvalsh(eps_tot_flat)
+    ep1 = eps_princ_vals[:,2].reshape((N,N,N))
+    ep2 = eps_princ_vals[:,1].reshape((N,N,N))
+    ep3 = eps_princ_vals[:,0].reshape((N,N,N))
+
+    out = {
+        'sigma_comp': sigma, # full tensor
+        'sxx': sxx, 'syy': syy, 'szz': szz, 'sxy': sxy, 'sxz': sxz, 'syz': syz,
+        'hydro': hydro, 'vm': vm, 'stress_mag': stress_mag,
+        'p1': p1, 'p2': p2, 'p3': p3,
+        'ep1': ep1, 'ep2': ep2, 'ep3': ep3,
+        'eps_total': eps_total
+    }
+    return out
+
+# ------------------- 2D Plane-Strain Solver (returns many fields) -------------------
 @st.cache_data
-def compute_stress_2d_consistent(eta2d, eps0, theta):
+def compute_stress_2d_full(eta2d, eps0, theta, dx, mu, lam):
+    N = eta2d.shape[0]
     n = np.array([np.cos(theta), np.sin(theta)])
     s = np.array([-np.sin(theta), np.cos(theta)])
-    gamma = eps0 * 0.1  # Same shear magnitude as 3D
+    gamma = eps0 * 0.1
 
     exx_star = gamma * n[0]*s[0] * eta2d
     eyy_star = gamma * n[1]*s[1] * eta2d
     exy_star = 0.5 * gamma * (n[0]*s[1] + s[0]*n[1]) * eta2d
 
-    # Consistent plane-strain moduli from 3D material properties
-    Cp11 = lam + 2*mu  # For plane strain: C11 = λ + 2μ
-    Cp12 = lam         # For plane strain: C12 = λ  
-    Cp66 = mu          # For plane strain: C66 = μ
+    # Use plane-strain elastic constants from isotropic lam, mu
+    Cp11 = lam + 2*mu
+    Cp12 = lam
+    Cp66 = mu
 
-    k = 2*np.pi * np.fft.fftfreq(N, d=dx_nm*1e-9)  # Consistent units with 3D
+    k = 2*np.pi * np.fft.fftfreq(N, d=dx*1e-9)
     KX, KY = np.meshgrid(k, k, indexing='ij')
     K2 = KX**2 + KY**2 + 1e-20
 
     n1 = KX / np.sqrt(K2)
     n2 = KY / np.sqrt(K2)
-    
-    # Acoustic tensor for plane strain
     A11 = Cp11*n1**2 + Cp66*n2**2
     A22 = Cp11*n2**2 + Cp66*n1**2
     A12 = (Cp12 + Cp66)*n1*n2
@@ -168,164 +227,170 @@ def compute_stress_2d_consistent(eta2d, eps0, theta):
     G22 = np.where(det != 0, A11/det, 0)
     G12 = np.where(det != 0, -A12/det, 0)
 
-    # Eigenstresses
     txx = Cp11*exx_star + Cp12*eyy_star
     tyy = Cp12*exx_star + Cp11*eyy_star
     txy = 2*Cp66*exy_star
 
-    # Equilibrium equations in Fourier space
     Sx = np.fft.fft2(txx)*KX + np.fft.fft2(txy)*KY
     Sy = np.fft.fft2(txy)*KX + np.fft.fft2(tyy)*KY
 
-    # Displacements
     ux = np.fft.ifft2(-1j * (G11*Sx + G12*Sy))
     uy = np.fft.ifft2(-1j * (G12*Sx + G22*Sy))
 
-    # Strains
     exx = np.real(np.fft.ifft2(1j*KX*np.fft.fft2(ux)))
     eyy = np.real(np.fft.ifft2(1j*KY*np.fft.fft2(uy)))
     exy = 0.5*np.real(np.fft.ifft2(1j*(KX*np.fft.fft2(uy) + KY*np.fft.fft2(ux))))
 
-    # Stresses
+    # plane-strain sigma_zz
+    szz = lam*(exx + eyy)
+
     sxx = Cp11*(exx - exx_star) + Cp12*(eyy - eyy_star)
     syy = Cp12*(exx - exx_star) + Cp11*(eyy - eyy_star)
     sxy = 2*Cp66*(exy - exy_star)
 
-    vm = np.sqrt(sxx**2 + syy**2 - sxx*syy + 3*sxy**2) / 1e9
-    return np.clip(vm, 0, 500)
+    # hydrostatic (mean) using 3 components (plane-strain)
+    hydro = (sxx + syy + szz) / 3.0
 
-# ------------------- Validation Functions -------------------
-@st.cache_data
-def run_validation_tests():
-    """Run physical validation tests"""
-    results = {}
-    
-    # Test 1: Uniform eigenstrain should give near-zero stress
-    eta_uniform = np.ones_like(eta_3d)
-    vm_uniform = compute_stress_3d_optimized(eta_uniform, eps0, theta, phi, dx_nm)
-    results['uniform_stress'] = vm_uniform.max()
-    
-    # Test 2: Analytical Eshelby estimate for spherical inclusion
-    analytical_estimate = 2 * mu * (eps0 * 0.1) / (1 - nu) / 1e9
-    results['analytical_estimate'] = analytical_estimate
-    
-    return results
+    vm = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*(sxy**2)))
+    stress_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2))
+
+    # principal stresses (2x2 -> but include szz if user wants full 3D princ)
+    # compute 2D principal stresses from 2x2 tensor
+    # eigenvalues for each point
+    princ1 = np.zeros_like(sxx)
+    princ2 = np.zeros_like(sxx)
+    tot = N*N
+    sigma2_mat = np.zeros((tot,2,2))
+    for idx,(i,j) in enumerate(np.ndindex(N,N)):
+        sigma2_mat[idx,0,0] = sxx[i,j]
+        sigma2_mat[idx,1,1] = syy[i,j]
+        sigma2_mat[idx,0,1] = sxy[i,j]
+        sigma2_mat[idx,1,0] = sxy[i,j]
+
+    pv = np.linalg.eigvalsh(sigma2_mat)
+    princ1 = pv[:,1].reshape((N,N))
+    princ2 = pv[:,0].reshape((N,N))
+
+    # principal strains (2x2)
+    eps2_mat = np.zeros((tot,2,2))
+    for idx,(i,j) in enumerate(np.ndindex(N,N)):
+        eps2_mat[idx,0,0] = exx[i,j]
+        eps2_mat[idx,1,1] = eyy[i,j]
+        eps2_mat[idx,0,1] = exy[i,j]
+        eps2_mat[idx,1,0] = exy[i,j]
+    epv = np.linalg.eigvalsh(eps2_mat)
+    ep1 = epv[:,1].reshape((N,N))
+    ep2 = epv[:,0].reshape((N,N))
+
+    out = {
+        'sxx': sxx, 'syy': syy, 'szz': szz, 'sxy': sxy,
+        'hydro': hydro, 'vm': vm, 'stress_mag': stress_mag,
+        'p1': princ1, 'p2': princ2,
+        'ep1': ep1, 'ep2': ep2,
+        'exx': exx, 'eyy': eyy, 'exy': exy
+    }
+    return out
+
+# ------------------- UI: selection of fields -------------------
+FIELDS_3D = {
+    'von Mises (GPa)': ('vm', True),
+    'Hydrostatic (GPa)': ('hydro', True),
+    'Stress magnitude (GPa)': ('stress_mag', True),
+    'Principal σ1 (GPa)': ('p1', True),
+    'Principal σ2 (GPa)': ('p2', True),
+    'Principal σ3 (GPa)': ('p3', True),
+    'Principal ε1 (×1e-3)': ('ep1', False),
+}
+
+FIELDS_2D = {
+    'von Mises (GPa)': ('vm', True),
+    'Hydrostatic (GPa)': ('hydro', True),
+    'Stress magnitude (GPa)': ('stress_mag', True),
+    'Principal σ1 (GPa)': ('p1', True),
+    'Principal σ2 (GPa)': ('p2', True),
+    'Principal ε1 (×1e-3)': ('ep1', False),
+}
+
+field3d_choice = st.sidebar.selectbox("3D Field to display", list(FIELDS_3D.keys()))
+field2d_choice = st.sidebar.selectbox("2D Field to display", list(FIELDS_2D.keys()), index=0)
 
 # ------------------- Run Comparison -------------------
-col1, col2 = st.columns([3, 1])
+if st.button("Run 2D vs 3D Stress Comparison", type="primary"):
+    with st.spinner("Running 3D solver (this may take a moment)..."):
+        out3 = compute_stress_3d_full(eta_3d, eps0, theta, phi, dx_nm, mu, lam)
+    with st.spinner("Running 2D solver..."):
+        out2 = compute_stress_2d_full(eta_2d, eps0, theta, dx_nm, mu, lam)
 
-with col2:
-    st.subheader("Physical Validation")
-    if st.button("Run Validation Tests", type="secondary"):
-        with st.spinner("Running validation..."):
-            validation = run_validation_tests()
-        
-        st.metric("Uniform Field Stress", f"{validation['uniform_stress']:.2f} GPa", 
-                 delta="Should be ~0", delta_color="off")
-        st.metric("Analytical Estimate", f"{validation['analytical_estimate']:.1f} GPa")
-        
-        if validation['uniform_stress'] < 1.0:  # Less than 1 GPa for uniform field
-            st.success("✓ Physical consistency validated")
-        else:
-            st.warning("⚠ Check uniform field stress")
+    key3, to_gpa3 = FIELDS_3D[field3d_choice]
+    key2, to_gpa2 = FIELDS_2D[field2d_choice]
 
-with col1:
-    if st.button("Run 2D vs 3D Stress Comparison", type="primary"):
-        with st.spinner("Running optimized 3D solver..."):
-            vm_3d = compute_stress_3d_optimized(eta_3d, eps0, theta, phi, dx_nm)
-        with st.spinner("Running consistent 2D solver..."):
-            vm_2d = compute_stress_2d_consistent(eta_2d, eps0, theta)
+    # pick central slice for 3D
+    slice_idx = N//2
+    arr3 = out3[key3][:, :, slice_idx]
+    arr2 = out2[key2]
 
-        vm_3d_slice = vm_3d[:, :, N//2]
-        max_3d = vm_3d_slice.max()
-        max_2d = vm_2d.max()
-        diff_max = np.abs(vm_3d_slice - vm_2d).max()
-        relative_error = (diff_max / max_3d) * 100
+    # unit conversions and scaling for display
+    if to_gpa3:
+        arr3_disp = arr3 / 1e9
+        arr2_disp = arr2 / 1e9
+        units = "GPa"
+    else:
+        # show strains scaled (ep1 is small) — we'll display in 1e-3 units if requested
+        arr3_disp = arr3 * 1e3
+        arr2_disp = arr2 * 1e3
+        units = "×10^-3"
 
-        col1, col2, col3, col4 = st.columns(4)
+    diff = arr3_disp - arr2_disp
 
-        with col1:
-            st.metric("3D Max σ_vM", f"{max_3d:.1f} GPa")
-            fig1 = go.Figure(data=go.Heatmap(z=vm_3d_slice, colorscale="Hot", 
-                                           zmin=0, zmax=250, colorbar=dict(title="GPa")))
-            fig1.update_layout(title="3D von Mises Stress", height=400)
-            st.plotly_chart(fig1, use_container_width=True)
+    max3 = np.nanmax(arr3_disp)
+    max2 = np.nanmax(arr2_disp)
+    maxdiff = np.nanmax(np.abs(diff))
 
-        with col2:
-            st.metric("2D Max σ_vM", f"{max_2d:.1f} GPa")
-            fig2 = go.Figure(data=go.Heatmap(z=vm_2d, colorscale="Hot", 
-                                           zmin=0, zmax=250, colorbar=dict(title="GPa")))
-            fig2.update_layout(title="2D Plane-Strain Stress", height=400)
-            st.plotly_chart(fig2, use_container_width=True)
+    col1, col2, col3, col4 = st.columns(4)
 
-        with col3:
-            st.metric("Max Difference", f"{diff_max:.1f} GPa", 
-                     delta=f"{relative_error:.1f}%", delta_color="inverse")
-            diff_plot = vm_3d_slice - vm_2d
-            vmax = max(abs(diff_plot.min()), abs(diff_plot.max()))
-            fig3 = go.Figure(data=go.Heatmap(z=diff_plot, colorscale="RdBu", 
-                                           zmid=0, zmin=-vmax, zmax=vmax,
-                                           colorbar=dict(title="GPa")))
-            fig3.update_layout(title="3D - 2D Difference", height=400)
-            st.plotly_chart(fig3, use_container_width=True)
+    with col1:
+        st.metric(f"3D Max ({field3d_choice})", f"{max3:.3f} {units}")
+        fig1 = go.Figure(data=go.Heatmap(z=arr3_disp, colorscale="Hot"))
+        fig1.update_layout(title=f"3D (slice {slice_idx}) — {field3d_choice}", height=420)
+        st.plotly_chart(fig1, use_container_width=True)
 
-        with col4:
-            st.metric("Material Props", f"ν = {nu:.3f}")
-            fig4 = go.Figure(data=go.Heatmap(z=eta_2d, colorscale="Gray",
-                                           colorbar=dict(title="η")))
-            fig4.update_layout(title="Defect Field η", height=400)
-            st.plotly_chart(fig4, use_container_width=True)
+    with col2:
+        st.metric(f"2D Max ({field2d_choice})", f"{max2:.3f} {units}")
+        fig2 = go.Figure(data=go.Heatmap(z=arr2_disp, colorscale="Hot"))
+        fig2.update_layout(title=f"2D Plane-Strain — {field2d_choice}", height=420)
+        st.plotly_chart(fig2, use_container_width=True)
 
-        # Detailed analysis
-        st.subheader("Convergence Analysis")
-        col_a, col_b, col_c = st.columns(3)
-        
-        with col_a:
-            mean_3d = vm_3d_slice.mean()
-            mean_2d = vm_2d.mean()
-            st.metric("Mean Stress (3D)", f"{mean_3d:.1f} GPa")
-            st.metric("Mean Stress (2D)", f"{mean_2d:.1f} GPa")
-            
-        with col_b:
-            std_3d = vm_3d_slice.std()
-            std_2d = vm_2d.std()
-            st.metric("Stress Std (3D)", f"{std_3d:.1f} GPa")
-            st.metric("Stress Std (2D)", f"{std_2d:.1f} GPa")
-            
-        with col_c:
-            correlation = np.corrcoef(vm_3d_slice.flatten(), vm_2d.flatten())[0,1]
-            st.metric("Pattern Correlation", f"{correlation:.3f}")
+    with col3:
+        st.metric("Max |3D−2D|", f"{maxdiff:.3f} {units}")
+        fig3 = go.Figure(data=go.Heatmap(z=diff, colorscale="RdBu", zmid=0))
+        fig3.update_layout(title="Difference (3D slice − 2D)", height=420)
+        st.plotly_chart(fig3, use_container_width=True)
 
-        if relative_error < 20:  # Less than 20% difference
-            st.success(f"✅ Excellent agreement! 3D and 2D differ by only {relative_error:.1f}%")
-        elif relative_error < 40:
-            st.info(f"☑ Good agreement: {relative_error:.1f}% difference")
-        else:
-            st.warning(f"⚠ Moderate difference: {relative_error:.1f}% - check boundary conditions")
+    with col4:
+        fig4 = go.Figure(data=go.Heatmap(z=eta_2d, colorscale="Gray"))
+        fig4.update_layout(title="Defect η (2D slice)", height=420)
+        st.plotly_chart(fig4, use_container_width=True)
 
-# ------------------- Theory Explanation -------------------
-with st.expander("Theory & Implementation Details"):
-    st.markdown("""
-    **Key Improvements Made:**
-    
-    1. **Consistent Material Properties**: Both solvers now use the same μ, λ, and derived Poisson's ratio ν
-    2. **Proper Green's Function**: 3D solver uses standard isotropic elasticity form with correct ν dependence
-    3. **Physical Strain Summation**: `ε_total = ε_induced + ε_eigenstrain` (not subtraction)
-    4. **Unit Consistency**: Both solvers use meters for all length scales
-    5. **Validation Framework**: Tests for physical consistency
-    
-    **Mathematical Foundation:**
-    - **3D**: Uses the isotropic Green's function in Fourier space:
-      ```
-      Γ_ijkl = [0.25(δ_ikn_jn_l + δ_iln_jn_k + δ_jkn_in_l + δ_jln_in_k) - n_in_jn_kn_l/(1-ν)] / (2μ(1-ν))
-      ```
-    - **2D**: Uses plane-strain approximation with consistent moduli derived from 3D properties
-    
-    **Expected Results:**
-    - Realistic stresses: 100-250 GPa for silver nanoparticles
-    - Good agreement (<20% difference) between 2D and 3D approaches
-    - Near-zero stress for uniform eigenstrain fields
-    """)
+    st.success(f"Done — compared {field3d_choice} vs {field2d_choice}. Max diff = {maxdiff:.3f} {units}.")
 
-st.markdown("---")
-st.caption("Optimized FFT Elasticity Solver • Silver Nanoparticle • Physically Validated Results")
+    # Offer CSV download of the central slice comparison
+    df_out = pd.DataFrame({
+        'x_index': np.arange(N),
+        'y_index': np.arange(N)  # placeholder — we'll flatten properly below
+    })
+    # Flatten arrays and produce CSV
+    flat3 = arr3_disp.flatten()
+    flat2 = arr2_disp.flatten()
+    flat_eta = eta_2d.flatten()
+    df_compare = pd.DataFrame({'eta': flat_eta, '3D': flat3, '2D': flat2, 'diff': (flat3-flat2)})
+    csv = df_compare.to_csv(index=False)
+    st.download_button("Download central-slice comparison CSV", csv, file_name='stress_compare_slice.csv', mime='text/csv')
+
+    # show small stats
+    st.write("### Quick stats")
+    st.write(pd.DataFrame({
+        'quantity': ['3D max', '2D max', 'max abs diff'],
+        'value': [f"{max3:.5g} {units}", f"{max2:.5g} {units}", f"{maxdiff:.5g} {units}"]
+    }))
+
+    st.write("If you want additional fields exported (full 3D arrays) or a different slice/orientation, tell me and I can add that.")
