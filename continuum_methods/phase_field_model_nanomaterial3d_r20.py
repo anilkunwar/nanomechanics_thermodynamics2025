@@ -196,123 +196,83 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
     return eta_new
 # =============================================
 # Corrected exact 3D anisotropic spectral stress solver (units-consistent, realistic stresses)
-#@st.cache_data
-# =============================================
-# FIXED & FAST anisotropic 3D spectral solver (works on all NumPy versions)
-# =============================================
 @st.cache_data
 def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debug=False):
     dx_m = dx_nm * 1e-9
-
-    # Habit plane normal and shear direction
-    n = np.array([np.cos(phi_val)*np.sin(theta_val),
-                  np.sin(phi_val)*np.sin(theta_val),
-                  np.cos(theta_val)])
-    s = np.cross(n, [0, 0, 1])
+    # Define vectors
+    n = np.array([np.cos(phi_val)*np.sin(theta_val), np.sin(phi_val)*np.sin(theta_val), np.cos(theta_val)])
+    s = np.cross(n, [0,0,1])
     if np.linalg.norm(s) < 1e-12:
-        s = np.cross(n, [1, 0, 0])
-    s = s / np.linalg.norm(s)
-
-    # Shear eigenstrain magnitude (kept realistic)
+        s = np.cross(n, [1,0,0])
+    s /= np.linalg.norm(s)
     gamma = eps0_val * 0.1
-    eps_star_tensor = np.zeros((3, 3))
+    shear_tensor = np.zeros((3,3))
     for i in range(3):
         for j in range(3):
-            eps_star_tensor[i, j] = 0.5 * gamma * (n[i] * s[j] + s[i] * n[j])
-
-    # Full eigenstrain field: eps*_ijkl = eps_star_tensor_ij * η(x)
-    eps_star = np.einsum('ij,xyz->ijxyz', eps_star_tensor, eta_field)
-
-    # Polarization field τ_ij = C_ijkl ε*_kl
-    tau = np.einsum('ijklm,klxyz->ijxyz', C, eps_star)  # C is (3,3,3,3)
-
-    # FFT of polarization
-    tau_hat = np.fft.fftn(tau, axes=(2, 3, 4))
-
-    # Wavevectors
+            shear_tensor[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j])
+    # Eigenstrain
+    eps_star = np.einsum('ij,xyz->ijxyz', shear_tensor, eta_field)
+    # Polarization tau = C : eps_star
+    tau = np.einsum('ijkl,klxyz->ijxyz', C, eps_star)
+    tau_hat = np.fft.fftn(tau, axes=(2,3,4))
+    # Wavenumbers
     k = 2 * np.pi * np.fft.fftfreq(N, d=dx_m)
     KX, KY, KZ = np.meshgrid(k, k, k, indexing='ij')
     K2 = KX**2 + KY**2 + KZ**2
-    K2[0, 0, 0] = np.inf  # avoid div by zero
-
-    # Unit wavevector (zero at Gamma point)
-    k_norm = np.sqrt(K2, out=np.zeros_like(K2), where=K2 != np.inf)
-    k_norm[0, 0, 0] = 1.0
-    khat = np.stack([KX, KY, KZ], axis=0) / k_norm
-    khat[:, 0, 0, 0] = 0.0
-
-    # Acoustic tensor A_pq = C_pjql khat_j khat_l
-    # Shape: (3,3,N,N,N)
-    A = np.einsum('pjql,jxyz,lxyz->pqxyz', C, khat, khat)
-
-    # === FIX: replace np.moveaxes with explicit transpose ===
-    # We need A as (N,N,N,3,3) to use np.linalg.inv
-    A_reshaped = np.transpose(A, (2, 3, 4, 0, 1))  # now (N,N,N,3,3)
-
-    # Invert acoustic tensor (vectorized over grid)
-    # This is the most expensive step — but fully correct
-    invA = np.linalg.inv(A_reshaped)  # (N,N,N,3,3)
-
-    # Green operator G_ij = (invA)_ij / |k|^2
-    G = invA / K2[..., np.newaxis, np.newaxis]          # (N,N,N,3,3)
-    G[0, 0, 0] = 0.0  # zero mean strain
-
-    # Bring back to (3,3,N,N,N)
-    G = np.transpose(G, (3, 4, 0, 1, 2))
-
-    # Strain Green operator Γ_ijkl = ¼ [khat_j G_ik khat_l + khat_j G_il khat_k +
-    #                                  khat_i G_jk khat_l + khat_i G_jl khat_k]
-    khat_i = khat[None, :, :, :, :]      # (1,3,N,N,N)
-    khat_j = khat[:, None, :, :, :]     # (3,1,N,N,N)
-
-    term1 = khat_j * np.einsum('ikxyz,lxyz->ijklxyz', G, khat_i)
-    term2 = khat_j * np.einsum('ilxyz,kxyz->ijklxyz', G, khat_i)
-    term3 = khat_i * np.einsum('jkxyz,lxyz->ijklxyz', G, khat_j)
-    term4 = khat_i * np.einsum('jlxyz,kxyz->ijklxyz', G, khat_j)
-
+    K2[0,0,0] = np.inf
+    sqrtK2 = np.sqrt(K2)
+    khat_x = KX / sqrtK2
+    khat_y = KY / sqrtK2
+    khat_z = KZ / sqrtK2
+    khat_x[0,0,0] = khat_y[0,0,0] = khat_z[0,0,0] = 0.0
+    khat = np.stack([khat_x, khat_y, khat_z], axis=0)
+    # Acoustic tensor A_ij = C_ikjl khat_k khat_l
+    A = np.einsum('ikjl,kxyz,lxyz->ijxyz', C, khat, khat)
+    A_moved = np.moveaxes(A, [0,1], [3,4])  # shape (N,N,N,3,3)
+    invA = np.linalg.inv(A_moved)
+    # Displacement Green G_ij = inv(A)_ij / K2
+    G = invA / K2[..., np.newaxis, np.newaxis]
+    G[0,0,0, :, :] = 0.0
+    # Strain Green operator Gamma_ijkl
+    # term1: khat[j] * G[i,k] * khat[l]
+    term1 = np.einsum('jxyz,xyzik,lxyz->ijklxyz', khat, G, khat)
+    # term2: khat[j] * G[i,l] * khat[k]
+    term2 = np.einsum('jxyz,xyzil,kxyz->ijlkxyz', khat, G, khat)
+    # term3: khat[i] * G[j,k] * khat[l]
+    term3 = np.einsum('ixyz,xyzjk,lxyz->jiklxyz', khat, G, khat)
+    term3 = np.transpose(term3, (1,0,2,3,4,5,6))
+    # term4: khat[i] * G[j,l] * khat[k]
+    term4 = np.einsum('ixyz,xyzjl,kxyz->jilkxyz', khat, G, khat)
+    term4 = np.transpose(term4, (1,0,3,2,4,5,6))
     Gamma = (term1 + term2 + term3 + term4) / 4.0
-
-    # Induced strain in Fourier space
+    # Induced strain eps_ind_hat = - Gamma : tau_hat
     eps_ind_hat = -np.einsum('ijklxyz,klxyz->ijxyz', Gamma, tau_hat)
-
-    # Back to real space
-    eps_ind = np.real(np.fft.ifftn(eps_ind_hat, axes=(2, 3, 4)))
-
-    # Total mechanical strain
+    eps_ind = np.real(np.fft.ifftn(eps_ind_hat, axes=(2,3,4)))
+    # Total strain
     eps_total = eps_ind - eps_star
-
-    # Stress σ_ij = C_ijkl ε_kl
-    sigma = np.einsum('ijklm,klxyz->ijxyz', C, eps_total)
-
-    # Convert to GPa
-    sigma_gpa = sigma / 1e9
-
-    # Stress invariants
-    sxx = sigma_gpa[0, 0]
-    syy = sigma_gpa[1, 1]
-    szz = sigma_gpa[2, 2]
-    sxy = sigma_gpa[0, 1]
-    sxz = sigma_gpa[0, 2]
-    syz = sigma_gpa[1, 2]
-
-    von_mises = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 +
-                               6 * (sxy**2 + sxz**2 + syz**2)))
-
-    sigma_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2*(sxy**2 + sxz**2 + syz**2)
-    sigma_mag = np.sqrt(sigma_mag)
-
-    sigma_hydro = (sxx + syy + szz) / 3.0
-
-    # Mask outside particle
-    von_mises = np.where(np_mask, von_mises, np.nan)
-    sigma_mag = np.where(np_mask, sigma_mag, np.nan)
-    sigma_hydro = np.where(np_mask, sigma_hydro, np.nan)
-
+    # Stress sigma = C : eps_total
+    sigma = np.einsum('ijkl,klxyz->ijxyz', C, eps_total)
     if debug:
-        st.write(f"Max von Mises stress: {np.nanmax(von_mises):.2f} GPa")
-
-    return sigma_mag, sigma_hydro, von_mises, sigma_gpa
-    
+        max_stress_pa = np.max(np.sqrt(sigma[0,0]**2 + sigma[1,1]**2 + sigma[2,2]**2 + 2*(sigma[0,1]**2 + sigma[0,2]**2 + sigma[1,2]**2)))
+        st.write(f"[Debug] Max stress magnitude (Pa): {max_stress_pa:.3e}")
+    # Compute scalars in GPa
+    sxx = sigma[0,0] / 1e9
+    syy = sigma[1,1] / 1e9
+    szz = sigma[2,2] / 1e9
+    sxy = sigma[0,1] / 1e9
+    sxz = sigma[0,2] / 1e9
+    syz = sigma[1,2] / 1e9
+    vm = np.sqrt(0.5 * ((sxx - syy)**2 + (syy - szz)**2 + (szz - sxx)**2 + 6 * (sxy**2 + sxz**2 + syz**2)))
+    sigma_mag = np.sqrt(sxx**2 + syy**2 + szz**2 + 2 * (sxy**2 + sxz**2 + syz**2))
+    sigma_hydro = (sxx + syy + szz) / 3
+    # Mask
+    sigma_mag_masked = np.nan_to_num(sigma_mag * np_mask)
+    sigma_hydro_masked = np.nan_to_num(sigma_hydro * np_mask)
+    von_mises_masked = np.nan_to_num(vm * np_mask)
+    sigma_gpa = sigma / 1e9
+    if debug:
+        st.write(f"[Debug] Final von Mises range (GPa): {von_mises_masked.min():.6f} to {von_mises_masked.max():.6f}")
+    return sigma_mag_masked, sigma_hydro_masked, von_mises_masked, sigma_gpa
 # =============================================
 # Safe helpers and visualization utilities
 def safe_percentile(arr, percentile, default=0.0):
