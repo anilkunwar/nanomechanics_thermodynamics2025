@@ -3,19 +3,18 @@
 # All-features unified Streamlit script with 50+ color maps and complete stress visualization
 # Enhanced with correct anisotropic 3D elasticity and comprehensive 3D export
 # Fine-tuned for visually realistic, attractive, and accurate plots/graphs
-# Improvements: Enhanced Plotly lighting and camera for realism, improved colorbar formatting,
-#               better Matplotlib aesthetics (fonts, grids, annotations), added anti-aliasing,
-#               realistic material shading in 3D, accurate unit labeling, optimized thresholds
+# FIXED: Plotly colorbar ValueError by using proper ColorBar object
 # =============================================
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
+from plotly.graph_objs.isosurface import ColorBar
 import matplotlib.pyplot as plt
-from matplotlib import font_manager
 import pandas as pd
 import zipfile
 from io import BytesIO
 import time
+from scipy.ndimage import gaussian_filter
 
 st.set_page_config(page_title="3D Ag NP Defect Evolution – Ultimate", layout="wide")
 st.title("3D Phase-Field Simulation of Defects in Spherical Ag Nanoparticles — Ultimate Edition")
@@ -190,7 +189,6 @@ def create_initial_eta(shape_in):
     eta += 0.02 * np.random.randn(N, N, N) * np_mask
     eta = np.clip(eta, 0.0, 1.0)
     # Smooth boundaries for realism
-    from scipy.ndimage import gaussian_filter
     eta = gaussian_filter(eta, sigma=0.5)
     return eta
 eta = create_initial_eta(shape)
@@ -212,7 +210,7 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
     elastic_driving = np.zeros_like(eta_in)
     if enable_elastic:
         # Compute stress (in GPa)
-        _, _, _, sigma_gpa, _ = compute_stress_3d_exact(eta_in, eps0, theta, phi, dx_nm, debug)
+        _, _, _, sigma_gpa, _, _, _, _, _, _ = compute_stress_3d_exact(eta_in, eps0, theta, phi, dx_nm, debug)
        
         # Shear tensor
         n = np.array([np.cos(phi)*np.sin(theta), np.sin(phi)*np.sin(theta), np.cos(theta)])
@@ -374,7 +372,6 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
 # =============================================
 # Enhanced VTI creation with all stress components (for Paraview-compatible export)
 def create_vti(eta_field, stress_components, step_idx, time_val):
-    """Create VTI file with all stress components for proper 3D visualization"""
     sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_components
    
     flat = lambda arr: ' '.join(map(str, np.nan_to_num(arr.flatten(order='F'))))
@@ -431,7 +428,6 @@ def safe_percentile(arr, percentile, default=0.0):
         return default
     return np.percentile(arr, percentile)
 def get_stress_component(stress_components, component_name):
-    """Extract the appropriate stress component based on selection"""
     sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_components
    
     stress_map = {
@@ -450,7 +446,6 @@ def get_stress_component(stress_components, component_name):
 def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
                              isomin=None, isomax=None, opacity=0.7,
                              surface_count=2, custom_min=None, custom_max=None, show_grid=False):
-    # Avoid feeding all-NaN arrays to Plotly; flatten arrays and let Plotly clip by isomin/isomax
     vals = np.asarray(values, dtype=float)
     if custom_min is not None and custom_max is not None:
         vals = np.clip(vals, custom_min, custom_max)
@@ -466,6 +461,15 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         if isomax is None:
             isomax = float(safe_percentile(vals_mask, 95, np.nanmax(vals_mask)))  # Upper for avoiding outliers
            
+    # Proper ColorBar object (fixes ValueError)
+    cbar = ColorBar(
+        thickness=20,
+        len=0.5,
+        title=title,
+        titleside='right',
+        tickfont=dict(size=12)
+    )
+
     fig = go.Figure(data=go.Isosurface(
         x=Xa.flatten(), y=Ya.flatten(), z=Za.flatten(),
         value=vals.flatten(),
@@ -474,7 +478,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         colorscale=colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
-        colorbar=dict(title=title, titleside='right', tickfont=dict(size=12), thickness=20, len=0.5),
+        colorbar=cbar,
         lighting=dict(ambient=0.8, diffuse=0.9, specular=0.5, roughness=0.5, fresnel=0.2),  # Realistic lighting
         lightposition=dict(x=100, y=100, z=50)
     ))
