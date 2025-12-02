@@ -447,9 +447,10 @@ if 'history' in st.session_state:
         fields = [eta, stress_fields['sigma_mag'], stress_fields['sigma_hydro'], stress_fields['von_mises']]
         cmaps = [eta_cmap, sigma_cmap, hydro_cmap, vm_cmap]
         titles = ["Order Parameter η", "Stress Magnitude |σ|", "Hydrostatic σ_h", "von Mises σ_vM"]
-        for ax, field, cmap, title in zip(axes.flat, fields, cmaps, titles):
-            vmin, vmax = colorbar_limits[list(colorbar_limits.keys())[i]] if i < 4 else [0, 10]
-            im = ax.imshow(field, extent=extent, cmap=cmap, origin='lower', vmin=vmin[0], vmax=vmin[1])
+        for i, (ax, field, cmap, title) in enumerate(zip(axes.flat, fields, cmaps, titles)):
+            field_key = ['eta', 'sigma_mag', 'sigma_hydro', 'von_mises'][i]
+            vmin, vmax = colorbar_limits[field_key]
+            im = ax.imshow(field, extent=extent, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax)
             if show_contours:
                 ax.contour(X, Y, eta, levels=[contour_level], colors=contour_color,
                           linewidths=line_width, alpha=contour_alpha)
