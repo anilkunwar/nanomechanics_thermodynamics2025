@@ -714,7 +714,7 @@ def apply_axis_styling(ax, style_params):
         spine.set_linewidth(style_params['spine_width'])
 
 def get_comparison_stats(stress_fields, selected_components, eta, filter_params):
-    """Get statistics for comparison table"""
+    """Get statistics for comparison table - FIXED to return proper numeric types"""
     component_map = {
         "Stress Magnitude |σ|": 'sigma_mag',
         "Hydrostatic σ_h": 'sigma_hydro',
@@ -736,19 +736,25 @@ def get_comparison_stats(stress_fields, selected_components, eta, filter_params)
         
         if len(data) > 0:
             stats[comp] = {
-                'max': np.nanmax(data),
-                'min': np.nanmin(data),
-                'mean': np.nanmean(data),
-                'std': np.nanstd(data),
-                'median': np.nanmedian(data),
-                'q90': np.nanpercentile(data, 90),
-                'count': len(data)
+                'Component': comp,
+                'Max (GPa)': float(np.nanmax(data)),
+                'Min (GPa)': float(np.nanmin(data)),
+                'Mean (GPa)': float(np.nanmean(data)),
+                'Std Dev': float(np.nanstd(data)),
+                'Median': float(np.nanmedian(data)),
+                '90th %ile': float(np.nanpercentile(data, 90)),
+                'Valid Points': int(len(data))
             }
         else:
             stats[comp] = {
-                'max': np.nan, 'min': np.nan, 'mean': np.nan,
-                'std': np.nan, 'median': np.nan, 'q90': np.nan,
-                'count': 0
+                'Component': comp,
+                'Max (GPa)': np.nan,
+                'Min (GPa)': np.nan,
+                'Mean (GPa)': np.nan,
+                'Std Dev': np.nan,
+                'Median': np.nan,
+                '90th %ile': np.nan,
+                'Valid Points': 0
             }
     
     return stats
@@ -822,11 +828,11 @@ if 'history' in st.session_state:
             with col1:
                 st.metric("η Range", f"{eta.min():.3f} - {eta.max():.3f}")
             with col2:
-                st.metric(f"Max {first_comp}", f"{stats['max']:.2f} GPa")
+                st.metric(f"Max {first_comp}", f"{stats['Max (GPa)']:.2f} GPa")
             with col3:
-                st.metric(f"Mean {first_comp}", f"{stats['mean']:.2f} GPa")
+                st.metric(f"Mean {first_comp}", f"{stats['Mean (GPa)']:.2f} GPa")
             with col4:
-                st.metric(f"Std Dev {first_comp}", f"{stats['std']:.2f} GPa")
+                st.metric(f"Std Dev {first_comp}", f"{stats['Std Dev']:.2f} GPa")
         
         fig, axes = plt.subplots(2, 2, figsize=(18, 14))
         fields = [eta, stress_fields['sigma_mag'], stress_fields['sigma_hydro'], stress_fields['von_mises']]
@@ -956,7 +962,7 @@ if 'history' in st.session_state:
         plt.tight_layout()
         st.pyplot(fig)
     
-    # TAB 3: ENHANCED COMPREHENSIVE ANALYSIS WITH COMPARISON
+    # TAB 3: ENHANCED COMPREHENSIVE ANALYSIS WITH COMPARISON - FIXED
     with tab3:
         st.subheader("🔬 Enhanced Stress Analysis & Comparison")
         
@@ -964,36 +970,34 @@ if 'history' in st.session_state:
         if filter_params['apply_filter']:
             st.info(f"**Data Filtering Active:** η > {filter_params['threshold']}, Stress ∈ [{filter_params['stress_min']}, {filter_params['stress_max']}] GPa")
         
-        # Statistics table
+        # Statistics table - FIXED VERSION
         st.subheader("📊 Comparison Statistics")
         stats_dict = get_comparison_stats(stress_fields, selected_stress_components, eta, filter_params)
         
         # Create comparison table
-        stats_data = []
-        for comp in selected_stress_components:
-            if comp in stats_dict:
-                stats = stats_dict[comp]
-                stats_data.append({
-                    'Component': comp,
-                    'Max (GPa)': f"{stats['max']:.3f}",
-                    'Min (GPa)': f"{stats['min']:.3f}",
-                    'Mean (GPa)': f"{stats['mean']:.3f}",
-                    'Std Dev': f"{stats['std']:.3f}",
-                    'Median': f"{stats['median']:.3f}",
-                    '90th %ile': f"{stats['q90']:.3f}",
-                    'Valid Points': f"{stats['count']:,}"
-                })
-        
-        if stats_data:
-            df_stats = pd.DataFrame(stats_data)
-            st.dataframe(df_stats.style.format({
-                'Max (GPa)': '{:.3f}',
-                'Min (GPa)': '{:.3f}',
-                'Mean (GPa)': '{:.3f}',
-                'Std Dev': '{:.3f}',
-                'Median': '{:.3f}',
-                '90th %ile': '{:.3f}'
-            }), use_container_width=True)
+        if stats_dict:
+            # Convert to list of dictionaries for DataFrame
+            stats_list = []
+            for comp in selected_stress_components:
+                if comp in stats_dict:
+                    stats_list.append(stats_dict[comp])
+            
+            if stats_list:
+                df_stats = pd.DataFrame(stats_list)
+                
+                # Display with proper formatting
+                st.dataframe(
+                    df_stats.style.format({
+                        'Max (GPa)': '{:.3f}',
+                        'Min (GPa)': '{:.3f}',
+                        'Mean (GPa)': '{:.3f}',
+                        'Std Dev': '{:.3f}',
+                        'Median': '{:.3f}',
+                        '90th %ile': '{:.3f}',
+                        'Valid Points': '{:,}'
+                    }, na_rep="N/A"),
+                    use_container_width=True
+                )
         
         # Generate comparison plot
         if selected_stress_components:
@@ -1005,23 +1009,26 @@ if 'history' in st.session_state:
             st.pyplot(comparison_fig)
             
             # Additional metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if selected_stress_components:
-                    max_val = max([stats_dict[comp]['max'] for comp in selected_stress_components 
-                                 if comp in stats_dict])
-                    st.metric("Overall Max Stress", f"{max_val:.2f} GPa")
-            
-            with col2:
-                if selected_stress_components:
-                    mean_val = np.mean([stats_dict[comp]['mean'] for comp in selected_stress_components 
+            if stats_dict and selected_stress_components:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    max_vals = [stats_dict[comp]['Max (GPa)'] for comp in selected_stress_components 
+                              if comp in stats_dict and not np.isnan(stats_dict[comp]['Max (GPa)'])]
+                    if max_vals:
+                        max_val = max(max_vals)
+                        st.metric("Overall Max Stress", f"{max_val:.2f} GPa")
+                
+                with col2:
+                    mean_vals = [stats_dict[comp]['Mean (GPa)'] for comp in selected_stress_components 
+                               if comp in stats_dict and not np.isnan(stats_dict[comp]['Mean (GPa)'])]
+                    if mean_vals:
+                        mean_val = np.nanmean(mean_vals)
+                        st.metric("Average Mean Stress", f"{mean_val:.2f} GPa")
+                
+                with col3:
+                    total_points = sum([stats_dict[comp]['Valid Points'] for comp in selected_stress_components 
                                       if comp in stats_dict])
-                    st.metric("Average Mean Stress", f"{mean_val:.2f} GPa")
-            
-            with col3:
-                total_points = sum([stats_dict[comp]['count'] for comp in selected_stress_components 
-                                  if comp in stats_dict])
-                st.metric("Total Data Points", f"{total_points:,}")
+                    st.metric("Total Data Points", f"{total_points:,}")
         else:
             st.warning("Please select at least one stress component for comparison.")
     
