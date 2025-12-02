@@ -468,13 +468,22 @@ if 'history' in st.session_state:
     with tab2:
         st.subheader("Line Profile Analysis")
         slice_pos = st.slider("Slice Position", 0, N-1, N//2)
+    
+        # FIXED: Proper stress component mapping
+        stress_key_map = {
+            "Stress Magnitude |σ|": 'sigma_mag',
+            "Hydrostatic σ_h": 'sigma_hydro', 
+            "von Mises σ_vM": 'von_mises'
+        }
+        stress_key = stress_key_map[stress_component]
+    
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-        
+    
         # Horizontal slice
         eta_slice = eta[slice_pos, :]
-        stress_slice = stress_fields[stress_component.lower().replace(' ', '_').replace('|', '')][slice_pos, :]
+        stress_slice = stress_fields[stress_key][slice_pos, :]
         x_pos = np.linspace(extent[0], extent[1], N)
-        
+    
         ax1.plot(x_pos, eta_slice, 'b-', linewidth=2, label='η')
         ax1.plot(x_pos, stress_slice, 'r--', linewidth=2, label=stress_component)
         ax1.set_title(f"Horizontal Slice (y={extent[2]+slice_pos*dx:.1f} nm)")
@@ -482,11 +491,13 @@ if 'history' in st.session_state:
         ax1.set_ylabel("Value")
         ax1.legend()
         ax1.grid(True, alpha=0.3)
-        
+    
         ax2.imshow(eta, extent=extent, cmap=eta_cmap, origin='lower')
         ax2.axhline(y=extent[2]+slice_pos*dx, color='white', linewidth=3)
         ax2.set_title("Slice Location")
+        plt.tight_layout()
         st.pyplot(fig)
+    
     
     # TAB 3: COMPREHENSIVE STRESS ANALYSIS (NEW!)
     with tab3:
