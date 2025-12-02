@@ -6,20 +6,17 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-import plotly.express as px
 import matplotlib.pyplot as plt
 import pandas as pd
 import zipfile
 from io import BytesIO
 import time
 import os
-from scipy import stats
-from scipy.interpolate import griddata
 
 st.set_page_config(page_title="3D Ag NP Defect Evolution – Ultimate", layout="wide")
 st.title("3D Phase-Field Simulation of Defects in Spherical Ag Nanoparticles — Ultimate Edition")
 st.markdown("""
-**50+ Color Maps • Complete Stress Tensor Visualization • Enhanced 3D/2D Export**
+**50+ Color Maps • Complete Stress Tensor Visualization • Enhanced 3D Export**
 **Crystallographically accurate eigenstrain • Exact 3D anisotropic FFT spectral elasticity**
 **ISF/ESF/Twin physically distinct • Tiltable {111} habit plane • Publication-ready**
 **Units fixed: spatial units (nm) in UI, FFT uses meters internally • Enhanced visualization**
@@ -108,11 +105,40 @@ with col2:
 theta = np.deg2rad(theta_deg)
 phi = np.deg2rad(phi_deg)
 
-st.sidebar.header("Visualization Controls")
+# =============================================
+# ENHANCED Visualization Controls
+# =============================================
+st.sidebar.header("🎨 Visualization Controls")
 viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()))
 eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], index=0)
 stress_cmap = st.sidebar.selectbox("Stress (σ) Color Map", COLOR_MAPS[viz_category],
                                   index=min(1, len(COLOR_MAPS[viz_category])-1))
+
+# ENHANCED: Comprehensive colorbar range controls
+st.sidebar.subheader("Colorbar Ranges")
+use_custom_limits = st.sidebar.checkbox("Use Custom Color Scale Limits", False)
+if use_custom_limits:
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        eta_min = st.number_input("η Min", value=0.0, format="%.2f")
+        sigma_min = st.number_input("|σ| Min (GPa)", value=0.0, format="%.1f")
+        hydro_min = st.number_input("σ_h Min (GPa)", value=-5.0, format="%.1f")
+        vm_min = st.number_input("σ_vM Min (GPa)", value=0.0, format="%.1f")
+    with col2:
+        eta_max = st.number_input("η Max", value=1.0, format="%.2f")
+        sigma_max = st.number_input("|σ| Max (GPa)", value=10.0, format="%.1f")
+        hydro_max = st.number_input("σ_h Max (GPa)", value=5.0, format="%.1f")
+        vm_max = st.number_input("σ_vM Max (GPa)", value=8.0, format="%.1f")
+else:
+    eta_min, eta_max, sigma_min, sigma_max, hydro_min, hydro_max, vm_min, vm_max = None, None, None, None, None, None, None, None
+
+# Store colorbar limits in a dictionary
+colorbar_limits = {
+    'eta': [eta_min, eta_max],
+    'sigma_mag': [sigma_min, sigma_max],
+    'sigma_hydro': [hydro_min, hydro_max],
+    'von_mises': [vm_min, vm_max]
+}
 
 # NEW: Stress component selection
 stress_component = st.sidebar.selectbox(
@@ -121,17 +147,26 @@ stress_component = st.sidebar.selectbox(
      "σ_xx", "σ_yy", "σ_zz", "σ_xy", "σ_xz", "σ_yz"]
 )
 
-use_custom_limits = st.sidebar.checkbox("Use Custom Color Scale Limits", False)
-if use_custom_limits:
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        eta_min = st.number_input("η Min", value=0.0, format="%.2f")
-        stress_min = st.number_input("σ Min (GPa)", value=0.0, format="%.2f")
-    with col2:
-        eta_max = st.number_input("η Max", value=1.0, format="%.2f")
-        stress_max = st.number_input("σ Max (GPa)", value=10.0, format="%.2f")
-else:
-    eta_min, eta_max, stress_min, stress_max = None, None, None, None
+# Chart styling controls from 2D code
+st.sidebar.subheader("Chart Styling")
+title_font_size = st.sidebar.slider("Title Font Size", 12, 24, 16)
+label_font_size = st.sidebar.slider("Label Font Size", 10, 20, 14)
+tick_font_size = st.sidebar.slider("Tick Font Size", 8, 18, 12)
+line_width = st.sidebar.slider("Contour Line Width", 1.0, 5.0, 2.0, 0.5)
+
+# Additional color maps for 2D plots
+cmap_list_2d = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'hot', 'coolwarm', 
+                'jet', 'turbo', 'rainbow', 'RdBu', 'Spectral', 'tab20', 'gist_earth']
+
+eta_cmap_2d = st.sidebar.selectbox("η colormap (2D)", cmap_list_2d, index=0)
+sigma_cmap_2d = st.sidebar.selectbox("|σ| colormap (2D)", cmap_list_2d, index=cmap_list_2d.index('hot'))
+hydro_cmap_2d = st.sidebar.selectbox("Hydrostatic colormap (2D)", cmap_list_2d, index=cmap_list_2d.index('coolwarm'))
+vm_cmap_2d = st.sidebar.selectbox("von Mises colormap (2D)", cmap_list_2d, index=cmap_list_2d.index('plasma'))
+
+show_contours = st.sidebar.checkbox("Show Defect Contours", value=True)
+contour_level = st.sidebar.slider("Contour Level", 0.1, 0.9, 0.4, 0.05)
+contour_color = st.sidebar.color_picker("Contour Color", "#FFFFFF")
+contour_alpha = st.sidebar.slider("Contour Alpha", 0.1, 1.0, 0.8, 0.1)
 
 st.sidebar.subheader("3D Rendering")
 opacity_3d = st.sidebar.slider("3D Opacity", 0.05, 1.0, 0.7, 0.05)
@@ -140,15 +175,6 @@ show_grid = st.sidebar.checkbox("Show Grid in Plotly", value=True)
 show_matrix = st.sidebar.checkbox("Show Nanoparticle Matrix", value=True)
 eta_threshold = st.sidebar.slider("η Visualization Threshold", 0.0, 1.0, 0.1, 0.01)
 stress_threshold = st.sidebar.slider("Stress Visualization Threshold (GPa)", 0.0, 50.0, 0.0, 0.1)
-
-# 2D Analysis Controls
-st.sidebar.header("2D Stress Analysis Controls")
-scatter_point_size = st.sidebar.slider("Scatter Point Size", 1, 20, 3)
-scatter_opacity = st.sidebar.slider("Scatter Opacity", 0.1, 1.0, 0.5, 0.05)
-scatter_max_points = st.sidebar.slider("Max Points in Scatter", 100, 10000, 2000, 100)
-histogram_bins = st.sidebar.slider("Histogram Bins", 10, 200, 50, 5)
-smoothing_kernel = st.sidebar.slider("Profile Smoothing Kernel", 1, 21, 5, 2)
-profile_error_bars = st.sidebar.checkbox("Show Error Bars on Profiles", value=True)
 
 st.sidebar.header("Advanced Options")
 debug_mode = st.sidebar.checkbox("Debug: print diagnostics", value=False)
@@ -440,7 +466,8 @@ def create_vti(eta_field, stress_components, step_idx, time_val):
     return vti
 
 # =============================================
-# Safe helpers and visualization utilities
+# NEW: Enhanced Analysis Functions from 2D Code
+# =============================================
 def safe_percentile(arr, percentile, default=0.0):
     arr = arr[np.isfinite(arr)]
     if len(arr) == 0:
@@ -496,12 +523,12 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
     ))
     
     if show_matrix:
-        theta = np.linspace(0, np.pi, 50)
-        phi = np.linspace(0, 2*np.pi, 50)
-        theta, phi = np.meshgrid(theta, phi)
-        x = R_np * np.sin(theta) * np.cos(phi) + origin + N*dx/2.0
-        y = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2.0
-        z = R_np * np.cos(theta) + origin + N*dx/2.0
+        theta_sphere = np.linspace(0, np.pi, 50)
+        phi_sphere = np.linspace(0, 2*np.pi, 50)
+        theta_sphere, phi_sphere = np.meshgrid(theta_sphere, phi_sphere)
+        x = R_np * np.sin(theta_sphere) * np.cos(phi_sphere) + origin + N*dx/2.0
+        y = R_np * np.sin(theta_sphere) * np.sin(phi_sphere) + origin + N*dx/2.0
+        z = R_np * np.cos(theta_sphere) + origin + N*dx/2.0
         fig.add_trace(go.Surface(x=x, y=y, z=z, surfacecolor=np.ones_like(x), colorscale='gray', opacity=0.25, showscale=False))
         
     fig.update_layout(
@@ -514,562 +541,273 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
     )
     return fig
 
-def safe_matplotlib_cmap(cmap_name, default='viridis'):
-    try:
-        plt.get_cmap(cmap_name)
-        return cmap_name
-    except (ValueError, AttributeError):
-        st.warning(f"Colormap '{cmap_name}' not found. Using '{default}'.")
-        return default
-
-def create_matplotlib_comparison(eta_3d, stress_components, frame_idx, eta_cmap, stress_cmap, eta_lims, stress_lims):
-    slice_pos = N // 2
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx} - Slice z={slice_pos}", fontsize=16, y=0.95)
-    
-    eta_data = eta_3d[np_mask]
-    stress_data = get_stress_component(stress_components, stress_component)[np_mask]
-    
-    eta_vmin, eta_vmax = eta_lims if eta_lims else (safe_percentile(eta_data, 0, 0.0), safe_percentile(eta_data, 100, 1.0))
-    stress_vmin, stress_vmax = stress_lims if stress_lims else (safe_percentile(stress_data, 0, 0.0), safe_percentile(stress_data, 100, 10.0))
-    
-    safe_eta = safe_matplotlib_cmap(eta_cmap, 'Blues')
-    safe_stress = safe_matplotlib_cmap(stress_cmap, 'Reds')
-    
-    try:
-        im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], cmap=safe_eta, vmin=eta_vmin, vmax=eta_vmax,
-                                extent=[origin, origin+N*dx, origin, origin+N*dx])
-        axes[0,0].set_title(f'Defect η ({safe_eta})')
-        axes[0,0].set_xlabel('x (nm)'); axes[0,0].set_ylabel('y (nm)')
-        plt.colorbar(im1, ax=axes[0,0], shrink=0.8)
-    except Exception as e:
-        axes[0,0].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
-        
-    try:
-        current_stress = get_stress_component(stress_components, stress_component)
-        im2 = axes[0,1].imshow(current_stress[:, :, slice_pos], cmap=safe_stress, vmin=stress_vmin, vmax=stress_vmax,
-                                extent=[origin, origin+N*dx, origin, origin+N*dx])
-        axes[0,1].set_title(f'{stress_component} ({safe_stress})')
-        axes[0,1].set_xlabel('x (nm)')
-        plt.colorbar(im2, ax=axes[0,1], shrink=0.8)
-    except Exception as e:
-        axes[0,1].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
-        
-    axes[0,2].axis('off')
-    axes[0,2].text(0.1, 0.5, f"Stress Component: {stress_component}\nMethod: Exact 3D Anisotropic Spectral", fontsize=10)
-    
-    alt_cmaps = ['jet', 'turbo', 'viridis', 'plasma']
-    alt_titles = ['Jet (Traditional)', 'Turbo (High Contrast)', 'Viridis (Perceptual)', 'Plasma (Vibrant)']
-    
-    for i, (cmap, title) in enumerate(zip(alt_cmaps, alt_titles)):
-        if i >= 3:  # Only show 3 in the second row
-            break
-        try:
-            current_stress = get_stress_component(stress_components, stress_component)
-            im = axes[1,i].imshow(current_stress[:, :, slice_pos], cmap=cmap, vmin=stress_vmin, vmax=stress_vmax,
-                                  extent=[origin, origin+N*dx, origin, origin+N*dx])
-            axes[1,i].set_title(f'{stress_component} - {title}')
-            axes[1,i].set_xlabel('x (nm)')
-            if i == 0:
-                axes[1,i].set_ylabel('y (nm)')
-            plt.colorbar(im, ax=axes[1,i], shrink=0.8)
-        except Exception as e:
-            axes[1,i].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
-            
-    plt.tight_layout()
-    return fig
-
-# =============================================
-# ENHANCED 2D STRESS ANALYSIS FUNCTIONS WITH EDITABILITY
-def create_2d_stress_analysis(eta_3d, stress_components, frame_idx, slice_pos=None):
-    """Enhanced 2D stress analysis with multiple visualization types and editability"""
-    if slice_pos is None:
-        slice_pos = N // 2
-    
+def create_enhanced_stress_analysis(eta_3d, stress_components, frame_idx):
+    """Enhanced stress analysis with multiple visualization types - adapted from 2D"""
     current_stress = get_stress_component(stress_components, stress_component)
     
-    # Create tabs for different 2D analyses
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "Scatter Analysis", "Histogram Analysis", "Radial Profile", 
-        "Correlation Matrix", "3D Projection"
+    # Create tabs for different analysis types
+    analysis_tab1, analysis_tab2, analysis_tab3, analysis_tab4 = st.tabs([
+        "📈 Statistical Analysis", 
+        "🎯 2D Slice Visualization", 
+        "🔍 Scatter Analysis", 
+        "📊 Radial Profiles"
     ])
     
-    with tab1:
-        st.subheader("Scatter Plot Analysis")
-        col1, col2 = st.columns([3, 1])
+    with analysis_tab1:
+        st.subheader("Statistical Analysis")
         
+        # Calculate statistics
+        stress_data = current_stress[np_mask]
+        eta_data = eta_3d[np_mask]
+        
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            # Create scatter plot
-            fig_scatter = plt.figure(figsize=(10, 8))
-            
-            # Sample points for clarity
-            eta_masked = eta_3d[np_mask].flatten()
-            stress_masked = current_stress[np_mask].flatten()
-            
-            if len(eta_masked) > scatter_max_points:
-                indices = np.random.choice(len(eta_masked), scatter_max_points, replace=False)
-                eta_sample = eta_masked[indices]
-                stress_sample = stress_masked[indices]
-            else:
-                eta_sample = eta_masked
-                stress_sample = stress_masked
-            
-            scatter = plt.scatter(eta_sample, stress_sample, 
-                                 c=stress_sample, cmap=stress_cmap, 
-                                 s=scatter_point_size, alpha=scatter_opacity)
-            
-            # Add linear regression line
-            if len(eta_sample) > 10:
-                slope, intercept, r_value, p_value, std_err = stats.linregress(eta_sample, stress_sample)
-                x_line = np.array([eta_sample.min(), eta_sample.max()])
-                y_line = slope * x_line + intercept
-                plt.plot(x_line, y_line, 'r-', linewidth=2, 
-                        label=f'y = {slope:.3f}x + {intercept:.3f}\nR² = {r_value**2:.3f}')
-            
-            plt.xlabel('Defect Parameter η')
-            plt.ylabel(f'{stress_component} (GPa)')
-            plt.title(f'Defect-Stress Scatter Plot - Frame {frame_idx}')
-            plt.colorbar(scatter, label=f'{stress_component} (GPa)')
-            plt.grid(True, alpha=0.3)
-            plt.legend()
-            
-            st.pyplot(fig_scatter)
-        
+            st.metric(f"Max {stress_component}", f"{np.nanmax(stress_data):.2f} GPa")
+            st.metric("Mean Stress", f"{np.nanmean(stress_data):.2f} GPa")
         with col2:
-            st.markdown("### Scatter Controls")
-            show_density = st.checkbox("Show Density Heatmap", value=False)
-            show_stats = st.checkbox("Show Statistics", value=True)
-            
-            if show_density:
-                # Create density heatmap
-                fig_density, ax = plt.subplots(figsize=(8, 6))
-                hb = ax.hexbin(eta_masked, stress_masked, gridsize=30, cmap=stress_cmap)
-                ax.set_xlabel('Defect Parameter η')
-                ax.set_ylabel(f'{stress_component} (GPa)')
-                plt.colorbar(hb, ax=ax, label='Count')
-                st.pyplot(fig_density)
-            
-            if show_stats and len(eta_masked) > 0:
-                st.markdown("#### Statistical Analysis")
-                st.write(f"Correlation coefficient: {np.corrcoef(eta_masked, stress_masked)[0,1]:.3f}")
-                st.write(f"Stress range: {stress_masked.min():.3f} - {stress_masked.max():.3f} GPa")
-                st.write(f"Mean stress: {stress_masked.mean():.3f} GPa")
-                st.write(f"Median stress: {np.median(stress_masked):.3f} GPa")
+            st.metric("Std Deviation", f"{np.nanstd(stress_data):.2f} GPa")
+            st.metric("Stress > 5 GPa", f"{np.sum(stress_data > 5):,} voxels")
+        with col3:
+            st.metric("Stress > 1 GPa", f"{np.sum(stress_data > 1):,} voxels")
+            st.metric("Defect Volume", f"{np.sum(eta_data > 0.5):,} voxels")
+        with col4:
+            st.metric("Defect Mean η", f"{np.mean(eta_data[eta_data > 0.1]):.3f}")
+            st.metric("Stress Skewness", f"{pd.Series(stress_data.flatten()).skew():.3f}")
+        
+        # Histogram
+        fig_hist, ax_hist = plt.subplots(figsize=(10, 6))
+        ax_hist.hist(stress_data[stress_data > 0], bins=50, alpha=0.7, color='red', edgecolor='black')
+        ax_hist.set_xlabel(f'{stress_component} (GPa)', fontsize=label_font_size, fontweight='bold')
+        ax_hist.set_ylabel('Frequency', fontsize=label_font_size, fontweight='bold')
+        ax_hist.set_title(f'{stress_component} Distribution - Frame {frame_idx}', 
+                         fontsize=title_font_size, fontweight='bold', pad=20)
+        ax_hist.grid(True, alpha=0.3)
+        ax_hist.tick_params(axis='both', which='major', labelsize=tick_font_size)
+        st.pyplot(fig_hist)
     
-    with tab2:
-        st.subheader("Histogram Analysis")
+    with analysis_tab2:
+        st.subheader("2D Slice Visualization")
         
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            fig_hist, axes = plt.subplots(1, 2, figsize=(14, 5))
-            
-            # Histogram of stress
-            axes[0].hist(stress_masked, bins=histogram_bins, alpha=0.7, 
-                        color='red', edgecolor='black')
-            axes[0].set_xlabel(f'{stress_component} (GPa)')
-            axes[0].set_ylabel('Frequency')
-            axes[0].set_title(f'{stress_component} Distribution')
-            axes[0].grid(True, alpha=0.3)
-            
-            # Cumulative distribution
-            axes[1].hist(stress_masked, bins=histogram_bins, alpha=0.7, 
-                        color='blue', edgecolor='black', cumulative=True)
-            axes[1].set_xlabel(f'{stress_component} (GPa)')
-            axes[1].set_ylabel('Cumulative Frequency')
-            axes[1].set_title(f'{stress_component} Cumulative Distribution')
-            axes[1].grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            st.pyplot(fig_hist)
-        
-        with col2:
-            st.markdown("### Histogram Controls")
-            log_scale = st.checkbox("Log Scale Y-axis", value=False)
-            show_fit = st.checkbox("Show Gaussian Fit", value=False)
-            
-            if log_scale:
-                fig_log, ax = plt.subplots(figsize=(8, 6))
-                ax.hist(stress_masked, bins=histogram_bins, alpha=0.7, 
-                       color='green', edgecolor='black', log=True)
-                ax.set_xlabel(f'{stress_component} (GPa)')
-                ax.set_ylabel('Log Frequency')
-                ax.set_title('Log-scale Histogram')
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig_log)
-            
-            if show_fit and len(stress_masked) > 0:
-                # Fit Gaussian
-                mu, sigma = stats.norm.fit(stress_masked)
-                x = np.linspace(stress_masked.min(), stress_masked.max(), 100)
-                pdf = stats.norm.pdf(x, mu, sigma)
-                
-                fig_fit, ax = plt.subplots(figsize=(8, 6))
-                ax.hist(stress_masked, bins=histogram_bins, alpha=0.7, 
-                       density=True, color='purple', edgecolor='black')
-                ax.plot(x, pdf, 'r-', linewidth=2, 
-                       label=f'μ={mu:.3f}, σ={sigma:.3f}')
-                ax.set_xlabel(f'{stress_component} (GPa)')
-                ax.set_ylabel('Probability Density')
-                ax.set_title('Gaussian Fit to Stress Distribution')
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig_fit)
-    
-    with tab3:
-        st.subheader("Radial Profile Analysis")
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            fig_radial, ax = plt.subplots(figsize=(10, 6))
-            
-            # Radial bins
-            radial_bins = np.linspace(0, R_np, 30)
-            radial_centers = (radial_bins[1:] + radial_bins[:-1]) / 2
-            
-            mean_stress = []
-            std_stress = []
-            
-            for i in range(len(radial_bins)-1):
-                mask = (r >= radial_bins[i]) & (r < radial_bins[i+1]) & np_mask
-                if np.any(mask):
-                    mean_stress.append(np.mean(current_stress[mask]))
-                    std_stress.append(np.std(current_stress[mask]))
-                else:
-                    mean_stress.append(0)
-                    std_stress.append(0)
-            
-            # Smooth the profile if requested
-            if smoothing_kernel > 1:
-                kernel = np.ones(smoothing_kernel) / smoothing_kernel
-                mean_stress_smooth = np.convolve(mean_stress, kernel, mode='same')
-                ax.plot(radial_centers, mean_stress_smooth, 'b-', linewidth=3, 
-                       label='Smoothed Mean', alpha=0.8)
-            
-            # Plot with error bars
-            if profile_error_bars:
-                ax.errorbar(radial_centers, mean_stress, yerr=std_stress, 
-                          fmt='o-', capsize=5, label='Mean ± Std Dev')
-            else:
-                ax.plot(radial_centers, mean_stress, 'o-', label='Mean')
-            
-            ax.set_xlabel('Radius (nm)')
-            ax.set_ylabel(f'{stress_component} (GPa)')
-            ax.set_title(f'Radial {stress_component} Profile')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xlim([0, R_np])
-            
-            st.pyplot(fig_radial)
-        
-        with col2:
-            st.markdown("### Profile Controls")
-            show_derivative = st.checkbox("Show Derivative", value=False)
-            show_integral = st.checkbox("Show Integrated Stress", value=False)
-            
-            if show_derivative and len(mean_stress) > 1:
-                # Calculate derivative
-                derivative = np.gradient(mean_stress, radial_centers[1]-radial_centers[0])
-                
-                fig_deriv, ax = plt.subplots(figsize=(8, 6))
-                ax.plot(radial_centers, derivative, 'g-', linewidth=2)
-                ax.set_xlabel('Radius (nm)')
-                ax.set_ylabel(f'd({stress_component})/dr (GPa/nm)')
-                ax.set_title('Stress Gradient')
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig_deriv)
-            
-            if show_integral and len(mean_stress) > 1:
-                # Calculate integrated stress
-                integrated = np.cumsum(mean_stress) * (radial_centers[1] - radial_centers[0])
-                
-                fig_integral, ax = plt.subplots(figsize=(8, 6))
-                ax.plot(radial_centers, integrated, 'r-', linewidth=2)
-                ax.set_xlabel('Radius (nm)')
-                ax.set_ylabel(f'Integrated {stress_component} (GPa·nm)')
-                ax.set_title('Cumulative Stress')
-                ax.grid(True, alpha=0.3)
-                st.pyplot(fig_integral)
-    
-    with tab4:
-        st.subheader("Stress Tensor Correlation Matrix")
-        
-        # Extract all stress components
-        sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_components
-        
-        # Prepare data for correlation matrix
-        stress_components_list = [
-            ('η', eta_3d[np_mask].flatten()),
-            ('σ_vm', von_mises[np_mask].flatten()),
-            ('σ_mag', sigma_mag[np_mask].flatten()),
-            ('σ_hydro', sigma_hydro[np_mask].flatten()),
-            ('σ_xx', sxx[np_mask].flatten()),
-            ('σ_yy', syy[np_mask].flatten()),
-            ('σ_zz', szz[np_mask].flatten()),
-            ('σ_xy', sxy[np_mask].flatten())
-        ]
-        
-        # Limit points for performance
-        max_corr_points = min(10000, len(stress_components_list[0][1]))
-        indices = np.random.choice(len(stress_components_list[0][1]), max_corr_points, replace=False)
-        
-        # Create correlation matrix
-        corr_matrix = np.zeros((len(stress_components_list), len(stress_components_list)))
-        
-        for i in range(len(stress_components_list)):
-            for j in range(len(stress_components_list)):
-                data_i = stress_components_list[i][1][indices]
-                data_j = stress_components_list[j][1][indices]
-                corr_matrix[i, j] = np.corrcoef(data_i, data_j)[0, 1]
-        
-        # Plot correlation matrix
-        fig_corr, ax = plt.subplots(figsize=(10, 8))
-        im = ax.imshow(corr_matrix, cmap='RdBu', vmin=-1, vmax=1)
-        
-        # Add labels
-        labels = [comp[0] for comp in stress_components_list]
-        ax.set_xticks(range(len(labels)))
-        ax.set_yticks(range(len(labels)))
-        ax.set_xticklabels(labels, rotation=45)
-        ax.set_yticklabels(labels)
-        
-        # Add correlation values
-        for i in range(len(labels)):
-            for j in range(len(labels)):
-                text = ax.text(j, i, f'{corr_matrix[i, j]:.2f}',
-                              ha="center", va="center", color="black" if abs(corr_matrix[i, j]) < 0.7 else "white")
-        
-        ax.set_title("Stress Tensor Correlation Matrix")
-        plt.colorbar(im, ax=ax, label='Correlation Coefficient')
-        
-        st.pyplot(fig_corr)
-        
-        # Pairwise scatter plots
-        st.subheader("Selected Pairwise Scatter Plots")
-        
-        selected_pairs = st.multiselect(
-            "Select pairs to visualize:",
-            [(f"η vs {stress_component}", 0, 1),
-             ("σ_vm vs σ_hydro", 1, 3),
-             ("σ_xx vs σ_yy", 4, 5),
-             ("σ_xy vs η", 7, 0)],
-            default=[(f"η vs {stress_component}", 0, 1)]
-        )
-        
-        if selected_pairs:
-            n_pairs = len(selected_pairs)
-            fig_pairs, axes = plt.subplots(1, n_pairs, figsize=(5*n_pairs, 4))
-            if n_pairs == 1:
-                axes = [axes]
-            
-            for idx, (label, i_idx, j_idx) in enumerate(selected_pairs):
-                x_data = stress_components_list[i_idx][1][indices]
-                y_data = stress_components_list[j_idx][1][indices]
-                
-                axes[idx].scatter(x_data, y_data, alpha=0.3, s=10)
-                axes[idx].set_xlabel(stress_components_list[i_idx][0])
-                axes[idx].set_ylabel(stress_components_list[j_idx][0])
-                axes[idx].set_title(label)
-                axes[idx].grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            st.pyplot(fig_pairs)
-    
-    with tab5:
-        st.subheader("3D Projection Analysis")
-        
-        # Create 3D scatter plot
-        fig_3d = go.Figure()
-        
-        # Sample points for 3D visualization
-        sample_mask = (eta_3d > 0.1) & np_mask
-        sample_indices = np.where(sample_mask)
-        
-        if len(sample_indices[0]) > 0:
-            # Limit points for performance
-            n_3d_points = min(5000, len(sample_indices[0]))
-            subset = np.random.choice(len(sample_indices[0]), n_3d_points, replace=False)
-            
-            x_vals = X[sample_indices][subset]
-            y_vals = Y[sample_indices][subset]
-            z_vals = Z[sample_indices][subset]
-            stress_vals = current_stress[sample_indices][subset]
-            eta_vals = eta_3d[sample_indices][subset]
-            
-            # Create 3D scatter plot
-            fig_3d.add_trace(go.Scatter3d(
-                x=x_vals, y=y_vals, z=z_vals,
-                mode='markers',
-                marker=dict(
-                    size=5,
-                    color=stress_vals,
-                    colorscale=stress_cmap,
-                    opacity=0.7,
-                    colorbar=dict(title=f'{stress_component} (GPa)')
-                ),
-                text=[f'η={eta:.2f}, σ={stress:.2f} GPa' 
-                     for eta, stress in zip(eta_vals, stress_vals)],
-                hovertemplate='%{text}<extra></extra>',
-                name='Stress Points'
-            ))
-            
-            # Add nanoparticle surface
-            if show_matrix:
-                phi, theta = np.meshgrid(np.linspace(0, 2*np.pi, 30), 
-                                        np.linspace(0, np.pi, 30))
-                x_surface = R_np * np.sin(theta) * np.cos(phi) + origin + N*dx/2.0
-                y_surface = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2.0
-                z_surface = R_np * np.cos(theta) + origin + N*dx/2.0
-                
-                fig_3d.add_trace(go.Surface(
-                    x=x_surface, y=y_surface, z=z_surface,
-                    opacity=0.2,
-                    colorscale='gray',
-                    showscale=False,
-                    name='Nanoparticle'
-                ))
-        
-        fig_3d.update_layout(
-            scene=dict(
-                xaxis_title='X (nm)',
-                yaxis_title='Y (nm)',
-                zaxis_title='Z (nm)',
-                aspectmode='data'
-            ),
-            title=f'3D Stress Distribution - {stress_component}',
-            height=600
-        )
-        
-        st.plotly_chart(fig_3d, use_container_width=True)
-        
-        # Additional 3D controls
+        # Slice controls
         col1, col2 = st.columns(2)
         with col1:
-            view_x = st.slider("View X", -180, 180, 30)
-            view_y = st.slider("View Y", -180, 180, 30)
-            view_z = st.slider("View Z", -180, 180, 30)
+            slice_dim = st.selectbox("Slice Dimension", ["XY Plane (Z)", "XZ Plane (Y)", "YZ Plane (X)"])
+        with col2:
+            slice_pos = st.slider("Slice Position", 0, N-1, N//2, key="analysis_slice")
         
-        fig_3d.update_layout(
-            scene_camera=dict(
-                eye=dict(x=view_x/100, y=view_y/100, z=view_z/100)
-            )
-        )
+        # Create 2D visualization
+        fig_slice, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
         
-        st.plotly_chart(fig_3d, use_container_width=True)
-
-def create_2d_data_export(eta_3d, stress_components, frame_idx, times):
-    """Create comprehensive 2D data export"""
+        if slice_dim == "XY Plane (Z)":
+            eta_slice = eta_3d[:, :, slice_pos]
+            stress_slice = current_stress[:, :, slice_pos]
+            title_suffix = f"Z = {origin + slice_pos*dx:.1f} nm"
+        elif slice_dim == "XZ Plane (Y)":
+            eta_slice = eta_3d[:, slice_pos, :]
+            stress_slice = current_stress[:, slice_pos, :]
+            title_suffix = f"Y = {origin + slice_pos*dx:.1f} nm"
+        else: # YZ Plane (X)
+            eta_slice = eta_3d[slice_pos, :, :]
+            stress_slice = current_stress[slice_pos, :, :]
+            title_suffix = f"X = {origin + slice_pos*dx:.1f} nm"
+        
+        # Plot defect field
+        eta_vmin, eta_vmax = colorbar_limits['eta'] if colorbar_limits['eta'][0] is not None else (0, 1)
+        im1 = ax1.imshow(eta_slice, extent=[origin, origin+N*dx, origin, origin+N*dx], 
+                        cmap=eta_cmap_2d, origin='lower', vmin=eta_vmin, vmax=eta_vmax)
+        
+        if show_contours:
+            x_vals = np.linspace(origin, origin+N*dx, eta_slice.shape[1])
+            y_vals = np.linspace(origin, origin+N*dx, eta_slice.shape[0])
+            X_slice, Y_slice = np.meshgrid(x_vals, y_vals)
+            ax1.contour(X_slice, Y_slice, eta_slice, levels=[contour_level], 
+                       colors=contour_color, linewidths=line_width, alpha=contour_alpha)
+        
+        ax1.set_title(f"Defect Parameter η - {title_suffix}", fontsize=title_font_size, fontweight='bold')
+        ax1.set_xlabel("x (nm)", fontsize=label_font_size, fontweight='bold')
+        ax1.set_ylabel("y (nm)", fontsize=label_font_size, fontweight='bold')
+        plt.colorbar(im1, ax=ax1, shrink=0.8)
+        
+        # Plot stress field
+        stress_vmin, stress_vmax = colorbar_limits['von_mises'] if colorbar_limits['von_mises'][0] is not None else (None, None)
+        im2 = ax2.imshow(stress_slice, extent=[origin, origin+N*dx, origin, origin+N*dx], 
+                        cmap=sigma_cmap_2d, origin='lower', vmin=stress_vmin, vmax=stress_vmax)
+        
+        ax2.set_title(f"{stress_component} - {title_suffix}", fontsize=title_font_size, fontweight='bold')
+        ax2.set_xlabel("x (nm)", fontsize=label_font_size, fontweight='bold')
+        plt.colorbar(im2, ax=ax2, shrink=0.8)
+        
+        plt.tight_layout()
+        st.pyplot(fig_slice)
     
-    current_stress = get_stress_component(stress_components, stress_component)
+    with analysis_tab3:
+        st.subheader("Scatter Analysis - Defect-Stress Correlation")
+        
+        # Scatter plot controls
+        col1, col2 = st.columns(2)
+        with col1:
+            sample_size = st.slider("Sample Size", 100, 10000, 1000, 100)
+            point_size = st.slider("Point Size", 1, 50, 10)
+            alpha_value = st.slider("Point Alpha", 0.1, 1.0, 0.5, 0.1)
+        with col2:
+            min_eta_threshold = st.slider("Minimum η Threshold", 0.0, 0.5, 0.1, 0.05)
+            min_stress_threshold = st.slider("Minimum Stress Threshold (GPa)", 0.0, 10.0, 0.0, 0.1)
+            colormap_scatter = st.selectbox("Scatter Colormap", ['viridis', 'plasma', 'inferno', 'magma', 'hot', 'coolwarm'])
+        
+        # Prepare data for scatter plot
+        eta_flat = eta_3d[np_mask].flatten()
+        stress_flat = current_stress[np_mask].flatten()
+        
+        # Apply thresholds
+        valid_mask = (eta_flat > min_eta_threshold) & (stress_flat > min_stress_threshold)
+        eta_filtered = eta_flat[valid_mask]
+        stress_filtered = stress_flat[valid_mask]
+        
+        if len(eta_filtered) > 0:
+            # Sample if too many points
+            if len(eta_filtered) > sample_size:
+                indices = np.random.choice(len(eta_filtered), sample_size, replace=False)
+                eta_sampled = eta_filtered[indices]
+                stress_sampled = stress_filtered[indices]
+            else:
+                eta_sampled = eta_filtered
+                stress_sampled = stress_filtered
+            
+            # Create scatter plot
+            fig_scatter, ax_scatter = plt.subplots(figsize=(10, 6))
+            scatter = ax_scatter.scatter(eta_sampled, stress_sampled, 
+                                        c=stress_sampled, cmap=colormap_scatter, 
+                                        s=point_size, alpha=alpha_value, edgecolors='black', linewidth=0.5)
+            
+            ax_scatter.set_xlabel("Defect Parameter η", fontsize=label_font_size, fontweight='bold')
+            ax_scatter.set_ylabel(f"{stress_component} (GPa)", fontsize=label_font_size, fontweight='bold')
+            ax_scatter.set_title(f"Defect-Stress Correlation (Frame {frame_idx})", 
+                               fontsize=title_font_size, fontweight='bold', pad=20)
+            ax_scatter.grid(True, alpha=0.3)
+            
+            # Add colorbar
+            plt.colorbar(scatter, ax=ax_scatter, label=f"{stress_component} (GPa)")
+            
+            # Calculate and display correlation coefficient
+            correlation = np.corrcoef(eta_filtered, stress_filtered)[0, 1]
+            ax_scatter.text(0.05, 0.95, f'Correlation: {correlation:.3f}', 
+                          transform=ax_scatter.transAxes, fontsize=12,
+                          verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            
+            st.pyplot(fig_scatter)
+            
+            # Display statistics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Data Points", f"{len(eta_sampled):,}")
+                st.metric("Correlation Coeff", f"{correlation:.3f}")
+            with col2:
+                st.metric("Avg η in high stress", f"{np.mean(eta_filtered[stress_filtered > 5]):.3f}")
+                st.metric("Avg Stress in defect", f"{np.mean(stress_filtered[eta_filtered > 0.5]):.2f} GPa")
+            with col3:
+                st.metric("Max η in sample", f"{np.max(eta_sampled):.3f}")
+                st.metric("Max Stress in sample", f"{np.max(stress_sampled):.2f} GPa")
+        else:
+            st.warning("No data points meet the threshold criteria. Try lowering the thresholds.")
     
-    # Create multiple dataframes for different analyses
-    buffer = BytesIO()
-    
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1. Full 3D data (sampled for 2D analysis)
-        full_data = pd.DataFrame({
-            'x': X[np_mask].flatten(),
-            'y': Y[np_mask].flatten(),
-            'z': Z[np_mask].flatten(),
-            'eta': eta_3d[np_mask].flatten(),
-            'stress': current_stress[np_mask].flatten(),
-            'radius': r[np_mask].flatten()
-        })
-        zf.writestr(f"frame_{frame_idx:04d}_full_data.csv", full_data.to_csv(index=False))
+    with analysis_tab4:
+        st.subheader("Radial Stress Profiles")
         
-        # 2. Radial profile data
-        radial_bins = np.linspace(0, R_np, 30)
-        radial_centers = (radial_bins[1:] + radial_bins[:-1]) / 2
+        # Radial profile controls
+        col1, col2 = st.columns(2)
+        with col1:
+            num_bins = st.slider("Number of Radial Bins", 10, 100, 20, 5)
+            show_std = st.checkbox("Show Standard Deviation", value=True)
+        with col2:
+            profile_type = st.selectbox("Profile Type", ["Mean", "Median", "Maximum"])
+            compare_fields = st.checkbox("Compare Multiple Fields", value=True)
         
-        radial_data = []
-        for i in range(len(radial_bins)-1):
-            mask = (r >= radial_bins[i]) & (r < radial_bins[i+1]) & np_mask
-            if np.any(mask):
-                radial_data.append({
-                    'radius': radial_centers[i],
-                    'mean_stress': np.mean(current_stress[mask]),
-                    'std_stress': np.std(current_stress[mask]),
-                    'min_stress': np.min(current_stress[mask]),
-                    'max_stress': np.max(current_stress[mask]),
-                    'count': np.sum(mask)
-                })
+        # Calculate radial distances
+        x_center = origin + N*dx/2.0
+        y_center = origin + N*dx/2.0
+        z_center = origin + N*dx/2.0
         
-        radial_df = pd.DataFrame(radial_data)
-        zf.writestr(f"frame_{frame_idx:04d}_radial_profile.csv", radial_df.to_csv(index=False))
+        radial_dist = np.sqrt((X - x_center)**2 + (Y - y_center)**2 + (Z - z_center)**2)
+        radial_dist_masked = radial_dist[np_mask]
         
-        # 3. Statistical summary
-        stress_masked = current_stress[np_mask].flatten()
-        eta_masked = eta_3d[np_mask].flatten()
+        # Create radial bins
+        radial_bins = np.linspace(0, R_np, num_bins + 1)
+        bin_centers = (radial_bins[1:] + radial_bins[:-1]) / 2
         
-        stats_df = pd.DataFrame({
-            'statistic': ['mean', 'std', 'min', 'max', '25%', '50%', '75%', 'skew', 'kurtosis'],
-            'stress': [
-                np.mean(stress_masked),
-                np.std(stress_masked),
-                np.min(stress_masked),
-                np.max(stress_masked),
-                np.percentile(stress_masked, 25),
-                np.percentile(stress_masked, 50),
-                np.percentile(stress_masked, 75),
-                stats.skew(stress_masked),
-                stats.kurtosis(stress_masked)
-            ],
-            'eta': [
-                np.mean(eta_masked),
-                np.std(eta_masked),
-                np.min(eta_masked),
-                np.max(eta_masked),
-                np.percentile(eta_masked, 25),
-                np.percentile(eta_masked, 50),
-                np.percentile(eta_masked, 75),
-                stats.skew(eta_masked),
-                stats.kurtosis(eta_masked)
-            ]
-        })
-        zf.writestr(f"frame_{frame_idx:04d}_statistics.csv", stats_df.to_csv(index=False))
+        # Calculate profiles
+        profiles = {}
+        field_names = ['von_mises', 'sigma_mag', 'sigma_hydro']
+        field_data = {
+            'von_mises': stress_components[2][np_mask],
+            'sigma_mag': stress_components[0][np_mask],
+            'sigma_hydro': stress_components[1][np_mask]
+        }
         
-        # 4. Correlation data
-        if len(stress_masked) > 0 and len(eta_masked) > 0:
-            corr_df = pd.DataFrame({
-                'x': eta_masked[:min(10000, len(eta_masked))],
-                'y': stress_masked[:min(10000, len(stress_masked))]
-            })
-            zf.writestr(f"frame_{frame_idx:04d}_correlation_data.csv", corr_df.to_csv(index=False))
+        for field_name in field_names:
+            field_vals = field_data[field_name]
+            radial_means = []
+            radial_stds = []
+            
+            for i in range(len(radial_bins)-1):
+                mask_bin = (radial_dist_masked >= radial_bins[i]) & (radial_dist_masked < radial_bins[i+1])
+                if np.any(mask_bin):
+                    if profile_type == "Mean":
+                        radial_means.append(np.mean(field_vals[mask_bin]))
+                    elif profile_type == "Median":
+                        radial_means.append(np.median(field_vals[mask_bin]))
+                    else:  # Maximum
+                        radial_means.append(np.max(field_vals[mask_bin]))
+                    radial_stds.append(np.std(field_vals[mask_bin]))
+                else:
+                    radial_means.append(0)
+                    radial_stds.append(0)
+            
+            profiles[field_name] = {
+                'means': np.array(radial_means),
+                'stds': np.array(radial_stds)
+            }
         
-        # 5. Metadata
-        metadata = f"""2D Stress Analysis Export - Frame {frame_idx}
-================================================
-Time: {times[frame_idx]:.3f}
-Stress Component: {stress_component}
-Grid Size: {N}³
-Grid Spacing: {dx} nm
-Nanoparticle Radius: {R_np:.2f} nm
-Eigenstrain (ε*): {eps0}
-Defect Type: {defect_type}
-Habit Plane: θ={theta_deg}°, φ={phi_deg}°
-Stress Calculation: Exact 3D Anisotropic Spectral
-
-Files Included:
-1. full_data.csv - Sampled 3D data within nanoparticle
-2. radial_profile.csv - Radial stress profile
-3. statistics.csv - Statistical summary
-4. correlation_data.csv - Correlation data for scatter plots
-
-Analysis Parameters:
-- Scatter point size: {scatter_point_size}
-- Scatter opacity: {scatter_opacity}
-- Max scatter points: {scatter_max_points}
-- Histogram bins: {histogram_bins}
-- Smoothing kernel: {smoothing_kernel}
-- Error bars: {profile_error_bars}
-
-Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        zf.writestr("ANALYSIS_METADATA.txt", metadata)
-    
-    buffer.seek(0)
-    return buffer
+        # Plot radial profiles
+        fig_radial, ax_radial = plt.subplots(figsize=(10, 6))
+        
+        colors = ['red', 'blue', 'green']
+        labels = ['Von Mises', 'Stress Magnitude', 'Hydrostatic Stress']
+        
+        for idx, (field_name, color, label) in enumerate(zip(field_names, colors, labels)):
+            if compare_fields or field_name == 'von_mises':
+                ax_radial.plot(bin_centers, profiles[field_name]['means'], 
+                              color=color, linewidth=2, marker='o', label=label)
+                
+                if show_std:
+                    ax_radial.fill_between(bin_centers,
+                                          profiles[field_name]['means'] - profiles[field_name]['stds'],
+                                          profiles[field_name]['means'] + profiles[field_name]['stds'],
+                                          color=color, alpha=0.2)
+        
+        ax_radial.set_xlabel("Radial Distance from Center (nm)", fontsize=label_font_size, fontweight='bold')
+        ax_radial.set_ylabel(f"{profile_type} Stress (GPa)", fontsize=label_font_size, fontweight='bold')
+        ax_radial.set_title(f"Radial Stress Profile - {profile_type} Values", 
+                           fontsize=title_font_size, fontweight='bold', pad=20)
+        ax_radial.legend()
+        ax_radial.grid(True, alpha=0.3)
+        ax_radial.tick_params(axis='both', which='major', labelsize=tick_font_size)
+        
+        # Add nanoparticle boundary
+        ax_radial.axvline(x=R_np, color='black', linestyle='--', linewidth=2, alpha=0.5, label='NP Boundary')
+        
+        st.pyplot(fig_radial)
+        
+        # Display radial statistics
+        st.subheader("Radial Statistics")
+        col1, col2 = st.columns(2)
+        with col1:
+            max_stress_radius = bin_centers[np.argmax(profiles['von_mises']['means'])]
+            st.metric("Radius of Max Stress", f"{max_stress_radius:.2f} nm")
+            st.metric("Stress at Surface", f"{profiles['von_mises']['means'][-1]:.2f} GPa")
+        with col2:
+            stress_gradient = (profiles['von_mises']['means'][-1] - profiles['von_mises']['means'][0]) / R_np
+            st.metric("Average Stress Gradient", f"{stress_gradient:.3f} GPa/nm")
+            st.metric("Stress Range", f"{profiles['von_mises']['means'].max() - profiles['von_mises']['means'].min():.2f} GPa")
 
 # =============================================
 # Run simulation button
@@ -1146,26 +884,29 @@ if st.button("Run 3D Evolution", type="primary"):
         """)
 
 # =============================================
-# Enhanced Interactive Visualization
+# ENHANCED Interactive Visualization with Horizontal Tabs
+# =============================================
 if 'history_3d' in st.session_state:
     st.header("📊 Simulation Results Analysis")
    
-    # Create horizontal tabs for different analysis types
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "3D Visualization", "Slice Analysis", "2D Stress Analysis", 
-        "Comprehensive Analysis", "Data Export"
+    # Create horizontal tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🎨 3D Visualization", 
+        "📐 Slice Analysis", 
+        "📈 Stress Analysis", 
+        "💾 Data Export"
     ])
    
-    frame_idx = st.slider("Select Frame", 0, len(st.session_state.history_3d)-1,
-                          len(st.session_state.history_3d)-1, key="viz_frame")
-    eta_3d, stress_components = st.session_state.history_3d[frame_idx]
-    current_stress = get_stress_component(stress_components, stress_component)
-    times = st.session_state.times_3d
-    
-    eta_lims = (eta_min, eta_max) if use_custom_limits else None
-    stress_lims = (stress_min, stress_max) if use_custom_limits else None
-    
     with tab1:
+        frame_idx = st.slider("Select Frame", 0, len(st.session_state.history_3d)-1,
+                              len(st.session_state.history_3d)-1, key="viz_frame")
+        eta_3d, stress_components = st.session_state.history_3d[frame_idx]
+        current_stress = get_stress_component(stress_components, stress_component)
+        times = st.session_state.times_3d
+        
+        eta_lims = colorbar_limits['eta'] if use_custom_limits else None
+        stress_lims = colorbar_limits['von_mises'] if use_custom_limits else None
+        
         col1, col2 = st.columns(2)
         with col1:
             st.subheader(f"Defect Order Parameter η ({eta_cmap})")
@@ -1203,7 +944,7 @@ if 'history_3d' in st.session_state:
     with tab2:
         st.subheader("Cross-Sectional Analysis")
         slice_dim = st.selectbox("Slice Dimension", ["XY Plane (Z)", "XZ Plane (Y)", "YZ Plane (X)"])
-        slice_pos = st.slider("Slice Position", 0, N-1, N//2)
+        slice_pos = st.slider("Slice Position", 0, N-1, N//2, key="slice_pos")
        
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
        
@@ -1220,175 +961,82 @@ if 'history_3d' in st.session_state:
             stress_slice = current_stress[slice_pos, :, :]
             title_suffix = f"X = {origin + slice_pos*dx:.1f} nm"
        
-        im1 = ax1.imshow(eta_slice, cmap='viridis', extent=[origin, origin+N*dx, origin, origin+N*dx])
-        ax1.set_title(f"Defect Parameter η - {title_suffix}")
-        ax1.set_xlabel("x (nm)"); ax1.set_ylabel("y (nm)")
-        plt.colorbar(im1, ax=ax1)
-        im2 = ax2.imshow(stress_slice, cmap='hot', extent=[origin, origin+N*dx, origin, origin+N*dx])
-        ax2.set_title(f"{stress_component} - {title_suffix}")
-        ax2.set_xlabel("x (nm)")
-        plt.colorbar(im2, ax=ax2)
+        # Enhanced styling for 2D plots
+        eta_vmin, eta_vmax = colorbar_limits['eta'] if colorbar_limits['eta'][0] is not None else (0, 1)
+        stress_vmin, stress_vmax = colorbar_limits['von_mises'] if colorbar_limits['von_mises'][0] is not None else (None, None)
+        
+        im1 = ax1.imshow(eta_slice, cmap=eta_cmap_2d, vmin=eta_vmin, vmax=eta_vmax,
+                        extent=[origin, origin+N*dx, origin, origin+N*dx], origin='lower')
+        ax1.set_title(f"Defect Parameter η - {title_suffix}", fontsize=title_font_size, fontweight='bold')
+        ax1.set_xlabel("x (nm)", fontsize=label_font_size, fontweight='bold')
+        ax1.set_ylabel("y (nm)", fontsize=label_font_size, fontweight='bold')
+        plt.colorbar(im1, ax=ax1, shrink=0.8)
+        
+        if show_contours:
+            x_vals = np.linspace(origin, origin+N*dx, eta_slice.shape[1])
+            y_vals = np.linspace(origin, origin+N*dx, eta_slice.shape[0])
+            X_slice, Y_slice = np.meshgrid(x_vals, y_vals)
+            ax1.contour(X_slice, Y_slice, eta_slice, levels=[contour_level], 
+                       colors=contour_color, linewidths=line_width, alpha=contour_alpha)
+        
+        im2 = ax2.imshow(stress_slice, cmap=sigma_cmap_2d, vmin=stress_vmin, vmax=stress_vmax,
+                        extent=[origin, origin+N*dx, origin, origin+N*dx], origin='lower')
+        ax2.set_title(f"{stress_component} - {title_suffix}", fontsize=title_font_size, fontweight='bold')
+        ax2.set_xlabel("x (nm)", fontsize=label_font_size, fontweight='bold')
+        plt.colorbar(im2, ax=ax2, shrink=0.8)
+        
+        # Apply enhanced styling
+        for ax in [ax1, ax2]:
+            ax.tick_params(axis='both', which='major', labelsize=tick_font_size)
+            for spine in ax.spines.values():
+                spine.set_linewidth(2.5)
+        
         st.pyplot(fig)
-       
-        # Color map comparison
-        st.subheader("Color Map Comparison")
-        fig_mpl = create_matplotlib_comparison(
-            eta_3d, stress_components, frame_idx,
-            eta_cmap, stress_cmap, eta_lims, stress_lims
-        )
-        st.pyplot(fig_mpl)
    
     with tab3:
-        st.subheader("2D Stress Analysis with Editability")
+        # Enhanced Stress Analysis
+        st.subheader("Comprehensive Stress Analysis")
         
-        # Create 2D analysis with the selected slice
-        slice_pos = st.slider("Slice for 2D Analysis", 0, N-1, N//2, key="2d_slice")
+        # Get current frame data
+        frame_idx = st.slider("Analysis Frame", 0, len(st.session_state.history_3d)-1,
+                              len(st.session_state.history_3d)-1, key="analysis_frame")
+        eta_3d, stress_components = st.session_state.history_3d[frame_idx]
         
-        # Extract slice data for 2D analysis
-        eta_slice = eta_3d[:, :, slice_pos]
-        stress_slice = current_stress[:, :, slice_pos]
-        mask_slice = np_mask[:, :, slice_pos]
-        
-        # Create custom stress components for 2D
-        sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_components
-        
-        # For 2D analysis, we need to create a compatible stress_components structure
-        stress_components_2d = (
-            sigma_mag[:, :, slice_pos],  # sigma_mag
-            sigma_hydro[:, :, slice_pos],  # sigma_hydro
-            von_mises[:, :, slice_pos],  # von_mises
-            None,  # sigma_gpa (not needed)
-            sxx[:, :, slice_pos],  # sxx
-            syy[:, :, slice_pos],  # syy
-            szz[:, :, slice_pos],  # szz
-            sxy[:, :, slice_pos],  # sxy
-            sxz[:, :, slice_pos],  # sxz
-            syz[:, :, slice_pos]   # syz
-        )
-        
-        # Create 2D analysis
-        create_2d_stress_analysis(eta_slice, stress_components_2d, frame_idx)
-        
-        # 2D Data Export
-        st.subheader("2D Data Export")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            export_2d_format = st.selectbox("2D Export Format", 
-                                          ["CSV (All analyses)", "Excel", "JSON"])
-        with col2:
-            include_plots = st.checkbox("Include Plots as Images", value=False)
-        
-        if st.button("Export 2D Analysis Data", type="secondary"):
-            with st.spinner("Preparing 2D data export..."):
-                export_buffer = create_2d_data_export(eta_slice, stress_components_2d, frame_idx, times)
-                
-                st.download_button(
-                    label="Download 2D Analysis Data",
-                    data=export_buffer,
-                    file_name=f"2D_Analysis_Frame_{frame_idx:04d}.zip",
-                    mime="application/zip"
-                )
+        # Run enhanced stress analysis
+        create_enhanced_stress_analysis(eta_3d, stress_components, frame_idx)
    
     with tab4:
-        st.subheader("Comprehensive Analysis Dashboard")
+        st.header("💾 Data Export")
         
-        # Create columns for different metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            stress_data = current_stress[np_mask]
-            st.metric("Max Stress", f"{np.nanmax(stress_data):.2f} GPa")
-            st.metric("Stress > 5 GPa", f"{np.sum(stress_data > 5):,}")
-        
-        with col2:
-            st.metric("Mean Stress", f"{np.nanmean(stress_data):.2f} GPa")
-            st.metric("Stress > 10 GPa", f"{np.sum(stress_data > 10):,}")
-        
-        with col3:
-            st.metric("Std Dev", f"{np.nanstd(stress_data):.2f} GPa")
-            eta_data = eta_3d[np_mask]
-            st.metric("Defect Volume", f"{np.sum(eta_data > 0.5):,} voxels")
-        
-        with col4:
-            st.metric("Median Stress", f"{np.nanmedian(stress_data):.2f} GPa")
-            st.metric("Stress Gradient", 
-                     f"{np.max(np.gradient(stress_data)):.3f} GPa/nm" if len(stress_data) > 1 else "N/A")
-        
-        # Time evolution plot
-        st.subheader("Stress Evolution Over Time")
-        
-        # Calculate stress metrics over time
-        time_series = []
-        for i, (eta_frame, stress_comps) in enumerate(st.session_state.history_3d):
-            stress_frame = get_stress_component(stress_comps, stress_component)
-            stress_masked = stress_frame[np_mask]
-            time_series.append({
-                'time': st.session_state.times_3d[i],
-                'max_stress': np.nanmax(stress_masked),
-                'mean_stress': np.nanmean(stress_masked),
-                'median_stress': np.nanmedian(stress_masked),
-                'std_stress': np.nanstd(stress_masked)
-            })
-        
-        time_df = pd.DataFrame(time_series)
-        
-        # Plot time evolution
-        fig_time, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(time_df['time'], time_df['max_stress'], 'r-', label='Max Stress', linewidth=2)
-        ax.plot(time_df['time'], time_df['mean_stress'], 'b-', label='Mean Stress', linewidth=2)
-        ax.fill_between(time_df['time'], 
-                       time_df['mean_stress'] - time_df['std_stress'],
-                       time_df['mean_stress'] + time_df['std_stress'],
-                       alpha=0.3, color='blue', label='±1 Std Dev')
-        ax.set_xlabel('Time')
-        ax.set_ylabel(f'{stress_component} (GPa)')
-        ax.set_title('Stress Evolution During Simulation')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-        
-        st.pyplot(fig_time)
-        
-        # Export time series data
-        if st.button("Export Time Series Data"):
-            csv = time_df.to_csv(index=False)
-            st.download_button(
-                label="Download Time Series CSV",
-                data=csv,
-                file_name="stress_time_series.csv",
-                mime="text/csv"
-            )
-   
-    with tab5:
-        st.header("Comprehensive Data Export")
-        
-        # Export options in columns
-        col1, col2, col3 = st.columns(3)
-        
+        # Enhanced export options
+        col1, col2 = st.columns(2)
         with col1:
             export_format = st.selectbox("Export Format",
-                                       ["ZIP (All formats)", "CSV Only", "VTK/VTI Only", 
-                                        "2D Analysis Only", "Time Series Only"])
-        
+                                       ["ZIP (All formats)", "CSV Only", "VTK/VTI Only", "Selected Frame Only"])
         with col2:
             include_metadata = st.checkbox("Include Detailed Metadata", value=True)
-            compress_level = st.slider("Compression Level", 1, 9, 6)
+            include_analysis = st.checkbox("Include Analysis Plots", value=True)
         
-        with col3:
-            export_all_frames = st.checkbox("Export All Frames", value=True)
-            selected_frames = st.multiselect("Or Select Specific Frames", 
-                                           list(range(len(st.session_state.history_3d))),
-                                           default=[len(st.session_state.history_3d)-1])
+        # Frame selection for single frame export
+        if export_format == "Selected Frame Only":
+            export_frame = st.slider("Select Frame to Export", 0, len(st.session_state.history_3d)-1,
+                                     len(st.session_state.history_3d)-1)
         
-        if st.button("Generate Export Package", type="primary"):
-            with st.spinner("Creating export package..."):
+        # Custom file naming
+        custom_name = st.text_input("Custom File Name (optional)", 
+                                   f"Ag_NP_{defect_type}_3D_N{N}")
+        
+        if st.button("📦 Prepare Export Package", type="primary"):
+            with st.spinner("Preparing export package..."):
                 buffer = BytesIO()
-                
-                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=compress_level) as zf:
-                    # Export based on selected format
+                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    
+                    # Export CSV data
                     if export_format in ["ZIP (All formats)", "CSV Only"]:
-                        frames_to_export = selected_frames if not export_all_frames else range(len(st.session_state.history_3d))
-                        
+                        frames_to_export = range(len(st.session_state.history_3d))
+                        if export_format == "Selected Frame Only":
+                            frames_to_export = [export_frame]
+                            
                         for i in frames_to_export:
                             e, stress_comps = st.session_state.history_3d[i]
                             sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_comps
@@ -1407,19 +1055,23 @@ if 'history_3d' in st.session_state:
                                 'stress_xy_GPa': sxy.flatten(order='F'),
                                 'stress_xz_GPa': sxz.flatten(order='F'),
                                 'stress_yz_GPa': syz.flatten(order='F'),
-                                'in_nanoparticle': np_mask.flatten(order='F')
+                                'in_nanoparticle': np_mask.flatten(order='F'),
+                                'radius_nm': r.flatten(order='F')
                             })
                             
                             if include_metadata:
-                                metadata = f"""# 3D Ag Nanoparticle Simulation
-# Frame: {i}
+                                metadata = f"""# 3D Ag Nanoparticle Simulation - Frame {i}
 # Time: {st.session_state.times_3d[i]:.3f}
-# Parameters: eps0={eps0}, steps={steps}, dx={dx}
-# Stress Method: Exact 3D Anisotropic Spectral
-# Color Maps: eta={eta_cmap}, stress={stress_cmap}
+# Parameters: eps0={eps0}, steps={steps}, dx={dx}, dt={dt}
 # Defect Type: {defect_type}
-# Grid Size: {N}
-# Stress Components: All tensor components included
+# Initial Shape: {shape}
+# Grid Size: {N}³
+# Stress Method: Exact 3D Anisotropic Spectral
+# Elastic Constants (GPa): C11={C11/1e9:.1f}, C12={C12/1e9:.1f}, C44={C44/1e9:.1f}
+# Habit Plane: θ={theta_deg}°, φ={phi_deg}°
+# Nanoparticle Radius: {R_np:.2f} nm
+# Color Maps: η={eta_cmap}, σ={stress_cmap}
+# Export Date: {time.strftime('%Y-%m-%d %H:%M:%S')}
 """
                                 csv_content = metadata + df.to_csv(index=False)
                             else:
@@ -1427,108 +1079,128 @@ if 'history_3d' in st.session_state:
                             
                             zf.writestr(f"frame_{i:04d}.csv", csv_content)
                     
+                    # Export VTI data
                     if export_format in ["ZIP (All formats)", "VTK/VTI Only"]:
-                        for i, vti_content in enumerate(st.session_state.vti_3d):
-                            zf.writestr(f"frame_{i:04d}.vti", vti_content)
-                        zf.writestr("simulation_3d.pvd", st.session_state.pvd_3d)
-                    
-                    if export_format in ["ZIP (All formats)", "2D Analysis Only"]:
-                        # Export 2D analysis for current frame
-                        export_buffer = create_2d_data_export(eta_3d, stress_components, frame_idx, times)
+                        frames_to_export = range(len(st.session_state.vti_3d))
+                        if export_format == "Selected Frame Only":
+                            frames_to_export = [export_frame]
+                            
+                        for i in frames_to_export:
+                            zf.writestr(f"frame_{i:04d}.vti", st.session_state.vti_3d[i])
                         
-                        # Extract and add 2D analysis files
-                        with zipfile.ZipFile(export_buffer, 'r') as temp_zip:
-                            for name in temp_zip.namelist():
-                                zf.writestr(f"2d_analysis/{name}", temp_zip.read(name))
+                        if export_format != "Selected Frame Only":
+                            zf.writestr("simulation_3d.pvd", st.session_state.pvd_3d)
                     
-                    if export_format in ["ZIP (All formats)", "Time Series Only"]:
-                        # Export time series data
-                        time_series_data = []
-                        for i, (e, stress_comps) in enumerate(st.session_state.history_3d):
-                            stress_frame = get_stress_component(stress_comps, stress_component)
-                            stress_masked = stress_frame[np_mask]
-                            time_series_data.append({
-                                'frame': i,
-                                'time': st.session_state.times_3d[i],
-                                'max_stress': np.nanmax(stress_masked),
-                                'mean_stress': np.nanmean(stress_masked),
-                                'median_stress': np.nanmedian(stress_masked),
-                                'std_stress': np.nanstd(stress_masked),
-                                'q1_stress': np.percentile(stress_masked, 25),
-                                'q3_stress': np.percentile(stress_masked, 75),
-                                'defect_volume': np.sum(e[np_mask] > 0.5)
-                            })
+                    # Include analysis plots if requested
+                    if include_analysis and export_format in ["ZIP (All formats)", "Selected Frame Only"]:
+                        import matplotlib
+                        matplotlib.use('Agg')
                         
-                        time_df = pd.DataFrame(time_series_data)
-                        zf.writestr("time_series_analysis.csv", time_df.to_csv(index=False))
+                        frames_to_export = [export_frame] if export_format == "Selected Frame Only" else [0, len(st.session_state.history_3d)//2, len(st.session_state.history_3d)-1]
+                        
+                        for i in frames_to_export:
+                            e, stress_comps = st.session_state.history_3d[i]
+                            
+                            # Create analysis plots
+                            fig_slice, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+                            eta_slice = e[:, :, N//2]
+                            stress_slice = stress_comps[2][:, :, N//2]  # von Mises
+                            
+                            im1 = ax1.imshow(eta_slice, cmap=eta_cmap_2d, 
+                                            extent=[origin, origin+N*dx, origin, origin+N*dx])
+                            ax1.set_title(f"Defect η - Frame {i}")
+                            ax1.set_xlabel("x (nm)"); ax1.set_ylabel("y (nm)")
+                            plt.colorbar(im1, ax=ax1)
+                            
+                            im2 = ax2.imshow(stress_slice, cmap=sigma_cmap_2d,
+                                            extent=[origin, origin+N*dx, origin, origin+N*dx])
+                            ax2.set_title(f"Von Mises Stress - Frame {i}")
+                            ax2.set_xlabel("x (nm)")
+                            plt.colorbar(im2, ax=ax2)
+                            
+                            plt.tight_layout()
+                            
+                            # Save to buffer
+                            plot_buffer = BytesIO()
+                            fig_slice.savefig(plot_buffer, format='png', dpi=150, bbox_inches='tight')
+                            plot_buffer.seek(0)
+                            zf.writestr(f"analysis_frame_{i:04d}.png", plot_buffer.read())
+                            plt.close(fig_slice)
                     
-                    # Always include summary
-                    summary = f"""3D Ag Nanoparticle Defect Evolution Simulation - COMPREHENSIVE EXPORT
+                    # Always include comprehensive summary
+                    summary = f"""3D Ag Nanoparticle Defect Evolution Simulation
 ================================================
-Export Date: {time.strftime('%Y-%m-%d %H:%M:%S')}
+Simulation Summary
+================================================
 Total Frames: {len(st.session_state.history_3d)}
 Simulation Steps: {steps}
 Time Step: {dt}
 Grid Resolution: {N}³
 Grid Spacing: {dx} nm
 Nanoparticle Radius: {R_np:.2f} nm
-Eigenstrain (ε*): {eps0}
-Defect Type: {defect_type}
-Habit Plane: θ={theta_deg}°, φ={phi_deg}°
-Stress Calculation: Exact 3D Anisotropic Spectral
-Elastic Coupling: {enable_elastic_coupling}
-Material: Silver (Ag)
-Elastic Constants: C11={C11/1e9:.1f} GPa, C12={C12/1e9:.1f} GPa, C44={C44/1e9:.1f} GPa
 
-Simulation Parameters:
-- Mobility (M): {M}
-- Interface Coefficient (κ): {kappa}
-- Initial Shape: {shape}
+Physics Parameters:
+------------------
+Defect Type: {defect_type}
+Eigenstrain (ε*): {eps0}
+Interface Coefficient (κ): {kappa}
+Mobility (M): {M}
+Initial Shape: {shape}
+Habit Plane: θ={theta_deg}°, φ={phi_deg}°
+Elastic Coupling: {enable_elastic_coupling}
+
+Material Properties:
+-------------------
+Material: Silver (Ag)
+Elastic Constants (GPa):
+  C11 = {C11/1e9:.1f}
+  C12 = {C12/1e9:.1f}
+  C44 = {C44/1e9:.1f}
+
+Stress Computation:
+------------------
+Method: {st.session_state.stress_method}
+Stress Components Available:
+  • Von Mises Stress
+  • Stress Magnitude
+  • Hydrostatic Stress
+  • σ_xx, σ_yy, σ_zz
+  • σ_xy, σ_xz, σ_yz
 
 Visualization Settings:
-- Defect Color Map: {eta_cmap}
-- Stress Color Map: {stress_cmap}
-- 3D Opacity: {opacity_3d}
-- Surface Count: {surface_count}
+----------------------
+Defect Color Map: {eta_cmap}
+Stress Color Map: {stress_cmap}
+3D Opacity: {opacity_3d}
+Surface Count: {surface_count}
+Custom Color Limits: {use_custom_limits}
 
-2D Analysis Settings:
-- Scatter Point Size: {scatter_point_size}
-- Scatter Opacity: {scatter_opacity}
-- Max Scatter Points: {scatter_max_points}
-- Histogram Bins: {histogram_bins}
-- Smoothing Kernel: {smoothing_kernel}
-- Error Bars: {profile_error_bars}
+File Structure:
+---------------
+CSV Files: Each frame contains full 3D field data
+VTI Files: ParaView-compatible 3D visualization
+PVD File: Time series for animation in ParaView
 
-Stress Components Available:
-  Von Mises, Stress Magnitude, Hydrostatic Stress
-  σ_xx, σ_yy, σ_zz, σ_xy, σ_xz, σ_yz
-
-Export Contents:
-{'- CSV data files' if export_format in ['ZIP (All formats)', 'CSV Only'] else ''}
-{'- VTK/VTI 3D files' if export_format in ['ZIP (All formats)', 'VTK/VTI Only'] else ''}
-{'- 2D analysis data' if export_format in ['ZIP (All formats)', '2D Analysis Only'] else ''}
-{'- Time series analysis' if export_format in ['ZIP (All formats)', 'Time Series Only'] else ''}
-
-For visualization:
-- Use ParaView for VTK/VTI files
-- Use any spreadsheet software for CSV files
-- Python scripts for further analysis are available upon request
-
-Generated by: 3D Ag Nanoparticle Phase-Field Simulator
-Contact: For scientific collaboration and customization
+Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}
+================================================
+END OF SUMMARY
 """
-                    zf.writestr("EXPORT_SUMMARY.txt", summary)
+                    zf.writestr("SIMULATION_SUMMARY.txt", summary)
                 
                 buffer.seek(0)
                 
-                st.success("Export package created successfully!")
+                # Determine file name
+                if export_format == "Selected Frame Only":
+                    file_name = f"{custom_name}_frame_{export_frame:04d}.zip"
+                else:
+                    file_name = f"{custom_name}_complete.zip"
                 
                 st.download_button(
-                    label="📥 Download Comprehensive Export Package",
+                    label="📥 Download Enhanced 3D Results",
                     data=buffer,
-                    file_name=f"Ag_Nanoparticle_3D_{defect_type}_N{N}_comprehensive.zip",
+                    file_name=file_name,
                     mime="application/zip",
-                    help="Contains all selected data formats and analyses"
+                    key="download_button"
                 )
 
-st.caption("🎯 3D Spherical Ag NP • 50+ Color Maps • Complete Stress Tensor • Ultimate Version • 2025 • Enhanced 2D Analysis")
+st.caption("🎯 3D Spherical Ag NP • Enhanced Stress Analysis • Comprehensive Data Export • Ultimate Version • 2025")
