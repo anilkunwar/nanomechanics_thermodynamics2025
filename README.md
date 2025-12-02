@@ -73,7 +73,7 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual10-streamlit-red)](https://defect-evolution-in-nanomaterial24.streamlit.app/)  (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, enhanced 23)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial25.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, enhanced 25) 
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual11-streamlit-red)](https://defect-evolution-in-nanomaterial25.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different components of stress,  enhanced 24) 
 
 
 
