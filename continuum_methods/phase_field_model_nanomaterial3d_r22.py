@@ -454,8 +454,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
     vals = np.asarray(values, dtype=float)
     if custom_min is not None and custom_max is not None:
         vals = np.clip(vals, custom_min, custom_max)
-      
-    # Compute sensible isomin/isomax if not provided
+
     vals_mask = vals[np_mask & np.isfinite(vals)]
     if vals_mask.size == 0:
         isomin = 0.0 if isomin is None else isomin
@@ -465,7 +464,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
             isomin = float(safe_percentile(vals_mask, 5, np.nanmin(vals_mask)))
         if isomax is None:
             isomax = float(safe_percentile(vals_mask, 95, np.nanmax(vals_mask)))
-          
+
     fig = go.Figure(data=go.Isosurface(
         x=Xa.flatten(), y=Ya.flatten(), z=Za.flatten(),
         value=vals.flatten(),
@@ -476,23 +475,31 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
 
-        # CORRECT WAY: colorbar as dictionary (fixes the ValueError)
+        # FIXED: proper colorbar dictionary
         colorbar=dict(
             thickness=20,
             len=0.5,
             title=title,
             titleside="right",
             tickfont=dict(size=12),
-            x=1.02,                    # Prevents overlap with plot
+            x=1.02,
             xanchor="left",
             bgcolor="rgba(255,255,255,0.8)"
         ),
 
-        # Realistic lighting & shading
-        lighting=dict(ambient=0.8, diffuse=0.9, specular=0.5, roughness=0.5, fresnel=0.2),
-        lightposition=dict(x=100, y=100, z=50)
+        # FIXED: realistic lighting (lightposition REMOVED – no longer supported)
+        lighting=dict(
+            ambient=0.75,
+            diffuse=0.9,
+            specular=0.6,
+            roughness=0.4,
+            fresnel=0.2
+        ),
+        # ←←← REMOVE THIS LINE COMPLETELY:
+        # lightposition=dict(x=100, y=100, z=50)
     ))
-  
+
+    # Matrix sphere still gets proper lighting
     if show_matrix:
         theta = np.linspace(0, np.pi, 100)
         phi = np.linspace(0, 2*np.pi, 100)
@@ -506,9 +513,11 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
             colorscale='Greys',
             opacity=0.3,
             showscale=False,
-            lighting=dict(ambient=0.7, diffuse=0.8, specular=1.0, roughness=0.3)
+            lighting=dict(ambient=0.7, diffuse=0.8, specular=1.0, roughness=0.3),
+            # lightposition still works here on Surface!
+            lightposition=dict(x=200, y=200, z=100)
         ))
-  
+
     fig.update_layout(
         scene=dict(
             xaxis_title='X (nm)', yaxis_title='Y (nm)', zaxis_title='Z (nm)',
