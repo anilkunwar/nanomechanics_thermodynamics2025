@@ -4,11 +4,10 @@
 # Enhanced with correct anisotropic 3D elasticity and comprehensive 3D export
 # Fine-tuned for visually realistic, attractive, and accurate plots/graphs
 # FIXED: Plotly colorbar ValueError by using proper ColorBar object
+# FIXED: Removed lightposition from Isosurface (only valid for Surface)
 # =============================================
 import streamlit as st
 import numpy as np
-import plotly.graph_objects as go
-#from plotly.graph_objs.isosurface import ColorBar
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -55,9 +54,10 @@ COLOR_MAPS = {
 
 # =============================================
 # Material properties (Silver - cubic anisotropic)
-C11 = 124e9 # Pa
+C11 = 124e9  # Pa
 C12 = 93.4e9
 C44 = 46.1e9
+
 # Define the full 4th-rank stiffness tensor C_ijkl
 C = np.zeros((3, 3, 3, 3))
 for i in range(3):
@@ -75,26 +75,36 @@ for i in range(3):
             C[j, i, j, i] = C44
 
 # =============================================
-# UI - simulation controls (enhanced with tooltips and organized layout)
+# UI - simulation controls
 st.sidebar.header("Simulation Parameters")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    N = st.number_input("Grid size N (per dim)", min_value=32, max_value=128, value=64, step=16, help="Higher N increases accuracy but computation time")
+    N = st.number_input("Grid size N (per dim)", min_value=32, max_value=128, value=64, step=16, 
+                       help="Higher N increases accuracy but computation time")
 with col2:
-    dx = st.number_input("Grid spacing dx (nm)", min_value=0.05, max_value=5.0, value=0.25, step=0.05, help="Smaller dx for finer resolution")
-dt = st.sidebar.number_input("Time step dt (arb)", min_value=1e-4, max_value=0.1, value=0.005, step=0.001, help="Smaller dt for stability")
-M = st.sidebar.number_input("Mobility M", min_value=1e-3, max_value=10.0, value=1.0, step=0.1, help="Controls evolution speed")
-defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"], help="ISF: Intrinsic Stacking Fault, ESF: Extrinsic, Twin: Twin Boundary")
+    dx = st.number_input("Grid spacing dx (nm)", min_value=0.05, max_value=5.0, value=0.25, step=0.05, 
+                        help="Smaller dx for finer resolution")
+dt = st.sidebar.number_input("Time step dt (arb)", min_value=1e-4, max_value=0.1, value=0.005, step=0.001, 
+                           help="Smaller dt for stability")
+M = st.sidebar.number_input("Mobility M", min_value=1e-3, max_value=10.0, value=1.0, step=0.1, 
+                          help="Controls evolution speed")
+defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"], 
+                                 help="ISF: Intrinsic Stacking Fault, ESF: Extrinsic, Twin: Twin Boundary")
 eps0_defaults = {"ISF": 0.707, "ESF": 1.414, "Twin": 2.121}
-eps0 = st.sidebar.slider("Eigenstrain ε*", 0.01, 3.0, float(eps0_defaults[defect_type]), 0.01, help="Magnitude of transformation strain")
-kappa = st.sidebar.slider("Interface coeff κ", 0.01, 5.0, 0.6, 0.01, help="Controls interface width and energy")
+eps0 = st.sidebar.slider("Eigenstrain ε*", 0.01, 3.0, float(eps0_defaults[defect_type]), 0.01, 
+                       help="Magnitude of transformation strain")
+kappa = st.sidebar.slider("Interface coeff κ", 0.01, 5.0, 0.6, 0.01, 
+                        help="Controls interface width and energy")
 col1, col2 = st.sidebar.columns(2)
 with col1:
     steps = st.slider("Evolution steps", 1, 1000, 80, 1, help="Total simulation steps")
 with col2:
     save_every = st.slider("Save every (steps)", 1, 200, 10, 1, help="Frequency of saving frames")
+
 st.sidebar.header("Defect Shape")
-shape = st.sidebar.selectbox("Initial Defect Shape", ["Sphere", "Cuboid", "Ellipsoid", "Cube", "Cylinder", "Planar"], help="Initial geometry of defect")
+shape = st.sidebar.selectbox("Initial Defect Shape", ["Sphere", "Cuboid", "Ellipsoid", "Cube", "Cylinder", "Planar"], 
+                           help="Initial geometry of defect")
+
 st.sidebar.header("Habit Plane Orientation (for Planar)")
 col1, col2 = st.sidebar.columns(2)
 with col1:
@@ -103,11 +113,16 @@ with col2:
     phi_deg = st.slider("Azimuthal angle φ (°)", 0, 360, 0, step=5, help="Rotation around z-axis")
 theta = np.deg2rad(theta_deg)
 phi = np.deg2rad(phi_deg)
+
 st.sidebar.header("Visualization Controls")
-viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()), help="Select category for color options")
-eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], index=0, help="Color scheme for defect parameter")
+viz_category = st.sidebar.selectbox("Color Map Category", list(COLOR_MAPS.keys()), 
+                                  help="Select category for color options")
+eta_cmap = st.sidebar.selectbox("Defect (η) Color Map", COLOR_MAPS[viz_category], index=0, 
+                              help="Color scheme for defect parameter")
 stress_cmap = st.sidebar.selectbox("Stress (σ) Color Map", COLOR_MAPS[viz_category],
-                                  index=min(1, len(COLOR_MAPS[viz_category])-1), help="Color scheme for stress fields")
+                                  index=min(1, len(COLOR_MAPS[viz_category])-1), 
+                                  help="Color scheme for stress fields")
+
 # Stress component selection
 stress_component = st.sidebar.selectbox(
     "Stress Component to Visualize",
@@ -115,7 +130,9 @@ stress_component = st.sidebar.selectbox(
      "σ_xx", "σ_yy", "σ_zz", "σ_xy", "σ_xz", "σ_yz"],
     help="Select specific stress measure or component"
 )
-use_custom_limits = st.sidebar.checkbox("Use Custom Color Scale Limits", False, help="Override auto-scaling for consistent comparisons")
+
+use_custom_limits = st.sidebar.checkbox("Use Custom Color Scale Limits", False, 
+                                      help="Override auto-scaling for consistent comparisons")
 if use_custom_limits:
     col1, col2 = st.sidebar.columns(2)
     with col1:
@@ -126,13 +143,21 @@ if use_custom_limits:
         stress_max = st.number_input("σ Max (GPa)", value=10.0, format="%.2f")
 else:
     eta_min, eta_max, stress_min, stress_max = None, None, None, None
+
 st.sidebar.subheader("3D Rendering")
-opacity_3d = st.sidebar.slider("3D Opacity", 0.05, 1.0, 0.7, 0.05, help="Transparency for isosurfaces")
-surface_count = st.sidebar.slider("Surface Count", 1, 10, 2, help="Number of isosurface levels")
-show_grid = st.sidebar.checkbox("Show Grid in Plotly", value=True, help="Display coordinate grid")
-show_matrix = st.sidebar.checkbox("Show Nanoparticle Matrix", value=True, help="Render semi-transparent NP boundary")
-eta_threshold = st.sidebar.slider("η Visualization Threshold", 0.0, 1.0, 0.1, 0.01, help="Hide low η values for clarity")
-stress_threshold = st.sidebar.slider("Stress Visualization Threshold (GPa)", 0.0, 50.0, 0.0, 0.1, help="Hide low stress values")
+opacity_3d = st.sidebar.slider("3D Opacity", 0.05, 1.0, 0.7, 0.05, 
+                             help="Transparency for isosurfaces")
+surface_count = st.sidebar.slider("Surface Count", 1, 10, 2, 
+                                help="Number of isosurface levels")
+show_grid = st.sidebar.checkbox("Show Grid in Plotly", value=True, 
+                              help="Display coordinate grid")
+show_matrix = st.sidebar.checkbox("Show Nanoparticle Matrix", value=True, 
+                                help="Render semi-transparent NP boundary")
+eta_threshold = st.sidebar.slider("η Visualization Threshold", 0.0, 1.0, 0.1, 0.01, 
+                                help="Hide low η values for clarity")
+stress_threshold = st.sidebar.slider("Stress Visualization Threshold (GPa)", 0.0, 50.0, 0.0, 0.1, 
+                                   help="Hide low stress values")
+
 st.sidebar.header("Advanced Options")
 debug_mode = st.sidebar.checkbox("Debug: print diagnostics", value=False)
 enable_progress_bar = st.sidebar.checkbox("Show Progress Bar", value=True)
@@ -148,6 +173,7 @@ X, Y, Z = np.meshgrid(
     np.linspace(origin, origin + (N-1)*dx, N),
     indexing='ij'
 )
+
 # Spherical nanoparticle mask (nm units)
 R_np = N * dx / 4.0
 r = np.sqrt(X**2 + Y**2 + Z**2)
@@ -192,6 +218,7 @@ def create_initial_eta(shape_in):
     # Smooth boundaries for realism
     eta = gaussian_filter(eta, sigma=0.5)
     return eta
+
 eta = create_initial_eta(shape)
 
 # =============================================
@@ -226,7 +253,7 @@ def evolve_3d_vectorized(eta_in, kappa_in, dt_in, dx_in, M_in, mask_np, eps0, th
             for j in range(3):
                 shear_tensor[i,j] = 0.5 * gamma * (n[i]*s[j] + s[i]*n[j])
                
-        # Driving force (note: sigma_gpa in GPa, but since units are arbitrary, proceed; adjust M if needed)
+        # Driving force
         elastic_driving = np.einsum('ij,ijxyz->xyz', shear_tensor, sigma_gpa)
    
     # Update
@@ -281,7 +308,7 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
     A = np.einsum('ikjl,kxyz,lxyz->ijxyz', C, khat, khat)
    
     # Move axes for inversion
-    A_moved = np.moveaxis(A, [0,1], [3,4]) # shape (N,N,N,3,3)
+    A_moved = np.moveaxis(A, [0,1], [3,4])  # shape (N,N,N,3,3)
    
     # Robust matrix inversion with singular value decomposition (SVD)
     invA = np.zeros_like(A_moved)
@@ -296,7 +323,7 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
                
                 try:
                     # Regular inversion for well-conditioned matrices
-                    if np.linalg.cond(A_mat) < 1e12: # Reasonable condition number threshold
+                    if np.linalg.cond(A_mat) < 1e12:  # Reasonable condition number threshold
                         invA[i, j, k] = np.linalg.inv(A_mat)
                     else:
                         # Use pseudo-inverse for ill-conditioned matrices
@@ -310,14 +337,10 @@ def compute_stress_3d_exact(eta_field, eps0_val, theta_val, phi_val, dx_nm, debu
     G[0,0,0, :, :] = 0.0
    
     # Strain Green operator Gamma_ijkl
-    # term1: khat[j] * G[i,k] * khat[l]
     term1 = np.einsum('jxyz,xyzik,lxyz->ijklxyz', khat, G, khat)
-    # term2: khat[j] * G[i,l] * khat[k]
     term2 = np.einsum('jxyz,xyzil,kxyz->ijlkxyz', khat, G, khat)
-    # term3: khat[i] * G[j,k] * khat[l]
     term3 = np.einsum('ixyz,xyzjk,lxyz->jiklxyz', khat, G, khat)
     term3 = np.transpose(term3, (1,0,2,3,4,5,6))
-    # term4: khat[i] * G[j,l] * khat[k]
     term4 = np.einsum('ixyz,xyzjl,kxyz->jilkxyz', khat, G, khat)
     term4 = np.transpose(term4, (1,0,3,2,4,5,6))
    
@@ -422,12 +445,13 @@ def create_vti(eta_field, stress_components, step_idx, time_val):
     return vti
 
 # =============================================
-# Safe helpers and visualization utilities (enhanced for accuracy)
+# Safe helpers and visualization utilities
 def safe_percentile(arr, percentile, default=0.0):
     arr = arr[np.isfinite(arr)]
     if len(arr) == 0:
         return default
     return np.percentile(arr, percentile)
+
 def get_stress_component(stress_components, component_name):
     sigma_mag, sigma_hydro, von_mises, _, sxx, syy, szz, sxy, sxz, syz = stress_components
    
@@ -446,7 +470,7 @@ def get_stress_component(stress_components, component_name):
     return stress_map.get(component_name, von_mises)
 
 # =============================================
-# FIXED: create_plotly_isosurface – uses correct colorbar dictionary
+# FIXED: create_plotly_isosurface – uses correct colorbar dictionary, no lightposition for Isosurface
 # =============================================
 def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
                              isomin=None, isomax=None, opacity=0.7,
@@ -474,7 +498,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         colorscale=colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
-
+        
         # FIXED: proper colorbar dictionary
         colorbar=dict(
             thickness=20,
@@ -486,27 +510,25 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
             xanchor="left",
             bgcolor="rgba(255,255,255,0.8)"
         ),
-
-        # FIXED: realistic lighting (lightposition REMOVED – no longer supported)
+        
+        # FIXED: lighting parameters for Isosurface (no lightposition)
         lighting=dict(
             ambient=0.75,
             diffuse=0.9,
             specular=0.6,
             roughness=0.4,
             fresnel=0.2
-        ),
-        # ←←← REMOVE THIS LINE COMPLETELY:
-        # lightposition=dict(x=100, y=100, z=50)
+        )
     ))
 
-    # Matrix sphere still gets proper lighting
+    # Matrix sphere with proper lighting (lightposition IS valid for Surface)
     if show_matrix:
-        theta = np.linspace(0, np.pi, 100)
-        phi = np.linspace(0, 2*np.pi, 100)
-        theta, phi = np.meshgrid(theta, phi)
-        x = R_np * np.sin(theta) * np.cos(phi) + origin + N*dx/2.0
-        y = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2.0
-        z = R_np * np.cos(theta) + origin + N*dx/2.0
+        theta_sphere = np.linspace(0, np.pi, 100)
+        phi_sphere = np.linspace(0, 2*np.pi, 100)
+        theta_sphere, phi_sphere = np.meshgrid(theta_sphere, phi_sphere)
+        x = R_np * np.sin(theta_sphere) * np.cos(phi_sphere) + origin + N*dx/2.0
+        y = R_np * np.sin(theta_sphere) * np.sin(phi_sphere) + origin + N*dx/2.0
+        z = R_np * np.cos(theta_sphere) + origin + N*dx/2.0
         fig.add_trace(go.Surface(
             x=x, y=y, z=z,
             surfacecolor=np.ones_like(x),
@@ -514,8 +536,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
             opacity=0.3,
             showscale=False,
             lighting=dict(ambient=0.7, diffuse=0.8, specular=1.0, roughness=0.3),
-            # lightposition still works here on Surface!
-            lightposition=dict(x=200, y=200, z=100)
+            lightposition=dict(x=200, y=200, z=100)  # Valid for Surface only
         ))
 
     fig.update_layout(
@@ -533,7 +554,7 @@ def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
         paper_bgcolor='white'
     )
     return fig
-    
+
 def safe_matplotlib_cmap(cmap_name, default='viridis'):
     try:
         plt.get_cmap(cmap_name)
@@ -541,10 +562,12 @@ def safe_matplotlib_cmap(cmap_name, default='viridis'):
     except (ValueError, AttributeError):
         st.warning(f"Colormap '{cmap_name}' not found. Using '{default}'.")
         return default
+
 def create_matplotlib_comparison(eta_3d, stress_components, frame_idx, eta_cmap, stress_cmap, eta_lims, stress_lims):
     slice_pos = N // 2
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12), dpi=150)  # Higher DPI for accuracy
-    fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx} - Slice z={slice_pos}", fontsize=18, y=0.98, fontweight='bold')
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12), dpi=150)
+    fig.suptitle(f"3D Stress Visualization Comparison - Frame {frame_idx} - Slice z={slice_pos}", 
+                fontsize=18, y=0.98, fontweight='bold')
    
     eta_data = eta_3d[np_mask]
     stress_data = get_stress_component(stress_components, stress_component)[np_mask]
@@ -560,9 +583,10 @@ def create_matplotlib_comparison(eta_3d, stress_components, frame_idx, eta_cmap,
    
     try:
         im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], cmap=safe_eta, vmin=eta_vmin, vmax=eta_vmax,
-                                extent=[origin, origin+N*dx, origin, origin+N*dx], interpolation='antialiased')  # Anti-aliasing for realism
+                                extent=[origin, origin+N*dx, origin, origin+N*dx], interpolation='antialiased')
         axes[0,0].set_title(f'Defect η ({safe_eta})')
-        axes[0,0].set_xlabel('x (nm)'); axes[0,0].set_ylabel('y (nm)')
+        axes[0,0].set_xlabel('x (nm)')
+        axes[0,0].set_ylabel('y (nm)')
         axes[0,0].grid(True, alpha=0.2, linestyle='--')
         cb1 = plt.colorbar(im1, ax=axes[0,0], shrink=0.8, pad=0.05)
         cb1.set_label('η', rotation=0, labelpad=10)
@@ -582,7 +606,8 @@ def create_matplotlib_comparison(eta_3d, stress_components, frame_idx, eta_cmap,
         axes[0,1].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
        
     axes[0,2].axis('off')
-    axes[0,2].text(0.1, 0.5, f"Stress Component: {stress_component}\nMethod: Exact 3D Anisotropic Spectral\nDate: 2025-12-01", fontsize=12, va='center')
+    axes[0,2].text(0.1, 0.5, f"Stress Component: {stress_component}\nMethod: Exact 3D Anisotropic Spectral\nDate: 2025-12-01", 
+                  fontsize=12, va='center')
    
     alt_cmaps = ['jet', 'turbo', 'viridis', 'plasma']
     alt_titles = ['Jet (Traditional)', 'Turbo (High Contrast)', 'Viridis (Perceptual)', 'Plasma (Vibrant)']
@@ -604,12 +629,14 @@ def create_matplotlib_comparison(eta_3d, stress_components, frame_idx, eta_cmap,
         except Exception as e:
             axes[1,i].text(0.5, 0.5, f'Error: {str(e)}', ha='center', va='center')
            
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjusted for suptitle
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     return fig
+
 def create_stress_analysis_plot(eta_3d, stress_components, frame_idx):
-    """Enhanced stress analysis with multiple visualization types (attractive and accurate)"""
+    """Enhanced stress analysis with multiple visualization types"""
     fig, axes = plt.subplots(2, 3, figsize=(15, 10), dpi=150)
-    fig.suptitle(f"Comprehensive Stress Analysis - Frame {frame_idx}", fontsize=18, fontweight='bold')
+    fig.suptitle(f"Comprehensive Stress Analysis - Frame {frame_idx}", 
+                fontsize=18, fontweight='bold')
   
     slice_pos = N // 2
     current_stress = get_stress_component(stress_components, stress_component)
@@ -620,7 +647,8 @@ def create_stress_analysis_plot(eta_3d, stress_components, frame_idx):
     im1 = axes[0,0].imshow(eta_3d[:, :, slice_pos], cmap='viridis', interpolation='antialiased',
                           extent=[origin, origin+N*dx, origin, origin+N*dx])
     axes[0,0].set_title('Defect Field η')
-    axes[0,0].set_xlabel('x (nm)'); axes[0,0].set_ylabel('y (nm)')
+    axes[0,0].set_xlabel('x (nm)')
+    axes[0,0].set_ylabel('y (nm)')
     axes[0,0].grid(True, alpha=0.2, linestyle='--')
     cb1 = plt.colorbar(im1, ax=axes[0,0], pad=0.05)
     cb1.set_label('η', rotation=0, labelpad=10)
@@ -651,13 +679,14 @@ def create_stress_analysis_plot(eta_3d, stress_components, frame_idx):
         scatter = axes[1,0].scatter(X[sample_idx][subset], Y[sample_idx][subset],
                                    c=current_stress[sample_idx][subset], cmap='hot', s=20, edgecolor='none', alpha=0.8)
         axes[1,0].set_title('High Stress Regions')
-        axes[1,0].set_xlabel('x (nm)'); axes[1,0].set_ylabel('y (nm)')
+        axes[1,0].set_xlabel('x (nm)')
+        axes[1,0].set_ylabel('y (nm)')
         axes[1,0].grid(True, alpha=0.2, linestyle='--')
         cb_scatter = plt.colorbar(scatter, ax=axes[1,0], pad=0.05)
         cb_scatter.set_label('GPa', rotation=0, labelpad=10)
   
     # 5. Radial stress profile (accurate binning)
-    radial_bins = np.linspace(0, R_np, 30)  # More bins for accuracy
+    radial_bins = np.linspace(0, R_np, 30)
     radial_stress = []
     radial_std = []
     for i in range(len(radial_bins)-1):
@@ -677,13 +706,13 @@ def create_stress_analysis_plot(eta_3d, stress_components, frame_idx):
     axes[1,1].set_ylabel(f'Average {stress_component} (GPa)')
     axes[1,1].grid(True, alpha=0.3, linestyle='--')
   
-    # 6. Defect-stress correlation (with regression line for insight)
+    # 6. Defect-stress correlation (with regression line)
     eta_masked = eta_3d[np_mask]
     stress_masked = current_stress[np_mask]
     valid = (eta_masked > 0.1) & (stress_masked > 0) & np.isfinite(stress_masked)
     if np.any(valid):
         axes[1,2].scatter(eta_masked[valid], stress_masked[valid], alpha=0.5, s=5, color='green', edgecolor='none')
-        # Add linear fit for attractiveness
+        # Add linear fit
         from scipy.stats import linregress
         slope, intercept, r_value, _, _ = linregress(eta_masked[valid], stress_masked[valid])
         fit_x = np.linspace(eta_masked[valid].min(), eta_masked[valid].max(), 100)
@@ -747,7 +776,7 @@ if st.button("Run 3D Evolution", type="primary"):
         end_time = time.time()
         computation_time = end_time - start_time
       
-        # write pvd
+        # Write PVD file for ParaView time series
         pvd = """<?xml version="1.0"?>
 <VTKFile type="Collection" version="1.0">
  <Collection>
@@ -756,6 +785,8 @@ if st.button("Run 3D Evolution", type="primary"):
             pvd += f' <DataSet timestep="{t:.6f}" group="" part="0" file="frame_{i:04d}.vti"/>\n'
         pvd += """ </Collection>
 </VTKFile>"""
+        
+        # Store results in session state
         st.session_state.history_3d = history
         st.session_state.vti_3d = vti_list
         st.session_state.pvd_3d = pvd
@@ -833,23 +864,26 @@ if 'history_3d' in st.session_state:
             eta_slice = eta_3d[:, slice_pos, :]
             stress_slice = current_stress[:, slice_pos, :]
             title_suffix = f"Y = {origin + slice_pos*dx:.1f} nm"
-        else: # YZ Plane (X)
+        else:  # YZ Plane (X)
             eta_slice = eta_3d[slice_pos, :, :]
             stress_slice = current_stress[slice_pos, :, :]
             title_suffix = f"X = {origin + slice_pos*dx:.1f} nm"
       
         im1 = ax1.imshow(eta_slice, cmap='viridis', extent=[origin, origin+N*dx, origin, origin+N*dx], interpolation='antialiased')
         ax1.set_title(f"Defect Parameter η - {title_suffix}")
-        ax1.set_xlabel("x (nm)"); ax1.set_ylabel("y (nm)")
+        ax1.set_xlabel("x (nm)")
+        ax1.set_ylabel("y (nm)")
         ax1.grid(True, alpha=0.2, linestyle='--')
         cb1 = plt.colorbar(im1, ax=ax1, pad=0.05)
         cb1.set_label('η', rotation=0, labelpad=10)
+        
         im2 = ax2.imshow(stress_slice, cmap='hot', extent=[origin, origin+N*dx, origin, origin+N*dx], interpolation='antialiased')
         ax2.set_title(f"{stress_component} - {title_suffix}")
         ax2.set_xlabel("x (nm)")
         ax2.grid(True, alpha=0.2, linestyle='--')
         cb2 = plt.colorbar(im2, ax=ax2, pad=0.05)
         cb2.set_label('GPa', rotation=0, labelpad=10)
+        
         plt.tight_layout()
         st.pyplot(fig)
       
@@ -978,4 +1012,5 @@ Custom Color Limits: {use_custom_limits}
             file_name=f"Ag_Nanoparticle_3D_{defect_type}_N{N}_ultimate.zip",
             mime="application/zip"
         )
+
 st.caption("🎯 3D Spherical Ag NP • 50+ Color Maps • Complete Stress Tensor • Ultimate Fine-Tuned Version • 2025")
