@@ -157,7 +157,30 @@ spine_width = st.sidebar.slider("Spine Line Width", 1.0, 4.0, 2.5, 0.5)
 tick_length = st.sidebar.slider("Tick Length", 4, 12, 6)
 tick_width = st.sidebar.slider("Tick Width", 1.0, 3.0, 2.0, 0.5)
 # Color maps
-cmap_list = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'hot', 'coolwarm', 'jet', 'turbo']
+# cmap_list = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'hot', 'coolwarm', 'jet', 'turbo']
+# EXPANDED Color maps - 50+ including jet, turbo
+cmap_list = {
+    'Classic & Turbo': ['jet', 'turbo', 'hot', 'cool', 'spring', 'summer', 'autumn', 'winter',
+                       'gray', 'bone', 'pink', 'copper', 'wistia', 'afmhot', 'gist_heat', 'gist_gray'],
+    
+    'Matplotlib Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight',
+                           'twilight_shifted', 'hsv'],
+    
+    'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo',
+                            'rocket', 'mako', 'icefire', 'vlag'],
+    
+    'Diverging': ['RdBu', 'RdYlBu', 'RdYlGn', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
+                 'Spectral', 'coolwarm', 'bwr', 'seismic', 'RdGy', 'PuBuGn',
+                 'YlOrRd', 'YlOrBr', 'YlGnBu', 'YlGn'],
+    
+    'Sequential Single': ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
+                         'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
+                         'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn'],
+    
+    'Special & Qualitative': ['gist_earth', 'gist_stern', 'ocean', 'terrain', 'gist_rainbow',
+                             'rainbow', 'nipy_spectral', 'gist_ncar', 'tab10', 'tab20',
+                             'Set1', 'Set2', 'Set3', 'Pastel1', 'Pastel2']
+}
 eta_cmap = st.sidebar.selectbox("η colormap", cmap_list, index=0)
 sigma_cmap = st.sidebar.selectbox("|σ| colormap", cmap_list, index=cmap_list.index('hot'))
 hydro_cmap = st.sidebar.selectbox("Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
