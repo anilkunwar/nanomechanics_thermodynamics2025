@@ -8,7 +8,8 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from plotly.graph_objs.isosurface import ColorBar
+#from plotly.graph_objs.isosurface import ColorBar
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import pandas as pd
 import zipfile
@@ -443,69 +444,87 @@ def get_stress_component(stress_components, component_name):
     }
    
     return stress_map.get(component_name, von_mises)
+
+# =============================================
+# FIXED: create_plotly_isosurface – uses correct colorbar dictionary
+# =============================================
 def create_plotly_isosurface(Xa, Ya, Za, values, title, colorscale,
                              isomin=None, isomax=None, opacity=0.7,
                              surface_count=2, custom_min=None, custom_max=None, show_grid=False):
     vals = np.asarray(values, dtype=float)
     if custom_min is not None and custom_max is not None:
         vals = np.clip(vals, custom_min, custom_max)
-       
-    # compute sensible isomin/isomax if not provided (accurate percentiles)
+      
+    # Compute sensible isomin/isomax if not provided
     vals_mask = vals[np_mask & np.isfinite(vals)]
     if vals_mask.size == 0:
         isomin = 0.0 if isomin is None else isomin
         isomax = 1.0 if isomax is None else isomax
     else:
         if isomin is None:
-            isomin = float(safe_percentile(vals_mask, 5, np.nanmin(vals_mask)))  # Lower percentile for better range
+            isomin = float(safe_percentile(vals_mask, 5, np.nanmin(vals_mask)))
         if isomax is None:
-            isomax = float(safe_percentile(vals_mask, 95, np.nanmax(vals_mask)))  # Upper for avoiding outliers
-           
-    # Proper ColorBar object (fixes ValueError)
-    cbar = ColorBar(
-        thickness=20,
-        len=0.5,
-        title=title,
-        titleside='right',
-        tickfont=dict(size=12)
-    )
-
+            isomax = float(safe_percentile(vals_mask, 95, np.nanmax(vals_mask)))
+          
     fig = go.Figure(data=go.Isosurface(
         x=Xa.flatten(), y=Ya.flatten(), z=Za.flatten(),
         value=vals.flatten(),
-        isomin=isomin, isomax=isomax,
+        isomin=isomin,
+        isomax=isomax,
         surface_count=surface_count,
         colorscale=colorscale,
         opacity=opacity,
         caps=dict(x_show=False, y_show=False, z_show=False),
-        colorbar=cbar,
-        lighting=dict(ambient=0.8, diffuse=0.9, specular=0.5, roughness=0.5, fresnel=0.2),  # Realistic lighting
+
+        # CORRECT WAY: colorbar as dictionary (fixes the ValueError)
+        colorbar=dict(
+            thickness=20,
+            len=0.5,
+            title=title,
+            titleside="right",
+            tickfont=dict(size=12),
+            x=1.02,                    # Prevents overlap with plot
+            xanchor="left",
+            bgcolor="rgba(255,255,255,0.8)"
+        ),
+
+        # Realistic lighting & shading
+        lighting=dict(ambient=0.8, diffuse=0.9, specular=0.5, roughness=0.5, fresnel=0.2),
         lightposition=dict(x=100, y=100, z=50)
     ))
-   
+  
     if show_matrix:
-        theta = np.linspace(0, np.pi, 100)  # Higher res for smoother sphere
+        theta = np.linspace(0, np.pi, 100)
         phi = np.linspace(0, 2*np.pi, 100)
         theta, phi = np.meshgrid(theta, phi)
         x = R_np * np.sin(theta) * np.cos(phi) + origin + N*dx/2.0
         y = R_np * np.sin(theta) * np.sin(phi) + origin + N*dx/2.0
         z = R_np * np.cos(theta) + origin + N*dx/2.0
-        fig.add_trace(go.Surface(x=x, y=y, z=z, surfacecolor=np.ones_like(x), colorscale='Greys', opacity=0.3, showscale=False,
-                                 lighting=dict(ambient=0.7, diffuse=0.8, specular=1.0, roughness=0.3)))  # Realistic material shading
-   
+        fig.add_trace(go.Surface(
+            x=x, y=y, z=z,
+            surfacecolor=np.ones_like(x),
+            colorscale='Greys',
+            opacity=0.3,
+            showscale=False,
+            lighting=dict(ambient=0.7, diffuse=0.8, specular=1.0, roughness=0.3)
+        ))
+  
     fig.update_layout(
         scene=dict(
             xaxis_title='X (nm)', yaxis_title='Y (nm)', zaxis_title='Z (nm)',
-            aspectmode='data', camera=dict(eye=dict(x=1.8, y=1.8, z=1.2), center=dict(x=0, y=0, z=0), up=dict(x=0, y=0, z=1)),
-            xaxis_showgrid=show_grid, yaxis_showgrid=show_grid, zaxis_showgrid=show_grid,
-            bgcolor='white',  # Attractive background
-            annotations=[dict(showarrow=False, text=title, x=0.5, y=1.0, xref="paper", yref="paper", font=dict(size=14))]
+            aspectmode='data',
+            camera=dict(eye=dict(x=1.8, y=1.8, z=1.2)),
+            xaxis_showgrid=show_grid,
+            yaxis_showgrid=show_grid,
+            zaxis_showgrid=show_grid,
+            bgcolor='white'
         ),
-        height=600, title=dict(text=title, x=0.5, font=dict(size=16, color='black', family='Arial')),
-        margin=dict(l=0, r=0, t=50, b=0),  # Tight margins for attractiveness
+        height=600,
+        margin=dict(l=0, r=0, t=50, b=0),
         paper_bgcolor='white'
     )
     return fig
+    
 def safe_matplotlib_cmap(cmap_name, default='viridis'):
     try:
         plt.get_cmap(cmap_name)
