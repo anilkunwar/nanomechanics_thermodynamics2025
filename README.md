@@ -66,7 +66,10 @@
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual6-streamlit-red)](https://defect-evolution-in-nanomaterial20.streamlit.app/) [correction after debugging the previous snippet, only contains stress magnitude 3D]
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual7-streamlit-red)](https://defect-evolution-in-nanomaterial21.streamlit.app/) [correction after debugging the previous snippet,contains sigma_h, sigma_vm, sigma_magnitude in 3D]
+
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual8-streamlit-red)](https://defect-evolution-in-nanomaterial22.streamlit.app/) 
+
+[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual9-streamlit-red)](https://defect-evolution-in-nanomaterial23.streamlit.app/)  (2D with scatter diagrams)
 
 Comparison codes
 
@@ -80,6 +83,7 @@ Comparison codes
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison4-streamlit-red)](https://comparison-of-numerical-simulations2d3d4.streamlit.app/) (relatively correct for single stress type)
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison5-streamlit-red)](https://comparison-of-numerical-simulations2d3d5.streamlit.app/)  (2D and 3D simulations match, different types of stress using different approach)
+
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3d2dcomparison6-streamlit-red)](https://comparison-of-numerical-simulations2d3d6.streamlit.app/) (single type stress, not correct for one of the options)
 
