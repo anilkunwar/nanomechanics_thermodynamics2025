@@ -69,7 +69,7 @@
 
 [![continuummodelsintering2d](https://img.shields.io/badge/3dvisual8-streamlit-red)](https://defect-evolution-in-nanomaterial22.streamlit.app/) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/3dvisual9-streamlit-red)](https://defect-evolution-in-nanomaterial23.streamlit.app/)  (2D with scatter diagrams)
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual9-streamlit-red)](https://defect-evolution-in-nanomaterial23.streamlit.app/)  (2D with scatter diagrams)
 
 Comparison codes
 
