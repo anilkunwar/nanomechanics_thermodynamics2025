@@ -192,6 +192,26 @@ class SimulationDB:
         return simulations
 
 # =============================================
+# SIDEBAR - Global Settings (Available in Both Modes)
+# =============================================
+st.sidebar.header("🎨 Global Chart Styling")
+
+# Chart styling controls (available in both modes)
+title_font_size = st.sidebar.slider("Title Font Size", 12, 24, 16)
+label_font_size = st.sidebar.slider("Label Font Size", 10, 45, 14)
+line_width = st.sidebar.slider("Line Width", 1.0, 5.0, 2.0, 0.5)
+spine_width = st.sidebar.slider("Spine Line Width", 1.0, 4.0, 2.5, 0.5)
+tick_length = st.sidebar.slider("Tick Length", 4, 12, 6)
+tick_width = st.sidebar.slider("Tick Width", 1.0, 3.0, 2.0, 0.5)
+
+# Color maps selection (available in both modes for consistency)
+st.sidebar.subheader("Default Colormap Selection")
+eta_cmap_name = st.sidebar.selectbox("Default η colormap", cmap_list, index=cmap_list.index('viridis'))
+sigma_cmap_name = st.sidebar.selectbox("Default |σ| colormap", cmap_list, index=cmap_list.index('hot'))
+hydro_cmap_name = st.sidebar.selectbox("Default Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
+vm_cmap_name = st.sidebar.selectbox("Default von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
+
+# =============================================
 # SIDEBAR - Multi-Simulation Control Panel
 # =============================================
 st.sidebar.header("🚀 Multi-Simulation Manager")
@@ -292,27 +312,16 @@ if operation_mode == "Run New Simulation":
     
     st.sidebar.info(f"Selected tilt: **{np.rad2deg(theta):.1f}°** from horizontal")
     
-    # Visualization settings
-    st.sidebar.header("🎨 Visualization Settings")
-    
-    # Color maps selection
-    st.sidebar.subheader("Colormap Selection")
-    eta_cmap_name = st.sidebar.selectbox("η colormap", cmap_list, index=cmap_list.index('viridis'))
-    sigma_cmap_name = st.sidebar.selectbox("|σ| colormap", cmap_list, index=cmap_list.index('hot'))
-    hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
-    vm_cmap_name = st.sidebar.selectbox("von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
-    
-    # Convert names to actual colormaps
-    eta_cmap = COLORMAPS[eta_cmap_name]
-    sigma_cmap = COLORMAPS[sigma_cmap_name]
-    hydro_cmap = COLORMAPS[hydro_cmap_name]
-    vm_cmap = COLORMAPS[vm_cmap_name]
-    
-    # Chart styling
-    st.sidebar.subheader("Chart Styling")
-    title_font_size = st.sidebar.slider("Title Font Size", 12, 24, 16)
-    label_font_size = st.sidebar.slider("Label Font Size", 10, 45, 14)
-    line_width = st.sidebar.slider("Line Width", 1.0, 5.0, 2.0, 0.5)
+    # Visualization settings - Individual for this simulation
+    st.sidebar.subheader("Simulation-Specific Colormaps")
+    sim_eta_cmap_name = st.sidebar.selectbox("η colormap for this sim", cmap_list, 
+                                           index=cmap_list.index(eta_cmap_name))
+    sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(sigma_cmap_name))
+    sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(hydro_cmap_name))
+    sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap for this sim", cmap_list, 
+                                          index=cmap_list.index(vm_cmap_name))
     
     # Run button
     if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
@@ -326,10 +335,10 @@ if operation_mode == "Run New Simulation":
             'theta': theta,
             'steps': steps,
             'save_every': save_every,
-            'eta_cmap': eta_cmap_name,
-            'sigma_cmap': sigma_cmap_name,
-            'hydro_cmap': hydro_cmap_name,
-            'vm_cmap': vm_cmap_name
+            'eta_cmap': sim_eta_cmap_name,
+            'sigma_cmap': sim_sigma_cmap_name,
+            'hydro_cmap': sim_hydro_cmap_name,
+            'vm_cmap': sim_vm_cmap_name
         }
 
 else:  # Compare Saved Simulations
@@ -377,6 +386,14 @@ else:  # Compare Saved Simulations
         else:
             frame_idx = None
         
+        # Comparison-specific styling
+        st.sidebar.subheader("Comparison Styling")
+        comparison_line_style = st.sidebar.selectbox(
+            "Line Style",
+            ["solid", "dashed", "dotted", "dashdot"],
+            index=0
+        )
+        
         # Run comparison
         if st.sidebar.button("🔬 Run Comparison", type="primary"):
             st.session_state.run_comparison = True
@@ -385,7 +402,8 @@ else:  # Compare Saved Simulations
                 'type': comparison_type,
                 'stress_component': stress_component,
                 'frame_selection': frame_selection,
-                'frame_idx': frame_idx
+                'frame_idx': frame_idx,
+                'line_style': comparison_line_style
             }
 
 # =============================================
@@ -821,9 +839,11 @@ else:  # COMPARE SAVED SIMULATIONS
                     # Extract slice
                     stress_slice = stress_data[slice_pos, :]
                     
-                    # Plot
+                    # Plot with global line_width
                     label = f"{sim['params']['defect_type']} - {sim['params']['orientation']}"
-                    ax1.plot(x_pos, stress_slice, color=color, linewidth=line_width, label=label)
+                    line_style = config.get('line_style', 'solid')
+                    ax1.plot(x_pos, stress_slice, color=color, linewidth=line_width, 
+                           linestyle=line_style, label=label)
                 
                 ax1.set_title(f"{config['stress_component']} - Horizontal Slice", 
                             fontsize=title_font_size, fontweight='bold')
@@ -868,10 +888,11 @@ else:  # COMPARE SAVED SIMULATIONS
                         else:
                             radial_stress.append(np.nan)
                     
-                    # Plot
+                    # Plot with global line_width
                     label = f"{sim['params']['defect_type']} - {sim['params']['orientation']}"
+                    line_style = config.get('line_style', 'solid')
                     ax.plot(r_bins[1:], radial_stress, 'o-', color=color, 
-                           linewidth=line_width, markersize=4, label=label)
+                           linewidth=line_width, markersize=4, linestyle=line_style, label=label)
                 
                 ax.set_title(f"Radial {config['stress_component']} Profile", 
                            fontsize=title_font_size, fontweight='bold')
