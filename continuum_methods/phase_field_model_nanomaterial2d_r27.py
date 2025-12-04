@@ -462,64 +462,89 @@ class EnhancedFigureStyler(FigureStyler):
         
         return fig
     
-    @staticmethod
-    def get_publication_controls():
-        """Get enhanced publication styling controls"""
-        style_params = FigureStyler.get_styling_controls()
+@staticmethod
+def get_publication_controls():
+    """Get enhanced publication styling controls"""
+    style_params = FigureStyler.get_styling_controls()
+    
+    st.sidebar.header("📰 Publication-Quality Settings")
+    
+    with st.sidebar.expander("🎯 Journal Templates", expanded=False):
+        journal = st.selectbox(
+            "Journal Style",
+            ["Nature", "Science", "Advanced Materials", "Physical Review Letters", "Custom"],
+            index=0,
+            key="pub_journal_style"
+        )
         
-        st.sidebar.header("📰 Publication-Quality Settings")
-        
-        with st.sidebar.expander("🎯 Journal Templates", expanded=False):
-            journal = st.selectbox(
-                "Journal Style",
-                ["Nature", "Science", "Advanced Materials", "Physical Review Letters", "Custom"],
-                index=0
+        style_params['journal_style'] = journal.lower()
+        style_params['use_latex'] = st.checkbox("Use LaTeX Formatting", False, key="pub_use_latex")
+        style_params['vector_output'] = st.checkbox("Enable Vector Export (PDF/SVG)", True, key="pub_vector_export")
+    
+    with st.sidebar.expander("📐 Advanced Layout", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            style_params['layout_pad'] = st.slider("Layout Padding", 0.5, 3.0, 1.0, 0.1,
+                                                   key="pub_layout_pad")
+            style_params['wspace'] = st.slider("Horizontal Spacing", 0.1, 1.0, 0.3, 0.05,
+                                               key="pub_wspace")
+        with col2:
+            style_params['hspace'] = st.slider("Vertical Spacing", 0.1, 1.0, 0.4, 0.05,
+                                               key="pub_hspace")
+            style_params['figure_dpi'] = st.select_slider(
+                "Figure DPI", 
+                options=[150, 300, 600, 1200], 
+                value=600,
+                key="pub_figure_dpi"
             )
-            
-            style_params['journal_style'] = journal.lower()
-            style_params['use_latex'] = st.checkbox("Use LaTeX Formatting", False)
-            style_params['vector_output'] = st.checkbox("Enable Vector Export (PDF/SVG)", True)
-        
-        with st.sidebar.expander("📐 Advanced Layout", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                style_params['layout_pad'] = st.slider("Layout Padding", 0.5, 3.0, 1.0, 0.1)
-                style_params['wspace'] = st.slider("Horizontal Spacing", 0.1, 1.0, 0.3, 0.05)
-            with col2:
-                style_params['hspace'] = st.slider("Vertical Spacing", 0.1, 1.0, 0.4, 0.05)
-                style_params['figure_dpi'] = st.select_slider("Figure DPI", 
-                                                           options=[150, 300, 600, 1200], 
-                                                           value=600)
-        
-        with st.sidebar.expander("📈 Enhanced Plot Features", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                style_params['show_minor_ticks'] = st.checkbox("Show Minor Ticks", True)
-                style_params['show_error_bars'] = st.checkbox("Show Error Bars", True)
-                style_params['show_confidence'] = st.checkbox("Show Confidence Intervals", False)
-            with col2:
-                style_params['grid_style'] = st.selectbox("Grid Style", 
-                                                         ['-', '--', '-.', ':'],
-                                                         index=1)
-                style_params['grid_zorder'] = st.slider("Grid Z-Order", 0, 10, 0)
-        
-        with st.sidebar.expander("🎨 Enhanced Color Settings", expanded=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                style_params['colorbar_extend'] = st.selectbox("Colorbar Extend", 
-                                                              ['neither', 'both', 'min', 'max'],
-                                                              index=0)
-                style_params['colorbar_format'] = st.selectbox("Colorbar Format", 
-                                                              ['auto', 'sci', 'plain'],
-                                                              index=0)
-            with col2:
-                style_params['cmap_normalization'] = st.selectbox("Colormap Normalization",
-                                                                ['linear', 'log', 'power'],
-                                                                index=0)
-                if style_params['cmap_normalization'] == 'power':
-                    style_params['gamma'] = st.slider("Gamma", 0.1, 3.0, 1.0, 0.1)
-        
-        return style_params
+    
+    with st.sidebar.expander("📈 Enhanced Plot Features", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            style_params['show_minor_ticks'] = st.checkbox("Show Minor Ticks", True,
+                                                           key="pub_minor_ticks")
+            style_params['show_error_bars'] = st.checkbox("Show Error Bars", True,
+                                                          key="pub_error_bars")
+            style_params['show_confidence'] = st.checkbox("Show Confidence Intervals", False,
+                                                          key="pub_confidence")
+        with col2:
+            style_params['grid_style'] = st.selectbox(
+                "Grid Style", 
+                ['-', '--', '-.', ':'],
+                index=1,
+                key="pub_grid_style"
+            )
+            style_params['grid_zorder'] = st.slider("Grid Z-Order", 0, 10, 0,
+                                                    key="pub_grid_zorder")
+    
+    with st.sidebar.expander("🎨 Enhanced Color Settings", expanded=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            style_params['colorbar_extend'] = st.selectbox(
+                "Colorbar Extend", 
+                ['neither', 'both', 'min', 'max'],
+                index=0,
+                key="pub_colorbar_extend"
+            )
+            style_params['colorbar_format'] = st.selectbox(
+                "Colorbar Format", 
+                ['auto', 'sci', 'plain'],
+                index=0,
+                key="pub_colorbar_format"
+            )
+        with col2:
+            style_params['cmap_normalization'] = st.selectbox(
+                "Colormap Normalization",
+                ['linear', 'log', 'power'],
+                index=0,
+                key="pub_cmap_normalization"
+            )
+            if style_params['cmap_normalization'] == 'power':
+                style_params['gamma'] = st.slider("Gamma", 0.1, 3.0, 1.0, 0.1,
+                                                  key="pub_gamma")
+    
+    return style_params
+
 
 # =============================================
 # ADVANCED PLOTTING ENHANCEMENTS
