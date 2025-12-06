@@ -4,9 +4,6 @@ from numba import jit, prange
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from matplotlib import rcParams
-from matplotlib.patches import Rectangle, Arrow, FancyBboxPatch, Circle, Ellipse
-from matplotlib.lines import Line2D
-import matplotlib.patheffects as path_effects
 from matplotlib.ticker import AutoMinorLocator, MultipleLocator, FormatStrFormatter
 import pandas as pd
 import zipfile
@@ -16,7 +13,7 @@ import hashlib
 import json
 from datetime import datetime
 from scipy import stats, interpolate
-from scipy.ndimage import gaussian_filter, map_coordinates
+from scipy.ndimage import gaussian_filter, rotate
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -26,7 +23,6 @@ st.title("🔬 Ag Nanoparticle Multi-Defect Comparison Platform")
 st.markdown("""
 **Run multiple simulations • Compare ISF/ESF/Twin with different orientations • Cloud-style storage**
 **Run → Save → Compare • 50+ Colormaps • Publication-ready comparison plots • Advanced Post-Processing**
-**NEW: Stress overlay line profiles in multiple orientations with realistic geometric probe indicators**
 """)
 
 # =============================================
@@ -46,6 +42,219 @@ dx = 0.1  # nm
 extent = [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
 X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
                    np.linspace(extent[2], extent[3], N))
+
+# =============================================
+# ENHANCED LINE PROFILE SYSTEM
+# =============================================
+class EnhancedLineProfiler:
+    """Enhanced line profile system with multiple orientations and proper scaling"""
+    
+    @staticmethod
+    def extract_profile(data, profile_type, position_ratio=0.5, angle_deg=45):
+        """
+        Extract line profiles from 2D data with proper scaling
+        
+        Parameters:
+        -----------
+        data : 2D numpy array
+            Input data (stress or defect field)
+        profile_type : str
+            Type of profile: 'horizontal', 'vertical', 'diagonal', 'anti_diagonal', 'custom'
+        position_ratio : float
+            Position ratio from center (0.0 to 1.0)
+        angle_deg : float
+            Angle for custom line profiles (degrees)
+            
+        Returns:
+        --------
+        distance : 1D array
+            Distance along profile (nm)
+        profile : 1D array
+            Extracted profile values
+        endpoints : tuple
+            (x_start, y_start, x_end, y_end) in data coordinates
+        """
+        ny, nx = data.shape
+        center_x, center_y = nx // 2, ny // 2
+        
+        # Calculate position offset based on ratio
+        if profile_type in ['horizontal', 'vertical']:
+            offset = int(min(nx, ny) * 0.4 * position_ratio)
+        else:
+            offset = int(min(nx, ny) * 0.3 * position_ratio)
+        
+        if profile_type == 'horizontal':
+            # Horizontal profile
+            row_idx = center_y + offset
+            profile = data[row_idx, :]
+            distance = np.linspace(extent[0], extent[1], nx)
+            endpoints = (extent[0], row_idx * dx + extent[2], 
+                        extent[1], row_idx * dx + extent[2])
+            
+        elif profile_type == 'vertical':
+            # Vertical profile
+            col_idx = center_x + offset
+            profile = data[:, col_idx]
+            distance = np.linspace(extent[2], extent[3], ny)
+            endpoints = (col_idx * dx + extent[0], extent[2],
+                        col_idx * dx + extent[0], extent[3])
+            
+        elif profile_type == 'diagonal':
+            # Main diagonal (top-left to bottom-right)
+            # Extract diagonal through center
+            diag_length = int(min(nx, ny) * 0.8)  # Use 80% of min dimension
+            start_idx = (center_x - diag_length//2, center_y - diag_length//2)
+            
+            profile = []
+            distances = []
+            for i in range(diag_length):
+                x = start_idx[0] + i
+                y = start_idx[1] + i
+                if 0 <= x < nx and 0 <= y < ny:
+                    profile.append(data[y, x])
+                    # Calculate actual distance along diagonal in nm
+                    dist = i * dx * np.sqrt(2)
+                    distances.append(dist - (diag_length//2) * dx * np.sqrt(2))
+            
+            distance = np.array(distances)
+            profile = np.array(profile)
+            
+            # Calculate endpoints in physical coordinates
+            x_start = start_idx[0] * dx + extent[0]
+            y_start = start_idx[1] * dx + extent[2]
+            x_end = (start_idx[0] + diag_length - 1) * dx + extent[0]
+            y_end = (start_idx[1] + diag_length - 1) * dx + extent[2]
+            endpoints = (x_start, y_start, x_end, y_end)
+            
+        elif profile_type == 'anti_diagonal':
+            # Anti-diagonal (top-right to bottom-left)
+            diag_length = int(min(nx, ny) * 0.8)
+            start_idx = (center_x + diag_length//2, center_y - diag_length//2)
+            
+            profile = []
+            distances = []
+            for i in range(diag_length):
+                x = start_idx[0] - i
+                y = start_idx[1] + i
+                if 0 <= x < nx and 0 <= y < ny:
+                    profile.append(data[y, x])
+                    dist = i * dx * np.sqrt(2)
+                    distances.append(dist - (diag_length//2) * dx * np.sqrt(2))
+            
+            distance = np.array(distances)
+            profile = np.array(profile)
+            
+            x_start = start_idx[0] * dx + extent[0]
+            y_start = start_idx[1] * dx + extent[2]
+            x_end = (start_idx[0] - diag_length + 1) * dx + extent[0]
+            y_end = (start_idx[1] + diag_length - 1) * dx + extent[2]
+            endpoints = (x_start, y_start, x_end, y_end)
+            
+        elif profile_type == 'custom':
+            # Custom angle line profile
+            angle_rad = np.deg2rad(angle_deg)
+            length = int(min(nx, ny) * 0.8)
+            
+            # Calculate line endpoints
+            dx_line = np.cos(angle_rad) * length//2
+            dy_line = np.sin(angle_rad) * length//2
+            
+            profile = []
+            distances = []
+            
+            # Interpolate along line
+            for t in np.linspace(-length//2, length//2, length):
+                x = center_x + t * np.cos(angle_rad) + offset * np.cos(angle_rad + np.pi/2)
+                y = center_y + t * np.sin(angle_rad) + offset * np.sin(angle_rad + np.pi/2)
+                
+                if 0 <= x < nx-1 and 0 <= y < ny-1:
+                    # Bilinear interpolation
+                    x0, y0 = int(x), int(y)
+                    x1, y1 = x0 + 1, y0 + 1
+                    
+                    # Check bounds
+                    if x1 >= nx: x1 = nx - 1
+                    if y1 >= ny: y1 = ny - 1
+                    
+                    # Interpolation weights
+                    wx = x - x0
+                    wy = y - y0
+                    
+                    # Bilinear interpolation
+                    val = (data[y0, x0] * (1-wx) * (1-wy) +
+                          data[y0, x1] * wx * (1-wy) +
+                          data[y1, x0] * (1-wx) * wy +
+                          data[y1, x1] * wx * wy)
+                    
+                    profile.append(val)
+                    distances.append(t * dx)
+            
+            distance = np.array(distances)
+            profile = np.array(profile)
+            
+            # Calculate endpoints
+            x_start = (center_x - dx_line + offset * np.cos(angle_rad + np.pi/2)) * dx + extent[0]
+            y_start = (center_y - dy_line + offset * np.sin(angle_rad + np.pi/2)) * dx + extent[2]
+            x_end = (center_x + dx_line + offset * np.cos(angle_rad + np.pi/2)) * dx + extent[0]
+            y_end = (center_y + dy_line + offset * np.sin(angle_rad + np.pi/2)) * dx + extent[2]
+            endpoints = (x_start, y_start, x_end, y_end)
+        
+        else:
+            raise ValueError(f"Unknown profile type: {profile_type}")
+        
+        return distance, profile, endpoints
+    
+    @staticmethod
+    def extract_multiple_profiles(data, profile_types, position_ratio=0.5, angle_deg=45):
+        """
+        Extract multiple line profiles from the same data
+        """
+        profiles = {}
+        for profile_type in profile_types:
+            distance, profile, endpoints = EnhancedLineProfiler.extract_profile(
+                data, profile_type, position_ratio, angle_deg
+            )
+            profiles[profile_type] = {
+                'distance': distance,
+                'profile': profile,
+                'endpoints': endpoints
+            }
+        return profiles
+    
+    @staticmethod
+    def plot_profile_locations(ax, data, profile_configs, cmap='viridis', alpha=0.7):
+        """
+        Plot data with overlay of profile lines
+        """
+        # Plot the base data
+        im = ax.imshow(data, extent=extent, cmap=cmap, origin='lower', aspect='equal')
+        
+        # Define colors for different profile types
+        profile_colors = {
+            'horizontal': 'red',
+            'vertical': 'blue',
+            'diagonal': 'green',
+            'anti_diagonal': 'purple',
+            'custom': 'orange'
+        }
+        
+        # Plot each profile line
+        for profile_type, config in profile_configs.items():
+            if profile_type in config['profiles']:
+                endpoints = config['profiles'][profile_type]['endpoints']
+                color = profile_colors.get(profile_type, 'white')
+                
+                # Draw line
+                ax.plot([endpoints[0], endpoints[2]], [endpoints[1], endpoints[3]],
+                       color=color, linewidth=2, alpha=alpha, 
+                       linestyle='--' if profile_type == 'custom' else '-',
+                       label=f"{profile_type.title()} Profile")
+        
+        ax.set_xlabel("x (nm)")
+        ax.set_ylabel("y (nm)")
+        ax.legend(loc='upper right', fontsize=8)
+        
+        return im, ax
 
 # =============================================
 # EXPANDED COLORMAP LIBRARY (50+ options)
@@ -129,735 +338,570 @@ COLORMAPS = {
 cmap_list = list(COLORMAPS.keys())
 
 # =============================================
-# ENHANCED LINE PROFILE ANALYSIS SYSTEM (FIXED)
+# JOURNAL-SPECIFIC STYLING TEMPLATES
 # =============================================
-class LineProfileAnalyzer:
-    """Enhanced line profile extraction with robust error handling"""
+class JournalTemplates:
+    """Publication-quality journal templates"""
     
     @staticmethod
-    def extract_line_profile(data_2d, x0, y0, x1, y1, num_points=200):
-        """
-        Extract line profile from 2D data with robust error handling
-        
-        FIXED: Handles cases where start and end points are identical
-        """
-        # Validate input points to avoid zero-length lines
-        if np.abs(x1 - x0) < 1e-10 and np.abs(y1 - y0) < 1e-10:
-            # Return a small line centered at the point
-            x0 = max(0, x0 - 5)
-            x1 = min(data_2d.shape[1] - 1, x1 + 5)
-            y0 = max(0, y0 - 5)
-            y1 = min(data_2d.shape[0] - 1, y1 + 5)
-        
-        # Create linearly spaced points along the line
-        t = np.linspace(0, 1, num_points)
-        x_coords = x0 + t * (x1 - x0)
-        y_coords = y0 + t * (y1 - y0)
-        
-        # Ensure coordinates are within bounds
-        x_coords = np.clip(x_coords, 0, data_2d.shape[1] - 1)
-        y_coords = np.clip(y_coords, 0, data_2d.shape[0] - 1)
-        
-        # Use scipy's map_coordinates for high-quality interpolation
-        coords = np.vstack((y_coords, x_coords))  # Note: y first for row-major
-        profile = map_coordinates(data_2d, coords, order=1, mode='nearest')
-        
-        # Calculate actual distances with robust normalization
-        distances = np.sqrt((x_coords - x0)**2 + (y_coords - y0)**2)
-        
-        # Check for zero-length line and handle gracefully
-        max_distance = distances[-1]
-        if max_distance > 1e-10:
-            distances = distances / max_distance
-        else:
-            # If line is essentially zero-length, use normalized index
-            distances = t
-        
-        return distances, profile, (x_coords, y_coords)
-    
-    @staticmethod
-    def get_line_profiles(data_2d, center_x, center_y, length, angle_deg=0):
-        """
-        Get line profiles in multiple orientations with robust length handling
-        """
-        profiles = {}
-        
-        if isinstance(angle_deg, (int, float)):
-            angle_deg = [angle_deg]
-        
-        # Ensure minimum valid length
-        min_length = 5  # Minimum grid units
-        length = max(min_length, length)
-        
-        for angle in angle_deg:
-            # Convert angle to radians
-            theta = np.deg2rad(angle)
-            
-            # Calculate end points with validation
-            dx = length * np.cos(theta) / 2
-            dy = length * np.sin(theta) / 2
-            
-            x0 = center_x - dx
-            y0 = center_y - dy
-            x1 = center_x + dx
-            y1 = center_y + dy
-            
-            # Ensure points are within data bounds
-            x0 = max(0, min(data_2d.shape[1] - 1, x0))
-            x1 = max(0, min(data_2d.shape[1] - 1, x1))
-            y0 = max(0, min(data_2d.shape[0] - 1, y0))
-            y1 = max(0, min(data_2d.shape[0] - 1, y1))
-            
-            # Extract profile with error handling
-            try:
-                distances, profile, coords = LineProfileAnalyzer.extract_line_profile(
-                    data_2d, x0, y0, x1, y1
-                )
-                
-                # Verify profile has valid data
-                if len(profile) > 0 and not np.all(np.isnan(profile)):
-                    profiles[angle] = {
-                        'distances': distances,
-                        'profile': profile,
-                        'coords': coords,
-                        'start': (x0, y0),
-                        'end': (x1, y1),
-                        'center': (center_x, center_y),
-                        'length': length,
-                        'angle': angle
-                    }
-                else:
-                    st.warning(f"Empty profile extracted for angle {angle}°")
-                    
-            except Exception as e:
-                st.error(f"Error extracting profile for angle {angle}°: {str(e)}")
-        
-        return profiles
-    
-    @staticmethod
-    def extract_multiple_orientations(data_2d, center_x, center_y, length=100, 
-                                     orientations=None):
-        """Extract profiles in standard orientations with validation"""
-        if orientations is None:
-            orientations = [0, 45, 90, 135]  # Horizontal, Diagonal, Vertical, Anti-diagonal
-        
-        # Ensure center is within bounds
-        center_x = max(0, min(data_2d.shape[1] - 1, center_x))
-        center_y = max(0, min(data_2d.shape[0] - 1, center_y))
-        
-        return LineProfileAnalyzer.get_line_profiles(
-            data_2d, center_x, center_y, length, orientations
-        )
-    
-    @staticmethod
-    def create_probe_line_indicator(ax, profile_info, style='realistic', **kwargs):
-        """
-        Create realistic geometric probe line indicators with enhanced visualization
-        """
-        # Default style parameters
-        default_params = {
-            'line_color': 'yellow',
-            'line_width': 3,
-            'line_alpha': 0.8,
-            'endpoint_color': 'red',
-            'endpoint_size': 50,
-            'fill_color': 'rgba(255, 255, 0, 0.2)',
-            'text_color': 'white',
-            'text_size': 10,
-            'shadow': True,
-            'extent': None  # Add extent for coordinate transformation
+    def get_journal_styles():
+        """Return journal-specific style parameters"""
+        return {
+            'nature': {
+                'figure_width_single': 8.9,  # cm to inches
+                'figure_width_double': 18.3,
+                'font_family': 'Arial',
+                'font_size_small': 7,
+                'font_size_medium': 8,
+                'font_size_large': 9,
+                'line_width': 0.5,
+                'axes_linewidth': 0.5,
+                'tick_width': 0.5,
+                'tick_length': 2,
+                'grid_alpha': 0.1,
+                'dpi': 600,
+                'color_cycle': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+            },
+            'science': {
+                'figure_width_single': 5.5,
+                'figure_width_double': 11.4,
+                'font_family': 'Helvetica',
+                'font_size_small': 8,
+                'font_size_medium': 9,
+                'font_size_large': 10,
+                'line_width': 0.75,
+                'axes_linewidth': 0.75,
+                'tick_width': 0.75,
+                'tick_length': 3,
+                'grid_alpha': 0.15,
+                'dpi': 600,
+                'color_cycle': ['#0072BD', '#D95319', '#EDB120', '#7E2F8E', '#77AC30',
+                              '#4DBEEE', '#A2142F', '#FF00FF', '#00FFFF', '#FFA500']
+            },
+            'advanced_materials': {
+                'figure_width_single': 8.6,
+                'figure_width_double': 17.8,
+                'font_family': 'Arial',
+                'font_size_small': 8,
+                'font_size_medium': 9,
+                'font_size_large': 10,
+                'line_width': 1.0,
+                'axes_linewidth': 1.0,
+                'tick_width': 1.0,
+                'tick_length': 4,
+                'grid_alpha': 0.2,
+                'dpi': 600,
+                'color_cycle': ['#004488', '#DDAA33', '#BB5566', '#000000', '#44AA99',
+                              '#882255', '#117733', '#999933', '#AA4499', '#88CCEE']
+            },
+            'prl': {
+                'figure_width_single': 3.4,
+                'figure_width_double': 7.0,
+                'font_family': 'Times New Roman',
+                'font_size_small': 8,
+                'font_size_medium': 10,
+                'font_size_large': 12,
+                'line_width': 1.0,
+                'axes_linewidth': 1.0,
+                'tick_width': 1.0,
+                'tick_length': 4,
+                'grid_alpha': 0,
+                'dpi': 600,
+                'color_cycle': ['#000000', '#E69F00', '#56B4E9', '#009E73', '#F0E442',
+                              '#0072B2', '#D55E00', '#CC79A7', '#999999', '#FFFFFF']
+            },
+            'custom': {
+                'figure_width_single': 6.0,
+                'figure_width_double': 12.0,
+                'font_family': 'DejaVu Sans',
+                'font_size_small': 10,
+                'font_size_medium': 12,
+                'font_size_large': 14,
+                'line_width': 1.5,
+                'axes_linewidth': 1.5,
+                'tick_width': 1.0,
+                'tick_length': 5,
+                'grid_alpha': 0.3,
+                'dpi': 300,
+                'color_cycle': plt.cm.Set2(np.linspace(0, 1, 10))
+            }
         }
+    
+    @staticmethod
+    def apply_journal_style(fig, axes, journal_name='nature'):
+        """Apply journal-specific styling to figure"""
+        styles = JournalTemplates.get_journal_styles()
+        style = styles.get(journal_name, styles['nature'])
         
-        # Update with provided kwargs
-        params = {**default_params, **kwargs}
+        # Set rcParams for consistent styling
+        rcParams.update({
+            'font.family': style['font_family'],
+            'font.size': style['font_size_medium'],
+            'axes.linewidth': style['axes_linewidth'],
+            'axes.labelsize': style['font_size_medium'],
+            'axes.titlesize': style['font_size_large'],
+            'xtick.labelsize': style['font_size_small'],
+            'ytick.labelsize': style['font_size_small'],
+            'legend.fontsize': style['font_size_small'],
+            'figure.titlesize': style['font_size_large'],
+            'lines.linewidth': style['line_width'],
+            'lines.markersize': 4,
+            'xtick.major.width': style['tick_width'],
+            'ytick.major.width': style['tick_width'],
+            'xtick.minor.width': style['tick_width'] * 0.5,
+            'ytick.minor.width': style['tick_width'] * 0.5,
+            'xtick.major.size': style['tick_length'],
+            'ytick.major.size': style['tick_length'],
+            'xtick.minor.size': style['tick_length'] * 0.6,
+            'ytick.minor.size': style['tick_length'] * 0.6,
+            'axes.grid': False,
+            'savefig.dpi': style['dpi'],
+            'savefig.bbox': 'tight',
+            'savefig.pad_inches': 0.1,
+            'axes.prop_cycle': plt.cycler(color=style['color_cycle'])
+        })
         
-        # Get coordinates
-        x_coords, y_coords = profile_info['coords']
-        x0, y0 = profile_info['start']
-        x1, y1 = profile_info['end']
-        center_x, center_y = profile_info['center']
-        angle = profile_info['angle']
+        # Apply to all axes
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
         
-        # Convert from grid coordinates to physical coordinates if extent is provided
-        if params.get('extent') is not None:
-            extent = params['extent']
-            # Transform coordinates from grid indices to physical coordinates
-            x_min, x_max, y_min, y_max = extent
-            grid_width = x_max - x_min
-            grid_height = y_max - y_min
-            
-            # Normalize grid indices to [0, 1] then scale to physical coordinates
-            x_coords = x_min + (x_coords / (N-1)) * grid_width
-            y_coords = y_min + (y_coords / (N-1)) * grid_height
-            x0 = x_min + (x0 / (N-1)) * grid_width
-            y0 = y_min + (y0 / (N-1)) * grid_height
-            x1 = x_min + (x1 / (N-1)) * grid_width
-            y1 = y_min + (y1 / (N-1)) * grid_height
-            center_x = x_min + (center_x / (N-1)) * grid_width
-            center_y = y_min + (center_y / (N-1)) * grid_height
-        
-        # Apply path effects for shadow/glow
-        path_effects_list = []
-        if params['shadow']:
-            path_effects_list = [
-                path_effects.withStroke(linewidth=params['line_width']+2, 
-                                       foreground='black', alpha=0.5),
-                path_effects.withStroke(linewidth=params['line_width']+1, 
-                                       foreground='white', alpha=0.3)
-            ]
-        
-        if style == 'realistic':
-            # Realistic AFM/STEM probe style
-            # Main probe line
-            ax.plot(x_coords, y_coords, 
-                   color=params['line_color'],
-                   linewidth=params['line_width'],
-                   alpha=params['line_alpha'],
-                   solid_capstyle='round',
-                   path_effects=path_effects_list,
-                   zorder=10)
-            
-            # Endpoint markers
-            for point in [(x0, y0), (x1, y1)]:
-                ax.scatter(*point, 
-                          s=params['endpoint_size'],
-                          color=params['endpoint_color'],
-                          edgecolors='white',
-                          linewidths=2,
-                          zorder=11,
-                          marker='o')
-            
-            # Center marker
-            ax.scatter(center_x, center_y,
-                      s=params['endpoint_size'] * 0.7,
-                      color='cyan',
-                      edgecolors='white',
-                      linewidths=2,
-                      zorder=12,
-                      marker='s')
-            
-            # Add directional arrow
-            arrow_length = np.sqrt((x1-x0)**2 + (y1-y0)**2) * 0.2
-            if arrow_length > 0:
-                ax.annotate('',
-                           xy=(x0 + arrow_length * np.cos(np.deg2rad(angle)),
-                               y0 + arrow_length * np.sin(np.deg2rad(angle))),
-                           xytext=(x0, y0),
-                           arrowprops=dict(arrowstyle='->',
-                                          color='white',
-                                          linewidth=2,
-                                          shrinkA=0,
-                                          shrinkB=0))
-            
-            # Add angle annotation
-            ax.text(center_x, center_y,
-                   f'{angle}°',
-                   color=params['text_color'],
-                   fontsize=params['text_size'],
-                   ha='center',
-                   va='center',
-                   bbox=dict(boxstyle='round,pad=0.3',
-                            facecolor='black',
-                            alpha=0.7,
-                            edgecolor='none'),
-                   zorder=13)
-        
-        elif style == 'arrow':
-            # Simple arrow style
-            if np.sqrt((x1-x0)**2 + (y1-y0)**2) > 0:
-                arrow = Arrow(x0, y0, x1-x0, y1-y0,
-                             width=params['line_width']*3,
-                             color=params['line_color'],
-                             alpha=params['line_alpha'])
-                ax.add_patch(arrow)
-            
-        elif style == 'rectangle':
-            # Rectangle probe style
-            rect_width = params['line_width'] * 2
-            rect_length = np.sqrt((x1-x0)**2 + (y1-y0)**2)
-            
-            if rect_length > 0:
-                rect = Rectangle((x0 - rect_width/2, y0 - rect_width/2),
-                                rect_length, rect_width,
-                                angle=angle,
-                                rotation_point=(x0, y0),
-                                color=params['fill_color'],
-                                alpha=0.5,
-                                edgecolor=params['line_color'],
-                                linewidth=2)
-                ax.add_patch(rect)
+        for ax in axes_flat:
+            if ax is not None:
+                # Add minor ticks
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+                ax.yaxis.set_minor_locator(AutoMinorLocator())
                 
-                # Add center line
-                ax.plot([x0, x1], [y0, y1],
-                       color=params['line_color'],
-                       linewidth=params['line_width'],
-                       linestyle='--',
-                       alpha=0.8)
+                # Set spine visibility
+                ax.spines['top'].set_visible(True)
+                ax.spines['right'].set_visible(True)
+                ax.spines['top'].set_linewidth(style['axes_linewidth'] * 0.5)
+                ax.spines['right'].set_linewidth(style['axes_linewidth'] * 0.5)
+                
+                # Improve tick formatting
+                ax.tick_params(which='both', direction='in', top=True, right=True)
+                ax.tick_params(which='major', length=style['tick_length'])
+                ax.tick_params(which='minor', length=style['tick_length'] * 0.6)
         
-        elif style == 'nanoprobe':
-            # Nanoscale probe tip style
-            ax.plot(x_coords, y_coords,
-                   color=params['line_color'],
-                   linewidth=params['line_width'],
-                   alpha=params['line_alpha'],
-                   solid_capstyle='round')
+        return fig, style
+
+# =============================================
+# POST-PROCESSING STYLING SYSTEM
+# =============================================
+class FigureStyler:
+    """Advanced figure styling and post-processing system"""
+    
+    @staticmethod
+    def apply_advanced_styling(fig, axes, style_params):
+        """Apply advanced styling to figure and axes"""
+        
+        # Apply to all axes in figure
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
+        
+        for ax in axes_flat:
+            if ax is not None:
+                # Apply axis styling
+                ax.tick_params(axis='both', which='major', 
+                              labelsize=style_params.get('tick_font_size', 12),
+                              width=style_params.get('tick_width', 2.0),
+                              length=style_params.get('tick_length', 6))
+                
+                # Apply spine styling
+                for spine in ax.spines.values():
+                    spine.set_linewidth(style_params.get('spine_width', 2.5))
+                    spine.set_color(style_params.get('spine_color', 'black'))
+                
+                # Apply grid if requested
+                if style_params.get('show_grid', True):
+                    ax.grid(True, 
+                           alpha=style_params.get('grid_alpha', 0.3),
+                           linestyle=style_params.get('grid_style', '--'),
+                           linewidth=style_params.get('grid_width', 0.5))
+                
+                # Apply title styling
+                if hasattr(ax, 'title'):
+                    title = ax.get_title()
+                    if title:
+                        ax.set_title(title, 
+                                    fontsize=style_params.get('title_font_size', 16),
+                                    fontweight=style_params.get('title_weight', 'bold'),
+                                    color=style_params.get('title_color', 'black'))
+                
+                # Apply label styling
+                if ax.get_xlabel():
+                    ax.set_xlabel(ax.get_xlabel(),
+                                 fontsize=style_params.get('label_font_size', 14),
+                                 fontweight=style_params.get('label_weight', 'bold'))
+                if ax.get_ylabel():
+                    ax.set_ylabel(ax.get_ylabel(),
+                                 fontsize=style_params.get('label_font_size', 14),
+                                 fontweight=style_params.get('label_weight', 'bold'))
+        
+        # Apply figure background
+        if style_params.get('figure_facecolor'):
+            fig.set_facecolor(style_params['figure_facecolor'])
+        
+        # Tight layout
+        # fig.tight_layout(rect=[0, 0, 1, 0.95])  # Removed to avoid conflict with constrained_layout
+        
+        return fig
+    
+    @staticmethod
+    def get_styling_controls():
+        """Get comprehensive styling controls"""
+        style_params = {}
+        
+        st.sidebar.header("🎨 Advanced Post-Processing")
+        
+        with st.sidebar.expander("📐 Font & Text Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['title_font_size'] = st.slider("Title Size", 8, 32, 16)
+                style_params['label_font_size'] = st.slider("Label Size", 8, 28, 14)
+                style_params['tick_font_size'] = st.slider("Tick Size", 6, 20, 12)
+            with col2:
+                style_params['title_weight'] = st.selectbox("Title Weight", 
+                                                           ['normal', 'bold', 'light', 'semibold'], 
+                                                           index=1)
+                style_params['label_weight'] = st.selectbox("Label Weight", 
+                                                           ['normal', 'bold', 'light'], 
+                                                           index=1)
+                style_params['title_color'] = st.color_picker("Title Color", "#000000")
+        
+        with st.sidebar.expander("📏 Line & Border Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['line_width'] = st.slider("Line Width", 0.5, 5.0, 2.0, 0.5)
+                style_params['spine_width'] = st.slider("Spine Width", 1.0, 4.0, 2.5, 0.5)
+                style_params['tick_width'] = st.slider("Tick Width", 0.5, 3.0, 2.0, 0.5)
+            with col2:
+                style_params['tick_length'] = st.slider("Tick Length", 2, 15, 6)
+                style_params['spine_color'] = st.color_picker("Spine Color", "#000000")
+                style_params['grid_width'] = st.slider("Grid Width", 0.1, 2.0, 0.5, 0.1)
+        
+        with st.sidebar.expander("🌐 Grid & Background", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['show_grid'] = st.checkbox("Show Grid", True)
+                style_params['grid_style'] = st.selectbox("Grid Style", 
+                                                         ['-', '--', '-.', ':'],
+                                                         index=1)
+                style_params['grid_alpha'] = st.slider("Grid Alpha", 0.0, 1.0, 0.3, 0.05)
+            with col2:
+                style_params['figure_facecolor'] = st.color_picker("Figure Background", "#FFFFFF")
+                style_params['axes_facecolor'] = st.color_picker("Axes Background", "#FFFFFF")
+        
+        with st.sidebar.expander("📊 Legend & Annotation", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['legend_fontsize'] = st.slider("Legend Size", 8, 20, 12)
+                style_params['legend_location'] = st.selectbox("Legend Location",
+                                                              ['best', 'upper right', 'upper left', 
+                                                               'lower right', 'lower left', 'center'],
+                                                              index=0)
+            with col2:
+                style_params['show_legend'] = st.checkbox("Show Legend", True)
+                style_params['legend_frame'] = st.checkbox("Legend Frame", True)
+        
+        with st.sidebar.expander("🎨 Colorbar Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['colorbar_fontsize'] = st.slider("Colorbar Font", 8, 20, 12)
+                style_params['colorbar_width'] = st.slider("Colorbar Width", 0.2, 1.0, 0.6, 0.05)
+            with col2:
+                style_params['colorbar_shrink'] = st.slider("Colorbar Shrink", 0.5, 1.0, 0.8, 0.05)
+                style_params['colorbar_pad'] = st.slider("Colorbar Pad", 0.0, 0.2, 0.05, 0.01)
+        
+        return style_params
+
+# =============================================
+# ENHANCED FIGURE STYLER WITH PUBLICATION FEATURES
+# =============================================
+class EnhancedFigureStyler(FigureStyler):
+    """Extended figure styler with publication-quality enhancements"""
+    
+    @staticmethod
+    def apply_publication_styling(fig, axes, style_params):
+        """Apply enhanced publication styling"""
+        # Apply base styling
+        fig = FigureStyler.apply_advanced_styling(fig, axes, style_params)
+        
+        # Get axes list
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
+        
+        # Enhanced styling for each axis
+        for ax in axes_flat:
+            if ax is not None:
+                # Set scientific notation for large/small numbers
+                try:
+                    ax.ticklabel_format(axis='y', style='sci', scilimits=(-3, 3), useMathText=True)
+                except AttributeError:
+                    pass
+                try:
+                    ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 3), useMathText=True)
+                except AttributeError:
+                    pass
+                
+                # Add minor ticks
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+                ax.yaxis.set_minor_locator(AutoMinorLocator())
+                
+                # Set tick parameters
+                ax.tick_params(which='both', direction='in', top=True, right=True)
+                ax.tick_params(which='major', length=6, width=style_params.get('tick_width', 1.0))
+                ax.tick_params(which='minor', length=3, width=style_params.get('tick_width', 1.0) * 0.5)
+                
+                # Format axis labels with LaTeX
+                if style_params.get('use_latex', False):
+                    xlabel = ax.get_xlabel()
+                    ylabel = ax.get_ylabel()
+                    if xlabel:
+                        ax.set_xlabel(f'${xlabel}$')
+                    if ylabel:
+                        ax.set_ylabel(f'${ylabel}$')
+        
+        # Adjust layout
+        fig.set_constrained_layout(True)
+        
+        return fig
+    
+    @staticmethod
+    def get_publication_controls():
+        """Get enhanced publication styling controls"""
+        style_params = FigureStyler.get_styling_controls()
+        
+        st.sidebar.header("📰 Publication-Quality Settings")
+        
+        with st.sidebar.expander("🎯 Journal Templates", expanded=False):
+            journal = st.selectbox(
+                "Journal Style",
+                ["Nature", "Science", "Advanced Materials", "Physical Review Letters", "Custom"],
+                index=0,
+                key="pub_journal_style"
+            )
             
-            # Probe tip (only if line has length)
-            tip_length = np.sqrt((x1-x0)**2 + (y1-y0)**2) * 0.1
-            if tip_length > 0:
-                tip_angle = np.deg2rad(angle)
-                
-                # Create triangular tip
-                tip_x = [x1, 
-                        x1 - tip_length * np.cos(tip_angle + np.pi/6),
-                        x1 - tip_length * np.cos(tip_angle - np.pi/6),
-                        x1]
-                tip_y = [y1,
-                        y1 - tip_length * np.sin(tip_angle + np.pi/6),
-                        y1 - tip_length * np.sin(tip_angle - np.pi/6),
-                        y1]
-                
-                ax.fill(tip_x, tip_y,
-                       color='red',
-                       alpha=0.7,
-                       edgecolor='white',
-                       linewidth=2)
+            style_params['journal_style'] = journal.lower()
+            style_params['use_latex'] = st.checkbox("Use LaTeX Formatting", False, key="pub_use_latex")
+            style_params['vector_output'] = st.checkbox("Enable Vector Export (PDF/SVG)", True, key="pub_vector_export")
+        
+        with st.sidebar.expander("📐 Advanced Layout", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['layout_pad'] = st.slider("Layout Padding", 0.5, 3.0, 1.0, 0.1,
+                                                       key="pub_layout_pad")
+                style_params['wspace'] = st.slider("Horizontal Spacing", 0.1, 1.0, 0.3, 0.05,
+                                                   key="pub_wspace")
+            with col2:
+                style_params['hspace'] = st.slider("Vertical Spacing", 0.1, 1.0, 0.4, 0.05,
+                                                   key="pub_hspace")
+                style_params['figure_dpi'] = st.select_slider(
+                    "Figure DPI", 
+                    options=[150, 300, 600, 1200], 
+                    value=600,
+                    key="pub_figure_dpi"
+                )
+        
+        with st.sidebar.expander("📈 Enhanced Plot Features", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['show_minor_ticks'] = st.checkbox("Show Minor Ticks", True,
+                                                               key="pub_minor_ticks")
+                style_params['show_error_bars'] = st.checkbox("Show Error Bars", True,
+                                                              key="pub_error_bars")
+                style_params['show_confidence'] = st.checkbox("Show Confidence Intervals", False,
+                                                              key="pub_confidence")
+            with col2:
+                style_params['grid_style'] = st.selectbox(
+                    "Grid Style", 
+                    ['-', '--', '-.', ':'],
+                    index=1,
+                    key="pub_grid_style"
+                )
+                style_params['grid_zorder'] = st.slider("Grid Z-Order", 0, 10, 0,
+                                                        key="pub_grid_zorder")
+        
+        with st.sidebar.expander("🎨 Enhanced Color Settings", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['colorbar_extend'] = st.selectbox(
+                    "Colorbar Extend", 
+                    ['neither', 'both', 'min', 'max'],
+                    index=0,
+                    key="pub_colorbar_extend"
+                )
+                style_params['colorbar_format'] = st.selectbox(
+                    "Colorbar Format", 
+                    ['auto', 'sci', 'plain'],
+                    index=0,
+                    key="pub_colorbar_format"
+                )
+            with col2:
+                style_params['cmap_normalization'] = st.selectbox(
+                    "Colormap Normalization",
+                    ['linear', 'log', 'power'],
+                    index=0,
+                    key="pub_cmap_normalization"
+                )
+                if style_params['cmap_normalization'] == 'power':
+                    style_params['gamma'] = st.slider("Gamma", 0.1, 3.0, 1.0, 0.1,
+                                                      key="pub_gamma")
+        
+        return style_params
+
+# =============================================
+# ADVANCED PLOTTING ENHANCEMENTS
+# =============================================
+class PublicationEnhancer:
+    """Advanced plotting enhancements for publication-quality figures"""
+    
+    @staticmethod
+    def create_custom_colormaps():
+        """Create enhanced scientific colormaps"""
+        from matplotlib.colors import LinearSegmentedColormap, ListedColormap
+        
+        # Perceptually uniform sequential
+        plasma_enhanced = LinearSegmentedColormap.from_list('plasma_enhanced', [
+            (0.0, '#0c0887'),
+            (0.1, '#4b03a1'),
+            (0.3, '#8b0aa5'),
+            (0.5, '#b83289'),
+            (0.7, '#db5c68'),
+            (0.9, '#f48849'),
+            (1.0, '#fec325')
+        ])
+        
+        # Diverging with better contrast
+        coolwarm_enhanced = LinearSegmentedColormap.from_list('coolwarm_enhanced', [
+            (0.0, '#3a4cc0'),
+            (0.25, '#8abcdd'),
+            (0.5, '#f7f7f7'),
+            (0.75, '#f0b7a4'),
+            (1.0, '#b40426')
+        ])
+        
+        # Categorical for defect types
+        defect_categorical = ListedColormap([
+            '#1f77b4',  # ISF - Blue
+            '#ff7f0e',  # ESF - Orange
+            '#2ca02c',  # Twin - Green
+            '#d62728',  # Red
+            '#9467bd',  # Purple
+            '#8c564b'   # Brown
+        ])
+        
+        # Stress-specific colormap
+        stress_map = LinearSegmentedColormap.from_list('stress_map', [
+            (0.0, '#2c7bb6'),
+            (0.2, '#abd9e9'),
+            (0.4, '#ffffbf'),
+            (0.6, '#fdae61'),
+            (0.8, '#d7191c'),
+            (1.0, '#800026')
+        ])
+        
+        return {
+            'plasma_enhanced': plasma_enhanced,
+            'coolwarm_enhanced': coolwarm_enhanced,
+            'defect_categorical': defect_categorical,
+            'stress_map': stress_map
+        }
+    
+    @staticmethod
+    def add_error_shading(ax, x, y_mean, y_std, color='blue', alpha=0.3, label=''):
+        """Add error shading to line plots"""
+        ax.fill_between(x, y_mean - y_std, y_mean + y_std, 
+                       color=color, alpha=alpha, label=label + ' ± std')
+        return ax
+    
+    @staticmethod
+    def add_confidence_band(ax, x, y_data, confidence=0.95, color='blue', alpha=0.2):
+        """Add confidence band to line plots"""
+        y_mean = np.mean(y_data, axis=0)
+        y_std = np.std(y_data, axis=0)
+        n = len(y_data)
+        t_val = stats.t.ppf((1 + confidence) / 2, n - 1)
+        y_err = t_val * y_std / np.sqrt(n)
+        
+        ax.fill_between(x, y_mean - y_err, y_mean + y_err, 
+                       color=color, alpha=alpha, label=f'{int(confidence*100)}% CI')
+        return ax, y_mean, y_err
+    
+    @staticmethod
+    def add_scale_bar(ax, length_nm, location='lower right', color='black', linewidth=2):
+        """Add scale bar to microscopy-style images"""
+        if location == 'lower right':
+            x_pos = 0.95
+            y_pos = 0.05
+            ha = 'right'
+            va = 'bottom'
+        elif location == 'lower left':
+            x_pos = 0.05
+            y_pos = 0.05
+            ha = 'left'
+            va = 'bottom'
+        elif location == 'upper right':
+            x_pos = 0.95
+            y_pos = 0.95
+            ha = 'right'
+            va = 'top'
+        else:
+            x_pos = 0.05
+            y_pos = 0.95
+            ha = 'left'
+            va = 'top'
+        
+        # Convert to axis coordinates
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        x_range = xlim[1] - xlim[0]
+        y_range = ylim[1] - ylim[0]
+        
+        # Bar position in data coordinates
+        bar_x_start = xlim[1] - x_range * 0.15
+        bar_x_end = bar_x_start - length_nm
+        bar_y = ylim[0] + y_range * 0.05
+        
+        # Draw scale bar
+        ax.plot([bar_x_start, bar_x_end], [bar_y, bar_y], 
+               color=color, linewidth=linewidth, solid_capstyle='butt')
+        
+        # Add text
+        ax.text((bar_x_start + bar_x_end) / 2, bar_y + y_range * 0.02,
+               f'{length_nm} nm', ha='center', va='bottom',
+               color=color, fontsize=8, fontweight='bold')
         
         return ax
     
     @staticmethod
-    def analyze_line_profiles(profiles_dict):
-        """Analyze extracted line profiles and compute statistics"""
-        analysis = {}
-        
-        for angle, profile_data in profiles_dict.items():
-            profile = profile_data['profile']
-            
-            if len(profile) > 0 and not np.all(np.isnan(profile)):
-                stats_dict = {
-                    'mean': np.nanmean(profile),
-                    'std': np.nanstd(profile),
-                    'min': np.nanmin(profile),
-                    'max': np.nanmax(profile),
-                    'range': np.nanmax(profile) - np.nanmin(profile),
-                    'gradient': np.mean(np.abs(np.gradient(profile))),
-                    'integral': np.trapz(profile, profile_data['distances']),
-                    'peak_position': profile_data['distances'][np.argmax(np.abs(profile))],
-                    'fwhm': LineProfileAnalyzer.calculate_fwhm(profile_data['distances'], profile)
-                }
-                
-                # Detect peaks
-                peaks = LineProfileAnalyzer.find_peaks(profile)
-                stats_dict['n_peaks'] = len(peaks)
-                stats_dict['peaks'] = peaks
-                
-                analysis[angle] = stats_dict
-        
-        return analysis
+    def create_fancy_legend(ax, lines, labels, **kwargs):
+        """Create enhanced legend with better formatting"""
+        legend = ax.legend(lines, labels, **kwargs)
+        legend.get_frame().set_linewidth(0.5)
+        legend.get_frame().set_alpha(0.9)
+        return legend
     
     @staticmethod
-    def calculate_fwhm(distances, profile):
-        """Calculate Full Width at Half Maximum with validation"""
-        if len(profile) == 0 or np.all(np.isnan(profile)):
-            return 0
-        
-        try:
-            half_max = (np.max(profile) + np.min(profile)) / 2
-            above_half = profile > half_max
-            
-            if np.any(above_half):
-                indices = np.where(above_half)[0]
-                if len(indices) > 1:
-                    return distances[indices[-1]] - distances[indices[0]]
-            return 0
-        except:
-            return 0
-    
-    @staticmethod
-    def find_peaks(profile, min_distance=5, prominence=0.1):
-        """Find peaks in profile using scipy with error handling"""
-        from scipy.signal import find_peaks
-        
-        if len(profile) < min_distance or np.all(np.isnan(profile)):
-            return []
-        
-        try:
-            peaks, properties = find_peaks(profile, 
-                                          distance=min_distance,
-                                          prominence=prominence)
-            
-            return peaks.tolist()
-        except:
-            return []
-
-# =============================================
-# ENHANCED LINE PROFILE VISUALIZATION (FIXED)
-# =============================================
-class AdvancedLineProfileVisualizer:
-    """Enhanced visualization for line profiles with robust overlay capabilities"""
-    
-    @staticmethod
-    def create_stress_overlay_plot(data_dict, profiles_dict, 
-                                   title="Stress Overlay Analysis",
-                                   style_params=None):
-        """
-        Create overlay plot showing stress field with multiple line profiles
-        FIXED: Proper coordinate transformation for overlay alignment
-        """
-        if style_params is None:
-            style_params = {}
-        
-        # Create figure with subplots
-        fig = plt.figure(figsize=(16, 12))
-        fig.suptitle(title, fontsize=16, fontweight='bold', y=0.95)
-        
-        # Define subplot layout
-        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
-        
-        # Main stress map with probe indicators
-        ax1 = fig.add_subplot(gs[0:2, 0:2])
-        
-        # Individual profile plots
-        ax2 = fig.add_subplot(gs[0, 2])  # Horizontal profile
-        ax3 = fig.add_subplot(gs[1, 2])  # Vertical profile
-        ax4 = fig.add_subplot(gs[2, 0])  # 45° diagonal
-        ax5 = fig.add_subplot(gs[2, 1])  # 135° diagonal
-        
-        # Statistics panel
-        ax6 = fig.add_subplot(gs[2, 2])
-        ax6.axis('off')
-        
-        # Extract stress data
-        stress_data = data_dict.get('stress_mag', None)
-        if stress_data is None and 'stress_fields' in data_dict:
-            stress_data = data_dict['stress_fields'].get('sigma_mag', None)
-        
-        # Plot 1: Main stress map with all probe lines
-        if stress_data is not None:
-            # Plot stress field
-            cmap_name = style_params.get('stress_cmap', 'hot')
-            cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'hot'))
-            im = ax1.imshow(stress_data, extent=extent,
-                           cmap=cmap,
-                           origin='lower',
-                           aspect='auto',
-                           interpolation='bilinear')
-            
-            # Add all probe lines with proper coordinate transformation
-            probe_styles = ['realistic', 'arrow', 'nanoprobe', 'rectangle']
-            colors = ['yellow', 'cyan', 'magenta', 'lime']
-            
-            for idx, (angle, profile_data) in enumerate(profiles_dict.items()):
-                if angle in profiles_dict:
-                    style = probe_styles[idx % len(probe_styles)]
-                    color = colors[idx % len(colors)]
-                    
-                    LineProfileAnalyzer.create_probe_line_indicator(
-                        ax1, profile_data,
-                        style=style,
-                        line_color=color,
-                        line_width=style_params.get('probe_width', 2),
-                        endpoint_color=color,
-                        shadow=True,
-                        extent=extent  # Pass extent for coordinate transformation
-                    )
-            
-            ax1.set_title("Stress Field with Probe Lines", fontsize=12, fontweight='bold')
-            ax1.set_xlabel("x (nm)", fontsize=10)
-            ax1.set_ylabel("y (nm)", fontsize=10)
-            ax1.set_xlim(extent[0], extent[1])
-            ax1.set_ylim(extent[2], extent[3])
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax1, shrink=0.8)
-            cbar.set_label('Stress (GPa)', fontsize=9)
-        
-        # Plot individual profiles
-        axes_profiles = [ax2, ax3, ax4, ax5]
-        orientations = [0, 90, 45, 135]  # Standard orientations
-        
-        for ax, orientation in zip(axes_profiles, orientations):
-            if orientation in profiles_dict:
-                profile_data = profiles_dict[orientation]
-                distances = profile_data['distances']
-                profile = profile_data['profile']
-                
-                # Convert normalized distances to nm
-                actual_distances = distances * profile_data['length'] * dx
-                
-                # Ensure we have valid data
-                if len(actual_distances) > 0 and len(profile) > 0:
-                    # Sort distances if needed
-                    sort_idx = np.argsort(actual_distances)
-                    actual_distances = actual_distances[sort_idx]
-                    profile = profile[sort_idx]
-                    
-                    ax.plot(actual_distances, profile,
-                           linewidth=style_params.get('profile_linewidth', 2),
-                           color=style_params.get('profile_color', 'blue'),
-                           alpha=0.8)
-                    
-                    # Add fill under curve
-                    ax.fill_between(actual_distances, 0, profile,
-                                   alpha=0.3,
-                                   color=style_params.get('fill_color', 'blue'))
-                    
-                    # Add statistics text
-                    if len(profile) > 0:
-                        stats_text = f"Max: {np.nanmax(profile):.2f} GPa\n" \
-                                   f"Min: {np.nanmin(profile):.2f} GPa\n" \
-                                   f"Mean: {np.nanmean(profile):.2f} GPa"
-                        
-                        ax.text(0.05, 0.95, stats_text,
-                               transform=ax.transAxes,
-                               fontsize=8,
-                               verticalalignment='top',
-                               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                    
-                    ax.set_title(f"{orientation}° Profile", fontsize=10, fontweight='bold')
-                    ax.set_xlabel("Distance (nm)", fontsize=9)
-                    ax.set_ylabel("Stress (GPa)", fontsize=9)
-                    ax.grid(True, alpha=0.3, linestyle='--')
-                    
-                    # Set reasonable x-axis limits
-                    if len(actual_distances) > 1:
-                        ax.set_xlim(actual_distances[0], actual_distances[-1])
-        
-        # Plot 6: Statistics table
-        analysis = LineProfileAnalyzer.analyze_line_profiles(profiles_dict)
-        
-        if analysis:
-            # Create table data
-            table_data = []
-            columns = ['Angle', 'Mean', 'Std', 'Min', 'Max', 'Range', 'Peaks']
-            
-            for angle, stats in analysis.items():
-                table_data.append([
-                    f"{angle}°",
-                    f"{stats.get('mean', 0):.3f}",
-                    f"{stats.get('std', 0):.3f}",
-                    f"{stats.get('min', 0):.3f}",
-                    f"{stats.get('max', 0):.3f}",
-                    f"{stats.get('range', 0):.3f}",
-                    f"{stats.get('n_peaks', 0)}"
-                ])
-            
-            # Create table
-            if table_data:
-                table = ax6.table(cellText=table_data,
-                                 colLabels=columns,
-                                 cellLoc='center',
-                                 loc='center',
-                                 colColours=['#f2f2f2']*len(columns))
-                
-                table.auto_set_font_size(False)
-                table.set_fontsize(9)
-                table.scale(1.2, 1.5)
-                
-                ax6.set_title("Profile Statistics", fontsize=11, fontweight='bold')
-        
-        return fig
-
-# =============================================
-# ENHANCED PUBLICATION-QUALITY PLOTTING
-# =============================================
-def create_publication_quality_plot(sim_data, frame_idx, profile_config, style_params):
-    """
-    Create publication-quality plot with properly aligned overlays
-    """
-    # Extract data
-    eta, stress_fields = sim_data['history'][frame_idx]
-    stress_component = profile_config.get('stress_component', 'Stress Magnitude |σ|')
-    
-    # Map stress component
-    stress_map = {
-        "Stress Magnitude |σ|": 'sigma_mag',
-        "Hydrostatic σ_h": 'sigma_hydro',
-        "von Mises σ_vM": 'von_mises'
-    }
-    stress_key = stress_map.get(stress_component, 'sigma_mag')
-    stress_data = stress_fields[stress_key]
-    
-    # Extract line profiles
-    center_x = profile_config.get('center_x', N//2)
-    center_y = profile_config.get('center_y', N//2)
-    length = profile_config.get('length', 80)
-    orientations = profile_config.get('orientations', [0, 45, 90, 135])
-    
-    # Validate center coordinates
-    center_x = max(0, min(N-1, center_x))
-    center_y = max(0, min(N-1, center_y))
-    
-    profiles = LineProfileAnalyzer.get_line_profiles(
-        stress_data, center_x, center_y, length, orientations
-    )
-    
-    # Create figure
-    fig = plt.figure(figsize=(14, 10))
-    
-    # Define layout
-    gs = fig.add_gridspec(3, 3, hspace=0.25, wspace=0.25,
-                         height_ratios=[1, 1, 0.5])
-    
-    # Main stress map
-    ax_main = fig.add_subplot(gs[0:2, 0:2])
-    
-    # Profile plots
-    ax_profiles = []
-    for i in range(4):
-        ax_profiles.append(fig.add_subplot(gs[i//2, 2 + (i%2)]))
-    
-    # Statistics table
-    ax_stats = fig.add_subplot(gs[2, :])
-    ax_stats.axis('off')
-    
-    # Plot main stress map
-    cmap_name = sim_data['params'].get('sigma_cmap', 'hot')
-    cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'hot'))
-    
-    im = ax_main.imshow(stress_data, extent=extent,
-                       cmap=cmap,
-                       origin='lower',
-                       aspect='auto',
-                       interpolation='bilinear')
-    
-    # Add probe lines
-    colors = ['#FFD700', '#00FFFF', '#FF00FF', '#32CD32']  # Gold, Cyan, Magenta, Lime
-    for idx, (angle, profile_data) in enumerate(profiles.items()):
-        LineProfileAnalyzer.create_probe_line_indicator(
-            ax_main, profile_data,
-            style='realistic',
-            line_color=colors[idx % len(colors)],
-            line_width=2.5,
-            endpoint_color=colors[idx % len(colors)],
-            shadow=True,
-            extent=extent
-        )
-    
-    ax_main.set_title(f"{sim_data['params']['defect_type']} - {stress_component}",
-                     fontsize=14, fontweight='bold', pad=10)
-    ax_main.set_xlabel("x (nm)", fontsize=12)
-    ax_main.set_ylabel("y (nm)", fontsize=12)
-    
-    # Add scale bar
-    scale_length = 10.0  # 10 nm
-    scale_y = extent[2] + 0.9 * (extent[3] - extent[2])
-    ax_main.plot([extent[0] + 5, extent[0] + 5 + scale_length],
-                 [scale_y, scale_y],
-                 color='white', linewidth=3, zorder=20)
-    ax_main.text(extent[0] + 5 + scale_length/2, scale_y - 1,
-                f'{scale_length} nm', color='white',
-                ha='center', va='top', fontsize=10,
-                bbox=dict(boxstyle='round,pad=0.2', facecolor='black', alpha=0.7))
-    
-    # Colorbar
-    cbar = plt.colorbar(im, ax=ax_main, shrink=0.8, pad=0.02)
-    cbar.set_label('Stress (GPa)', fontsize=11)
-    cbar.ax.tick_params(labelsize=10)
-    
-    # Plot individual profiles
-    for idx, (ax, orientation) in enumerate(zip(ax_profiles, orientations)):
-        if orientation in profiles:
-            profile_data = profiles[orientation]
-            distances = profile_data['distances']
-            profile = profile_data['profile']
-            
-            # Convert to physical distances
-            actual_distances = distances * length * dx
-            
-            # Sort for clean plotting
-            sort_idx = np.argsort(actual_distances)
-            actual_distances = actual_distances[sort_idx]
-            profile = profile[sort_idx]
-            
-            ax.plot(actual_distances, profile,
-                   color=colors[idx],
-                   linewidth=2.5,
-                   alpha=0.9,
-                   marker='o',
-                   markersize=3,
-                   markevery=10)
-            
-            # Add fill
-            ax.fill_between(actual_distances, 0, profile,
-                           alpha=0.2, color=colors[idx])
-            
-            # Add statistics
-            if len(profile) > 0:
-                stats = {
-                    'max': np.nanmax(profile),
-                    'min': np.nanmin(profile),
-                    'mean': np.nanmean(profile),
-                    'fwhm': LineProfileAnalyzer.calculate_fwhm(distances, profile)
-                }
-                
-                stats_text = f"Max: {stats['max']:.2f} GPa\n" \
-                           f"Min: {stats['min']:.2f} GPa\n" \
-                           f"FWHM: {stats['fwhm']:.2f}"
-                
-                ax.text(0.05, 0.95, stats_text,
-                       transform=ax.transAxes,
-                       fontsize=9,
-                       verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-            
-            ax.set_title(f"{orientation}° Orientation", fontsize=12, fontweight='bold')
-            ax.set_xlabel("Distance (nm)", fontsize=11)
-            ax.set_ylabel("Stress (GPa)", fontsize=11)
-            ax.grid(True, alpha=0.2, linestyle='--')
-            ax.tick_params(axis='both', which='major', labelsize=10)
-            
-            # Set limits
-            if len(actual_distances) > 1:
-                ax.set_xlim(actual_distances[0], actual_distances[-1])
-    
-    # Add statistics table
-    analysis = LineProfileAnalyzer.analyze_line_profiles(profiles)
-    if analysis:
-        table_data = []
-        for angle, stats in analysis.items():
-            table_data.append([
-                f"{angle}°",
-                f"{stats.get('mean', 0):.3f}",
-                f"{stats.get('std', 0):.3f}",
-                f"{stats.get('min', 0):.3f}",
-                f"{stats.get('max', 0):.3f}",
-                f"{stats.get('range', 0):.3f}",
-                f"{stats.get('fwhm', 0):.3f}",
-                f"{stats.get('n_peaks', 0)}"
-            ])
-        
-        columns = ['Angle', 'Mean', 'Std', 'Min', 'Max', 'Range', 'FWHM', 'Peaks']
-        
-        if table_data:
-            table = ax_stats.table(cellText=table_data,
-                                  colLabels=columns,
-                                  cellLoc='center',
-                                  loc='center',
-                                  colColours=['#4A90E2']*len(columns))
-            
-            table.auto_set_font_size(False)
-            table.set_fontsize(10)
-            table.scale(1.5, 2.0)
-            
-            # Style table cells
-            for key, cell in table.get_celld().items():
-                if key[0] == 0:  # Header row
-                    cell.set_text_props(fontweight='bold', color='white')
-                    cell.set_facecolor('#4A90E2')
-                else:
-                    cell.set_facecolor('#F7F7F7')
-            
-            ax_stats.set_title("Comprehensive Profile Statistics",
-                             fontsize=13, fontweight='bold', pad=20)
-    
-    plt.suptitle(f"Publication-Quality Analysis: {sim_data['params']['defect_type']} Defect",
-                fontsize=16, fontweight='bold', y=0.98)
-    
-    # Apply tight layout
-    plt.tight_layout()
-    
-    return fig
+    def add_annotations(ax, annotations, arrowstyle='->', **kwargs):
+        """Add professional annotations with arrows"""
+        for ann in annotations:
+            ax.annotate(ann['text'], xy=ann['xy'], xytext=ann['xytext'],
+                       arrowprops=dict(arrowstyle=arrowstyle, **kwargs),
+                       **{k: v for k, v in ann.items() if k not in ['text', 'xy', 'xytext']})
+        return ax
 
 # =============================================
 # SIMULATION DATABASE SYSTEM (Session State)
@@ -931,11 +975,14 @@ class SimulationDB:
         return simulations
 
 # =============================================
-# SIDEBAR - Global Settings
+# SIDEBAR - Global Settings (Available in Both Modes)
 # =============================================
 st.sidebar.header("🎨 Global Chart Styling")
 
-# Color maps selection
+# Get enhanced publication controls
+advanced_styling = EnhancedFigureStyler.get_publication_controls()
+
+# Color maps selection (available in both modes for consistency)
 st.sidebar.subheader("Default Colormap Selection")
 eta_cmap_name = st.sidebar.selectbox("Default η colormap", cmap_list, index=cmap_list.index('viridis'))
 sigma_cmap_name = st.sidebar.selectbox("Default |σ| colormap", cmap_list, index=cmap_list.index('hot'))
@@ -957,20 +1004,41 @@ operation_mode = st.sidebar.radio(
 if operation_mode == "Run New Simulation":
     st.sidebar.header("🎛️ New Simulation Setup")
     
+    # Custom CSS for larger slider labels
+    st.markdown("""
+    <style>
+        .stSlider label {
+            font-size: 16px !important;
+            font-weight: 600 !important;
+        }
+        .stSelectbox label {
+            font-size: 16px !important;
+            font-weight: 600 !important;
+        }
+        .stNumberInput label {
+            font-size: 14px !important;
+            font-weight: 600 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
     defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
     
     # Physical eigenstrain values
     if defect_type == "ISF":
         default_eps = 0.707
         default_kappa = 0.6
+        init_amplitude = 0.70
         caption = "Intrinsic Stacking Fault"
     elif defect_type == "ESF":
         default_eps = 1.414
         default_kappa = 0.7
+        init_amplitude = 0.75
         caption = "Extrinsic Stacking Fault"
     else:  # Twin
         default_eps = 2.121
         default_kappa = 0.3
+        init_amplitude = 0.90
         caption = "Coherent Twin Boundary"
     
     st.sidebar.info(f"**{caption}**")
@@ -979,8 +1047,20 @@ if operation_mode == "Run New Simulation":
         ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
     
     # Enhanced sliders
-    eps0 = st.sidebar.slider("Eigenstrain magnitude ε*", 0.3, 3.0, value=default_eps, step=0.01)
-    kappa = st.sidebar.slider("Interface energy coeff κ", 0.1, 2.0, value=default_kappa, step=0.05)
+    eps0 = st.sidebar.slider(
+        "Eigenstrain magnitude ε*",
+        0.3, 3.0,
+        value=default_eps,
+        step=0.01
+    )
+    
+    kappa = st.sidebar.slider(
+        "Interface energy coeff κ",
+        0.1, 2.0,
+        value=default_kappa,
+        step=0.05
+    )
+    
     steps = st.sidebar.slider("Evolution steps", 20, 200, 100, 10)
     save_every = st.sidebar.slider("Save frame every", 10, 50, 20)
     
@@ -1010,34 +1090,16 @@ if operation_mode == "Run New Simulation":
     
     st.sidebar.info(f"Selected tilt: **{np.rad2deg(theta):.1f}°** from horizontal")
     
-    # Visualization settings
+    # Visualization settings - Individual for this simulation
     st.sidebar.subheader("Simulation-Specific Colormaps")
-    sim_eta_cmap_name = st.sidebar.selectbox("η colormap", cmap_list, index=cmap_list.index(eta_cmap_name))
-    sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap", cmap_list, index=cmap_list.index(sigma_cmap_name))
-    sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap", cmap_list, index=cmap_list.index(hydro_cmap_name))
-    sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap", cmap_list, index=cmap_list.index(vm_cmap_name))
-    
-    # Line profile settings for new simulation
-    with st.sidebar.expander("📐 Line Profile Settings", expanded=True):
-        st.subheader("Line Profile Configuration")
-        
-        center_x = st.slider("Center X (grid units)", 0, N-1, N//2, key="new_center_x")
-        center_y = st.slider("Center Y (grid units)", 0, N-1, N//2, key="new_center_y")
-        length = st.slider("Line Length (grid units)", 20, 120, 80, key="new_length")
-        
-        orientations = st.multiselect(
-            "Select orientations",
-            options=[0, 45, 90, 135],
-            default=[0, 90],
-            key="new_orientations"
-        )
-        
-        probe_style = st.selectbox(
-            "Probe Style",
-            ["realistic", "arrow", "nanoprobe", "rectangle"],
-            index=0,
-            key="new_probe_style"
-        )
+    sim_eta_cmap_name = st.sidebar.selectbox("η colormap for this sim", cmap_list, 
+                                           index=cmap_list.index(eta_cmap_name))
+    sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(sigma_cmap_name))
+    sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(hydro_cmap_name))
+    sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap for this sim", cmap_list, 
+                                          index=cmap_list.index(vm_cmap_name))
     
     # Run button
     if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
@@ -1056,57 +1118,9 @@ if operation_mode == "Run New Simulation":
             'hydro_cmap': sim_hydro_cmap_name,
             'vm_cmap': sim_vm_cmap_name
         }
-        st.session_state.profile_config = {
-            'center_x': center_x,
-            'center_y': center_y,
-            'length': length,
-            'orientations': orientations,
-            'probe_style': probe_style
-        }
 
 else:  # Compare Saved Simulations
     st.sidebar.header("🔍 Simulation Comparison Setup")
-    
-    # Line Profile Analysis Settings
-    with st.sidebar.expander("📐 Line Profile Analysis Settings", expanded=True):
-        st.subheader("Probe Line Configuration")
-        
-        selected_orientations = st.multiselect(
-            "Select Line Orientations",
-            options=["Horizontal (0°)", "Vertical (90°)", "Diagonal (45°)", 
-                    "Anti-diagonal (135°)", "Custom Angle"],
-            default=["Horizontal (0°)", "Vertical (90°)", "Diagonal (45°)"]
-        )
-        
-        custom_angle = None
-        if "Custom Angle" in selected_orientations:
-            custom_angle = st.slider("Custom Angle (°)", -180, 180, 30, 5)
-        
-        probe_length = st.slider("Probe Line Length (grid units)", 20, 120, 80, 5)
-        
-        probe_style = st.selectbox(
-            "Probe Line Indicator Style",
-            ["realistic", "arrow", "rectangle", "nanoprobe"],
-            index=0
-        )
-        
-        show_all_profiles = st.checkbox("Show all profiles on main plot", True)
-        profile_linewidth = st.slider("Profile Line Width", 1.0, 5.0, 2.0, 0.5)
-        
-        # Extract numeric angles
-        orientation_map = {
-            "Horizontal (0°)": 0,
-            "Vertical (90°)": 90,
-            "Diagonal (45°)": 45,
-            "Anti-diagonal (135°)": 135
-        }
-        
-        orientations = []
-        for orient in selected_orientations:
-            if orient in orientation_map:
-                orientations.append(orientation_map[orient])
-            elif orient == "Custom Angle" and custom_angle is not None:
-                orientations.append(custom_angle)
     
     # Get available simulations
     simulations = SimulationDB.get_simulation_list()
@@ -1130,12 +1144,50 @@ else:  # Compare Saved Simulations
         
         comparison_type = st.sidebar.selectbox(
             "Comparison Type",
-            ["Side-by-Side Heatmaps", 
-             "Overlay Line Profiles", 
-             "Multi-Orientation Line Analysis",
-             "Statistical Summary"],
-            index=1  # Default to Overlay Line Profiles
+            ["Side-by-Side Heatmaps", "Overlay Line Profiles", "Radial Profile Comparison", 
+             "Statistical Summary", "Defect-Stress Correlation", "Stress Component Cross-Correlation",
+             "Evolution Timeline", "Contour Comparison", "3D Surface Comparison"],
+            index=0
         )
+        
+        # ENHANCED LINE PROFILE SETTINGS
+        if comparison_type == "Overlay Line Profiles":
+            st.sidebar.subheader("📈 Enhanced Line Profile Settings")
+            
+            # Profile direction selection
+            profile_direction = st.sidebar.selectbox(
+                "Profile Direction",
+                ["Horizontal", "Vertical", "Diagonal", "Anti-Diagonal", "Custom Angle", "Multiple Profiles"],
+                index=0,
+                help="Select line profile direction. 'Multiple Profiles' shows all available profiles."
+            )
+            
+            # Position control
+            position_ratio = st.sidebar.slider(
+                "Profile Position Ratio",
+                0.0, 1.0, 0.5, 0.1,
+                help="Position of profile line relative to center (0 = center, 1 = edge)"
+            )
+            
+            # Custom angle settings
+            if profile_direction == "Custom Angle":
+                custom_angle = st.sidebar.slider(
+                    "Custom Angle (degrees)",
+                    -180.0, 180.0, 45.0, 5.0
+                )
+            else:
+                custom_angle = 45.0
+            
+            # Multiple profile selection
+            if profile_direction == "Multiple Profiles":
+                available_profiles = ["Horizontal", "Vertical", "Diagonal", "Anti-Diagonal"]
+                selected_profiles = st.sidebar.multiselect(
+                    "Select Profiles to Display",
+                    available_profiles,
+                    default=available_profiles[:2]
+                )
+            else:
+                selected_profiles = [profile_direction]
         
         stress_component = st.sidebar.selectbox(
             "Stress Component", 
@@ -1154,16 +1206,42 @@ else:  # Compare Saved Simulations
         else:
             frame_idx = None
         
-        # Publication quality settings
-        st.sidebar.subheader("Publication Quality")
-        enable_publication_quality = st.checkbox("Enable Publication-Quality Output", True)
+        # Comparison-specific styling
+        st.sidebar.subheader("Comparison Styling")
+        comparison_line_style = st.sidebar.selectbox(
+            "Line Style",
+            ["solid", "dashed", "dotted", "dashdot"],
+            index=0
+        )
         
-        if enable_publication_quality:
-            with st.sidebar.expander("Publication Settings"):
-                include_scale_bar = st.checkbox("Include Scale Bar", True)
-                include_statistics = st.checkbox("Include Statistics Table", True)
-                use_vector_fonts = st.checkbox("Use Vector Fonts", True)
-                export_dpi = st.select_slider("Export DPI", options=[300, 600, 1200], value=600)
+        # Additional controls for specific comparison types
+        if comparison_type in ["Defect-Stress Correlation", "Stress Component Cross-Correlation"]:
+            st.sidebar.subheader("Correlation Settings")
+            correlation_x_component = st.sidebar.selectbox(
+                "X-Axis Component",
+                ["Defect Parameter η", "Stress Magnitude |σ|", "Hydrostatic σ_h", "von Mises σ_vM"],
+                index=0 if comparison_type == "Defect-Stress Correlation" else 1
+            )
+            
+            if comparison_type == "Stress Component Cross-Correlation":
+                correlation_y_component = st.sidebar.selectbox(
+                    "Y-Axis Component",
+                    ["Stress Magnitude |σ|", "Hydrostatic σ_h", "von Mises σ_vM"],
+                    index=2
+                )
+            else:
+                correlation_y_component = stress_component
+            
+            correlation_sample_size = st.sidebar.slider("Sample Size (%)", 1, 100, 20, 
+                                                       help="Percentage of data points to use for scatter plots")
+            correlation_alpha = st.sidebar.slider("Point Alpha", 0.1, 1.0, 0.5, 0.05)
+            correlation_point_size = st.sidebar.slider("Point Size", 1, 50, 10)
+        
+        # Contour settings
+        if comparison_type == "Contour Comparison":
+            st.sidebar.subheader("Contour Settings")
+            contour_levels = st.sidebar.slider("Number of Contour Levels", 3, 20, 10)
+            contour_linewidth = st.sidebar.slider("Contour Line Width", 0.5, 3.0, 1.5, 0.1)
         
         # Run comparison
         if st.sidebar.button("🔬 Run Comparison", type="primary"):
@@ -1174,19 +1252,40 @@ else:  # Compare Saved Simulations
                 'stress_component': stress_component,
                 'frame_selection': frame_selection,
                 'frame_idx': frame_idx,
-                'orientations': orientations,
-                'probe_length': probe_length,
-                'probe_style': probe_style,
-                'show_all_profiles': show_all_profiles,
-                'profile_linewidth': profile_linewidth,
-                'publication_quality': enable_publication_quality if 'enable_publication_quality' in locals() else False
+                'line_style': comparison_line_style
             }
+            
+            # Add enhanced line profile config
+            if comparison_type == "Overlay Line Profiles":
+                st.session_state.comparison_config.update({
+                    'profile_direction': profile_direction,
+                    'selected_profiles': selected_profiles,
+                    'position_ratio': position_ratio,
+                    'custom_angle': custom_angle if profile_direction == "Custom Angle" else None
+                })
+            
+            # Add type-specific config
+            if comparison_type in ["Defect-Stress Correlation", "Stress Component Cross-Correlation"]:
+                st.session_state.comparison_config.update({
+                    'correlation_x': correlation_x_component,
+                    'correlation_y': correlation_y_component,
+                    'correlation_sample': correlation_sample_size,
+                    'correlation_alpha': correlation_alpha,
+                    'correlation_point_size': correlation_point_size
+                })
+            
+            if comparison_type == "Contour Comparison":
+                st.session_state.comparison_config.update({
+                    'contour_levels': contour_levels,
+                    'contour_linewidth': contour_linewidth
+                })
 
 # =============================================
 # SIMULATION ENGINE (Reusable Functions)
 # =============================================
 def create_initial_eta(shape, defect_type):
     """Create initial defect configuration"""
+    # Set initial amplitude based on defect type
     amplitudes = {"ISF": 0.70, "ESF": 0.75, "Twin": 0.90}
     init_amplitude = amplitudes[defect_type]
     
@@ -1337,9 +1436,1123 @@ def run_simulation(sim_params):
     return history
 
 # =============================================
+# ENHANCED PUBLICATION-QUALITY PLOTTING FUNCTIONS
+# =============================================
+def create_publication_heatmaps(simulations, frames, config, style_params):
+    """Publication-quality heatmap comparison"""
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    n_sims = len(simulations)
+    cols = min(3, n_sims)
+    rows = (n_sims + cols - 1) // cols
+    
+    # Create figure with journal sizing
+    journal_styles = JournalTemplates.get_journal_styles()
+    journal = style_params.get('journal_style', 'nature')
+    fig_width = journal_styles[journal]['figure_width_double'] / 2.54  # Convert cm to inches
+    
+    fig, axes = plt.subplots(rows, cols, 
+                            figsize=(fig_width, fig_width * 0.8 * rows/cols),
+                            constrained_layout=True)
+    
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
+        axes = axes.reshape(1, -1)
+    elif cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    # Get enhanced colormaps
+    enhanced_cmaps = PublicationEnhancer.create_custom_colormaps()
+    
+    for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+        row = idx // cols
+        col = idx % cols
+        ax = axes[row, col]
+        
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
+        
+        # Apply smoothing for better visualization
+        if style_params.get('apply_smoothing', True):
+            stress_data = gaussian_filter(stress_data, sigma=1)
+        
+        # Choose colormap
+        cmap_name = sim['params']['sigma_cmap']
+        if cmap_name in enhanced_cmaps:
+            cmap = enhanced_cmaps[cmap_name]
+        else:
+            cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'viridis'))
+        
+        # Create heatmap with enhanced settings
+        im = ax.imshow(stress_data, extent=extent, cmap=cmap, 
+                      origin='lower', aspect='equal')  # Fixed: aspect='equal' for proper scaling
+        
+        # Add contour lines for defect boundary
+        contour = ax.contour(X, Y, eta, levels=[0.5], colors='white', 
+                           linewidths=1, linestyles='--', alpha=0.8)
+        
+        # Add scale bar
+        PublicationEnhancer.add_scale_bar(ax, 5.0, location='lower right')
+        
+        # Enhanced title
+        title = f"{sim['params']['defect_type']}"
+        if sim['params']['orientation'] != "Horizontal {111} (0°)":
+            title += f"\n{sim['params']['orientation'].split(' ')[0]}"
+        
+        ax.set_title(title, fontsize=style_params.get('title_font_size', 10),
+                    fontweight='semibold', pad=10)
+        
+        # Axis labels only on edge plots
+        if row == rows - 1:
+            ax.set_xlabel("x (nm)", fontsize=style_params.get('label_font_size', 9))
+        if col == 0:
+            ax.set_ylabel("y (nm)", fontsize=style_params.get('label_font_size', 9))
+        
+        # Enhanced colorbar
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical')
+        cbar.set_label(f"{config['stress_component']} (GPa)", fontsize=8)
+        cbar.ax.tick_params(labelsize=7)
+    
+    # Hide empty subplots
+    for idx in range(n_sims, rows*cols):
+        row = idx // cols
+        col = idx % cols
+        axes[row, col].axis('off')
+    
+    # Apply publication styling
+    fig = EnhancedFigureStyler.apply_publication_styling(fig, axes, style_params)
+    
+    return fig
+
+def create_enhanced_line_profiles(simulations, frames, config, style_params):
+    """Enhanced line profile comparison with multiple directions"""
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    # Get profile configuration
+    profile_direction = config.get('profile_direction', 'Horizontal')
+    selected_profiles = config.get('selected_profiles', ['Horizontal'])
+    position_ratio = config.get('position_ratio', 0.5)
+    custom_angle = config.get('custom_angle', 45.0)
+    
+    # Create figure layout based on number of profiles
+    if profile_direction == "Multiple Profiles" and len(selected_profiles) > 1:
+        n_profiles = len(selected_profiles)
+        fig = plt.figure(figsize=(16, 12))
+        fig.set_constrained_layout(True)
+        
+        # Create subplot grid: 2 columns for profiles, 1 for location map
+        gs = fig.add_gridspec(3, 3)
+        
+        # Main profile plot (spanning 2 rows, 2 columns)
+        ax_profiles = fig.add_subplot(gs[0:2, 0:2])
+        
+        # Statistical plot
+        ax_stats = fig.add_subplot(gs[0, 2])
+        
+        # Location map
+        ax_location = fig.add_subplot(gs[1, 2])
+        
+        # Individual profile plots
+        ax_individual = fig.add_subplot(gs[2, :])
+        
+        axes = [ax_profiles, ax_stats, ax_location, ax_individual]
+        
+    else:
+        # Single profile mode
+        fig = plt.figure(figsize=(14, 10))
+        fig.set_constrained_layout(True)
+        
+        gs = fig.add_gridspec(2, 3)
+        ax_profiles = fig.add_subplot(gs[0, 0:2])
+        ax_stats = fig.add_subplot(gs[0, 2])
+        ax_location = fig.add_subplot(gs[1, 0:2])
+        ax_individual = fig.add_subplot(gs[1, 2])
+        
+        axes = [ax_profiles, ax_stats, ax_location, ax_individual]
+    
+    # Get enhanced colormaps
+    enhanced_cmaps = PublicationEnhancer.create_custom_colormaps()
+    colors = enhanced_cmaps['defect_categorical'].colors[:len(simulations)]
+    
+    # Prepare data storage
+    all_profiles = {profile_type: [] for profile_type in selected_profiles}
+    
+    # Define colors for different profile types
+    profile_colors = {
+        'Horizontal': 'red',
+        'Vertical': 'blue',
+        'Diagonal': 'green',
+        'Anti-Diagonal': 'purple',
+        'Custom': 'orange'
+    }
+    
+    # Extract and plot profiles
+    for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
+        
+        # Extract profiles for all selected types
+        for profile_type in selected_profiles:
+            # Handle custom angle
+            if profile_type == "Custom Angle":
+                profile_type_key = "custom"
+                angle = custom_angle
+            else:
+                profile_type_key = profile_type.lower().replace(" ", "_").replace("-", "")
+                angle = custom_angle
+            
+            # Extract profile
+            if profile_type_key == "custom":
+                distance, profile, endpoints = EnhancedLineProfiler.extract_profile(
+                    stress_data, 'custom', position_ratio, angle
+                )
+            else:
+                distance, profile, endpoints = EnhancedLineProfiler.extract_profile(
+                    stress_data, profile_type_key, position_ratio, angle
+                )
+            
+            # Store for statistics
+            all_profiles[profile_type].append({
+                'distance': distance,
+                'profile': profile,
+                'endpoints': endpoints,
+                'color': color,
+                'label': f"{sim['params']['defect_type']}"
+            })
+            
+            # Plot on main axes if single profile mode
+            if profile_direction != "Multiple Profiles" or len(selected_profiles) == 1:
+                line_style = config.get('line_style', 'solid')
+                ax_profiles.plot(distance, profile, color=color,
+                               linewidth=style_params.get('line_width', 1.5),
+                               linestyle=line_style,
+                               label=f"{sim['params']['defect_type']}",
+                               alpha=0.8)
+    
+    # Enhanced axis labeling for main profile plot
+    if profile_direction != "Multiple Profiles" or len(selected_profiles) == 1:
+        ax_profiles.set_xlabel("Position (nm)", fontsize=style_params.get('label_font_size', 10))
+        ax_profiles.set_ylabel(f"{config['stress_component']} (GPa)", 
+                              fontsize=style_params.get('label_font_size', 10))
+        
+        profile_name = selected_profiles[0]
+        if profile_name == "Custom Angle":
+            profile_name = f"Custom ({custom_angle:.0f}°)"
+        ax_profiles.set_title(f"{profile_name} Stress Profile", 
+                             fontsize=style_params.get('title_font_size', 12),
+                             fontweight='bold')
+        
+        # Add legend
+        PublicationEnhancer.create_fancy_legend(ax_profiles, *ax_profiles.get_legend_handles_labels(),
+                                              loc='upper right', frameon=True,
+                                              fancybox=True, shadow=False)
+    
+    # Multiple profiles mode
+    elif profile_direction == "Multiple Profiles" and len(selected_profiles) > 1:
+        # Plot all profiles for each simulation
+        line_styles = ['-', '--', '-.', ':']
+        
+        for idx, profile_type in enumerate(selected_profiles):
+            profile_data = all_profiles[profile_type]
+            
+            for sim_idx, data in enumerate(profile_data):
+                # Use different line styles for different profile types
+                linestyle = line_styles[idx % len(line_styles)]
+                
+                ax_profiles.plot(data['distance'], data['profile'],
+                               color=data['color'],
+                               linewidth=style_params.get('line_width', 1.5),
+                               linestyle=linestyle,
+                               alpha=0.7,
+                               label=f"{data['label']} - {profile_type}" if sim_idx == 0 else "")
+        
+        ax_profiles.set_xlabel("Position (nm)", fontsize=style_params.get('label_font_size', 10))
+        ax_profiles.set_ylabel(f"{config['stress_component']} (GPa)", 
+                              fontsize=style_params.get('label_font_size', 10))
+        ax_profiles.set_title("Multiple Stress Profiles", 
+                             fontsize=style_params.get('title_font_size', 12),
+                             fontweight='bold')
+        
+        # Simplify legend for multiple profiles
+        handles, labels = ax_profiles.get_legend_handles_labels()
+        unique_labels = []
+        unique_handles = []
+        for handle, label in zip(handles, labels):
+            if label not in unique_labels:
+                unique_labels.append(label)
+                unique_handles.append(handle)
+        
+        ax_profiles.legend(unique_handles, unique_labels, fontsize=8, 
+                          loc='upper right', frameon=True)
+    
+    # Panel B: Statistical summary
+    if all_profiles:
+        # Calculate statistics for each simulation
+        stats_data = []
+        for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+            eta, stress_fields = sim['history'][frame]
+            stress_data = stress_fields[stress_key]
+            
+            # Calculate basic statistics
+            stats_data.append({
+                'Defect': sim['params']['defect_type'],
+                'Max': float(np.nanmax(stress_data)),
+                'Mean': float(np.nanmean(stress_data)),
+                'Std': float(np.nanstd(stress_data)),
+                'color': colors[idx]
+            })
+        
+        # Create bar plot
+        defect_names = [stats['Defect'] for stats in stats_data]
+        max_stresses = [stats['Max'] for stats in stats_data]
+        colors_list = [stats['color'] for stats in stats_data]
+        
+        x_pos = np.arange(len(defect_names))
+        bars = ax_stats.bar(x_pos, max_stresses, color=colors_list, alpha=0.7)
+        
+        ax_stats.set_xticks(x_pos)
+        ax_stats.set_xticklabels(defect_names, rotation=45, ha='right')
+        ax_stats.set_ylabel("Maximum Stress (GPa)", fontsize=9)
+        ax_stats.set_title("Peak Stress Comparison", 
+                          fontsize=10, fontweight='bold')
+        
+        # Add value labels
+        for bar, val in zip(bars, max_stresses):
+            ax_stats.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                         f'{val:.2f}', ha='center', va='bottom', fontsize=8)
+    
+    # Panel C: Show profile locations
+    if simulations and selected_profiles:
+        sim = simulations[0]
+        eta, _ = sim['history'][frames[0]]
+        
+        # Prepare profile config for plotting
+        profile_configs = {}
+        for profile_type in selected_profiles:
+            if profile_type == "Custom Angle":
+                profile_type_key = "custom"
+                angle = custom_angle
+            else:
+                profile_type_key = profile_type.lower().replace(" ", "_").replace("-", "")
+                angle = custom_angle
+            
+            # Extract profile for visualization
+            if profile_type_key == "custom":
+                distance, profile, endpoints = EnhancedLineProfiler.extract_profile(
+                    eta, 'custom', position_ratio, angle
+                )
+            else:
+                distance, profile, endpoints = EnhancedLineProfiler.extract_profile(
+                    eta, profile_type_key, position_ratio, angle
+                )
+            
+            profile_configs[profile_type] = {
+                'profiles': {profile_type: {'endpoints': endpoints}}
+            }
+        
+        # Plot with profile locations
+        im, ax_location = EnhancedLineProfiler.plot_profile_locations(
+            ax_location, eta, profile_configs, 
+            cmap=enhanced_cmaps['plasma_enhanced'], alpha=0.7
+        )
+        ax_location.set_title("Profile Locations", 
+                             fontsize=10, fontweight='bold')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax_location, shrink=0.8)
+        cbar.set_label('Defect Parameter η', fontsize=9)
+    
+    # Panel D: Individual profile comparison (for multiple profiles mode)
+    if profile_direction == "Multiple Profiles" and len(selected_profiles) > 1:
+        # Plot each profile type in separate subplot
+        n_cols = min(4, len(selected_profiles))
+        n_rows = (len(selected_profiles) + n_cols - 1) // n_cols
+        
+        # Clear the individual axis and create subplots
+        ax_individual.clear()
+        fig.delaxes(ax_individual)
+        
+        # Create subplots for individual profiles
+        for idx, profile_type in enumerate(selected_profiles):
+            ax = fig.add_subplot(n_rows, n_cols, idx + 1)
+            
+            profile_data = all_profiles[profile_type]
+            
+            for sim_idx, data in enumerate(profile_data):
+                ax.plot(data['distance'], data['profile'],
+                       color=data['color'],
+                       linewidth=style_params.get('line_width', 1.0),
+                       alpha=0.7,
+                       label=data['label'] if sim_idx == 0 else "")
+            
+            ax.set_title(f"{profile_type} Profile", fontsize=9)
+            ax.set_xlabel("Position (nm)", fontsize=8)
+            ax.set_ylabel("Stress (GPa)", fontsize=8)
+            
+            if idx == 0:
+                ax.legend(fontsize=7, loc='upper right')
+    
+    # Apply publication styling
+    if profile_direction == "Multiple Profiles" and len(selected_profiles) > 1:
+        # Get all axes for styling
+        all_axes = [ax_profiles, ax_stats, ax_location]
+        for i in range(len(selected_profiles)):
+            all_axes.append(fig.axes[i + 3])  # Individual profile axes
+        
+        fig = EnhancedFigureStyler.apply_publication_styling(fig, all_axes, style_params)
+        
+        # Add panel labels
+        for ax, label in zip([ax_profiles, ax_stats, ax_location], ['A', 'B', 'C']):
+            ax.text(-0.1, 1.05, label, transform=ax.transAxes,
+                   fontsize=14, fontweight='bold', va='top')
+    else:
+        fig = EnhancedFigureStyler.apply_publication_styling(fig, axes, style_params)
+        
+        # Add panel labels
+        for ax, label in zip([ax_profiles, ax_stats, ax_location, ax_individual], ['A', 'B', 'C', 'D']):
+            if ax is not None:
+                ax.text(-0.1, 1.05, label, transform=ax.transAxes,
+                       fontsize=14, fontweight='bold', va='top')
+    
+    return fig
+
+def create_publication_statistics(simulations, frames, config, style_params):
+    """Publication-quality statistical analysis"""
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    # Create multi-panel figure
+    fig = plt.figure(figsize=(14, 10))
+    fig.set_constrained_layout(True)
+    
+    # Define subplots
+    ax1 = plt.subplot2grid((3, 4), (0, 0), colspan=2)  # Box plot
+    ax2 = plt.subplot2grid((3, 4), (0, 2), colspan=2)  # Violin plot
+    ax3 = plt.subplot2grid((3, 4), (1, 0), colspan=2)  # Histogram
+    ax4 = plt.subplot2grid((3, 4), (1, 2), colspan=2)  # Cumulative distribution
+    ax5 = plt.subplot2grid((3, 4), (2, 0), colspan=4)  # Statistical table
+    
+    # Get colors
+    enhanced_cmaps = PublicationEnhancer.create_custom_colormaps()
+    colors = enhanced_cmaps['defect_categorical'].colors[:len(simulations)]
+    
+    # Collect data
+    all_data = []
+    labels = []
+    
+    for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key].flatten()
+        stress_data = stress_data[np.isfinite(stress_data)]
+        
+        all_data.append(stress_data)
+        labels.append(f"{sim['params']['defect_type']}\n({sim['params']['orientation'][:10]}...)")
+    
+    # Panel 1: Enhanced box plot
+    bp = ax1.boxplot(all_data, labels=labels, patch_artist=True,
+                    showmeans=True, meanline=True, showfliers=False,
+                    meanprops=dict(color='white', linewidth=1.5),
+                    medianprops=dict(color='black', linewidth=2),
+                    whiskerprops=dict(color='gray', linewidth=1),
+                    capprops=dict(color='gray', linewidth=1),
+                    boxprops=dict(linewidth=1))
+    
+    # Color boxes
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    ax1.set_title(f"Distribution of {config['stress_component']}", 
+                 fontsize=12, fontweight='bold')
+    ax1.set_ylabel("Stress (GPa)", fontsize=10)
+    ax1.tick_params(axis='x', rotation=45, labelsize=9)
+    
+    # Add mean values as text
+    for i, data in enumerate(all_data):
+        mean_val = np.mean(data)
+        ax1.text(i + 1, mean_val, f'{mean_val:.2f}', 
+                ha='center', va='bottom', fontsize=8, fontweight='bold')
+    
+    # Panel 2: Violin plot
+    parts = ax2.violinplot(all_data, showmeans=True, showmedians=True)
+    
+    for i, pc in enumerate(parts['bodies']):
+        pc.set_facecolor(colors[i])
+        pc.set_alpha(0.7)
+        pc.set_edgecolor('black')
+        pc.set_linewidth(0.5)
+    
+    ax2.set_title("Probability Density", fontsize=12, fontweight='bold')
+    ax2.set_ylabel("Stress (GPa)", fontsize=10)
+    ax2.set_xticks(range(1, len(labels) + 1))
+    ax2.set_xticklabels([sim['params']['defect_type'] for sim in simulations])
+    
+    # Panel 3: Histogram with KDE
+    ax3.hist(all_data, bins=30, density=True, stacked=True, 
+            label=[sim['params']['defect_type'] for sim in simulations],
+            color=colors, alpha=0.6, edgecolor='black', linewidth=0.5)
+    
+    # Add KDE
+    for data, color, label in zip(all_data, colors, labels):
+        kde = stats.gaussian_kde(data)
+        x_range = np.linspace(min(data.min() for data in all_data), 
+                             max(data.max() for data in all_data), 100)
+        ax3.plot(x_range, kde(x_range), color=color, linewidth=2, label=label.split('\n')[0])
+    
+    ax3.set_title("Histogram with KDE", fontsize=12, fontweight='bold')
+    ax3.set_xlabel("Stress (GPa)", fontsize=10)
+    ax3.set_ylabel("Density", fontsize=10)
+    ax3.legend(fontsize=8)
+    
+    # Panel 4: Cumulative distribution
+    for data, color, label in zip(all_data, colors, labels):
+        sorted_data = np.sort(data)
+        y_vals = np.arange(1, len(sorted_data) + 1) / len(sorted_data)
+        ax4.plot(sorted_data, y_vals, color=color, linewidth=2, label=label.split('\n')[0])
+    
+    ax4.set_title("Cumulative Distribution", fontsize=12, fontweight='bold')
+    ax4.set_xlabel("Stress (GPa)", fontsize=10)
+    ax4.set_ylabel("Cumulative Probability", fontsize=10)
+    ax4.legend(fontsize=8)
+    ax4.grid(True, alpha=0.3, linestyle='--')
+    
+    # Panel 5: Statistical table
+    ax5.axis('off')
+    
+    # Create comprehensive statistics table
+    table_data = []
+    columns = ['Defect', 'N', 'Mean', 'Std', 'Min', '25%', 'Median', '75%', 'Max', 'Skew', 'Kurtosis']
+    
+    for idx, (data, sim) in enumerate(zip(all_data, simulations)):
+        table_data.append([
+            sim['params']['defect_type'],
+            len(data),
+            f"{np.mean(data):.3f}",
+            f"{np.std(data):.3f}",
+            f"{np.min(data):.3f}",
+            f"{np.percentile(data, 25):.3f}",
+            f"{np.median(data):.3f}",
+            f"{np.percentile(data, 75):.3f}",
+            f"{np.max(data):.3f}",
+            f"{stats.skew(data):.3f}",
+            f"{stats.kurtosis(data):.3f}"
+        ])
+    
+    # Create table
+    table = ax5.table(cellText=table_data, colLabels=columns,
+                     cellLoc='center', loc='center',
+                     colColours=['#f2f2f2']*len(columns))
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 1.5)
+    
+    # Color code cells
+    for i in range(len(table_data)):
+        for j in range(1, len(columns)):  # Skip first column (Defect)
+            table[(i+1, j)].set_facecolor(mpl.colors.to_rgba(colors[i], 0.3))  # Add alpha
+    
+    # Apply publication styling
+    fig = EnhancedFigureStyler.apply_publication_styling(fig, [ax1, ax2, ax3, ax4, ax5], style_params)
+    
+    # Add panel labels
+    for ax, label in zip([ax1, ax2, ax3, ax4], ['A', 'B', 'C', 'D']):
+        ax.text(-0.1, 1.05, label, transform=ax.transAxes,
+               fontsize=14, fontweight='bold', va='top')
+    
+    return fig
+
+def create_publication_correlation(simulations, frames, config, style_params):
+    """Publication-quality correlation analysis"""
+    # Component mapping
+    component_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises',
+        "Defect Parameter η": 'eta'
+    }
+    
+    x_key = component_map[config.get('correlation_x', 'Defect Parameter η')]
+    y_key = component_map[config.get('correlation_y', 'Stress Magnitude |σ|')]
+    
+    # Create multi-panel figure
+    fig = plt.figure(figsize=(15, 12))
+    fig.set_constrained_layout(True)
+    
+    # Define subplot grid
+    ax1 = plt.subplot2grid((3, 3), (0, 0), colspan=2)  # Scatter with regression
+    ax2 = plt.subplot2grid((3, 3), (0, 2))              # Correlation coefficients
+    ax3 = plt.subplot2grid((3, 3), (1, 0))              # Residuals
+    ax4 = plt.subplot2grid((3, 3), (1, 1))              # QQ plot
+    ax5 = plt.subplot2grid((3, 3), (1, 2))              # Histogram of residuals
+    ax6 = plt.subplot2grid((3, 3), (2, 0), colspan=3)   # Regression parameters
+    
+    # Get enhanced colormaps
+    enhanced_cmaps = PublicationEnhancer.create_custom_colormaps()
+    colors = enhanced_cmaps['defect_categorical'].colors[:len(simulations)]
+    
+    # Store regression results
+    regression_results = []
+    
+    for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        
+        # Prepare x data
+        if x_key == 'eta':
+            x_data = eta.flatten()
+        else:
+            x_data = stress_fields[x_key].flatten()
+        
+        # Prepare y data
+        if y_key == 'eta':
+            y_data = eta.flatten()
+        else:
+            y_data = stress_fields[y_key].flatten()
+        
+        # Sample data for clarity
+        sample_size = min(5000, len(x_data))
+        indices = np.random.choice(len(x_data), sample_size, replace=False)
+        x_sampled = x_data[indices]
+        y_sampled = y_data[indices]
+        
+        # Remove outliers
+        q_low, q_high = np.percentile(x_sampled, [1, 99])
+        mask = (x_sampled > q_low) & (x_sampled < q_high)
+        x_sampled = x_sampled[mask]
+        y_sampled = y_sampled[mask]
+        
+        # Calculate regression
+        slope, intercept, r_value, p_value, std_err = stats.linregress(x_sampled, y_sampled)
+        
+        # Store results
+        regression_results.append({
+            'defect': sim['params']['defect_type'],
+            'slope': slope,
+            'intercept': intercept,
+            'r_value': r_value,
+            'r_squared': r_value**2,
+            'p_value': p_value,
+            'std_err': std_err,
+            'n': len(x_sampled)
+        })
+        
+        # Panel 1: Scatter with regression line
+        scatter = ax1.scatter(x_sampled, y_sampled, color=color, alpha=0.3,
+                            s=10, edgecolors='none', label=sim['params']['defect_type'])
+        
+        # Add regression line
+        x_range = np.linspace(np.min(x_sampled), np.max(x_sampled), 100)
+        y_pred = slope * x_range + intercept
+        ax1.plot(x_range, y_pred, color=color, linewidth=2, alpha=0.8,
+                label=f"R = {r_value:.3f}")
+        
+        # Panel 3: Residuals
+        y_pred_points = slope * x_sampled + intercept
+        residuals = y_sampled - y_pred_points
+        
+        ax3.scatter(y_pred_points, residuals, color=color, alpha=0.3, s=10)
+        ax3.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+        
+        # Panel 4: QQ plot
+        if idx == 0:  # Plot QQ for first simulation
+            stats.probplot(residuals, dist="norm", plot=ax4)
+            ax4.get_lines()[0].set_marker('.')
+            ax4.get_lines()[0].set_markersize(5)
+            ax4.get_lines()[0].set_alpha(0.5)
+            ax4.get_lines()[1].set_color('red')
+            ax4.get_lines()[1].set_linewidth(2)
+        
+        # Panel 5: Histogram of residuals
+        ax5.hist(residuals, bins=30, density=True, alpha=0.5, color=color)
+    
+    # Enhance Panel 1
+    ax1.set_xlabel(config.get('correlation_x', 'X Component'), fontsize=11)
+    ax1.set_ylabel(config.get('correlation_y', 'Y Component'), fontsize=11)
+    ax1.set_title(f"Scatter Plot with Linear Regression", fontsize=12, fontweight='bold')
+    
+    # Create enhanced legend
+    PublicationEnhancer.create_fancy_legend(ax1, *ax1.get_legend_handles_labels(),
+                                          loc='upper left', frameon=True,
+                                          fancybox=True, shadow=True, ncol=2)
+    
+    # Panel 2: Correlation coefficients
+    defect_names = [sim['params']['defect_type'] for sim in simulations]
+    r_values = [result['r_value'] for result in regression_results]
+    
+    bars = ax2.bar(range(len(defect_names)), r_values, color=colors, alpha=0.7)
+    ax2.set_xticks(range(len(defect_names)))
+    ax2.set_xticklabels(defect_names, rotation=45, ha='right')
+    ax2.set_ylabel("Correlation Coefficient (R)", fontsize=10)
+    ax2.set_title("Correlation Strength", fontsize=11, fontweight='bold')
+    ax2.axhline(y=0.7, color='red', linestyle='--', alpha=0.5, linewidth=1)
+    ax2.axhline(y=0.5, color='orange', linestyle='--', alpha=0.5, linewidth=1)
+    ax2.axhline(y=0.3, color='green', linestyle='--', alpha=0.5, linewidth=1)
+    
+    # Add value labels
+    for bar, val in zip(bars, r_values):
+        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                f'{val:.3f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
+    
+    # Enhance Panel 3: Residuals
+    ax3.set_xlabel("Predicted Values", fontsize=10)
+    ax3.set_ylabel("Residuals", fontsize=10)
+    ax3.set_title("Residual Plot", fontsize=11, fontweight='bold')
+    ax3.grid(True, alpha=0.3, linestyle='--')
+    
+    # Enhance Panel 4: QQ Plot
+    ax4.set_title("Q-Q Plot of Residuals", fontsize=11, fontweight='bold')
+    ax4.set_xlabel("Theoretical Quantiles", fontsize=10)
+    ax4.set_ylabel("Sample Quantiles", fontsize=10)
+    
+    # Enhance Panel 5: Histogram of residuals
+    ax5.set_title("Distribution of Residuals", fontsize=11, fontweight='bold')
+    ax5.set_xlabel("Residuals", fontsize=10)
+    ax5.set_ylabel("Density", fontsize=10)
+    ax5.legend([sim['params']['defect_type'] for sim in simulations], fontsize=8)
+    
+    # Panel 6: Regression parameters table
+    ax6.axis('off')
+    
+    # Create detailed table
+    table_data = []
+    columns = ['Defect', 'Slope', 'Intercept', 'R', 'R²', 'p-value', 'Std Error', 'N']
+    
+    for result in regression_results:
+        table_data.append([
+            result['defect'],
+            f"{result['slope']:.4f}",
+            f"{result['intercept']:.4f}",
+            f"{result['r_value']:.4f}",
+            f"{result['r_squared']:.4f}",
+            f"{result['p_value']:.3e}",
+            f"{result['std_err']:.4f}",
+            f"{result['n']:,}"
+        ])
+    
+    table = ax6.table(cellText=table_data, colLabels=columns,
+                     cellLoc='center', loc='center',
+                     colColours=['#f2f2f2']*len(columns))
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    table.scale(1, 1.5)
+    
+    # Color code p-values
+    for i in range(len(table_data)):
+        p_val = float(table_data[i][5].replace('e-', 'E-'))
+        if p_val < 0.001:
+            table[(i+1, 5)].set_text_props(fontweight='bold', color='green')
+        elif p_val < 0.01:
+            table[(i+1, 5)].set_text_props(fontweight='bold', color='orange')
+    
+    # Apply publication styling
+    fig = EnhancedFigureStyler.apply_publication_styling(fig, [ax1, ax2, ax3, ax4, ax5, ax6], style_params)
+    
+    # Add panel labels
+    for ax, label in zip([ax1, ax2, ax3, ax4, ax5], ['A', 'B', 'C', 'D', 'E']):
+        ax.text(-0.1, 1.05, label, transform=ax.transAxes,
+               fontsize=14, fontweight='bold', va='top')
+    
+    return fig
+
+def create_enhanced_comparison_plot(simulations, frames, config, style_params):
+    """Create publication-quality comparison plots"""
+    
+    # Create figure based on comparison type
+    if config['type'] == "Side-by-Side Heatmaps":
+        return create_publication_heatmaps(simulations, frames, config, style_params)
+    elif config['type'] == "Overlay Line Profiles":
+        return create_enhanced_line_profiles(simulations, frames, config, style_params)
+    elif config['type'] == "Statistical Summary":
+        return create_publication_statistics(simulations, frames, config, style_params)
+    elif config['type'] == "Defect-Stress Correlation":
+        return create_publication_correlation(simulations, frames, config, style_params)
+    else:
+        # Fall back to simpler visualization for other types
+        return create_simple_comparison_plot(simulations, frames, config, style_params)
+
+def create_simple_comparison_plot(simulations, frames, config, style_params):
+    """Simple comparison plot for unsupported types"""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    fig.set_constrained_layout(True)
+    
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+    
+    for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
+        
+        # Simple line plot of mean stress
+        mean_stress = np.mean(stress_data)
+        ax.bar(idx, mean_stress, color=color, alpha=0.7, 
+               label=f"{sim['params']['defect_type']}")
+    
+    ax.set_xlabel("Simulation", fontsize=style_params.get('label_font_size', 12))
+    ax.set_ylabel(f"Mean {config['stress_component']} (GPa)", 
+                  fontsize=style_params.get('label_font_size', 12))
+    ax.set_title(f"{config['type']} Comparison", 
+                 fontsize=style_params.get('title_font_size', 14),
+                 fontweight='bold')
+    ax.legend(fontsize=style_params.get('legend_fontsize', 10))
+    
+    # Apply styling
+    fig = EnhancedFigureStyler.apply_publication_styling(fig, ax, style_params)
+    
+    return fig
+
+# =============================================
+# ORIGINAL COMPARISON PLOTTING FUNCTIONS (for backward compatibility)
+# =============================================
+def create_defect_stress_correlation_plot(simulations, frames, config, style_params):
+    """Create defect-stress correlation plot for multiple simulations"""
+    return create_publication_correlation(simulations, frames, config, style_params)
+
+def create_stress_cross_correlation_plot(simulations, frames, config, style_params):
+    """Create stress component cross-correlation plot"""
+    st.subheader("📈 Stress Component Cross-Correlation")
+    
+    # Component mapping
+    component_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    
+    x_key = component_map[config.get('correlation_x', 'Stress Magnitude |σ|')]
+    y_key = component_map[config.get('correlation_y', 'von Mises σ_vM')]
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+    
+    for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        
+        x_data = stress_fields[x_key].flatten()
+        y_data = stress_fields[y_key].flatten()
+        
+        # Sample data
+        sample_size = int(len(x_data) * config.get('correlation_sample', 20) / 100)
+        if sample_size < len(x_data):
+            indices = np.random.choice(len(x_data), sample_size, replace=False)
+            x_sampled = x_data[indices]
+            y_sampled = y_data[indices]
+        else:
+            x_sampled = x_data
+            y_sampled = y_data
+        
+        # Scatter plot
+        axes[0].scatter(x_sampled, y_sampled, 
+                       color=color, 
+                       alpha=config.get('correlation_alpha', 0.5),
+                       s=config.get('correlation_point_size', 10),
+                       label=f"{sim['params']['defect_type']} - {sim['params']['orientation']}")
+        
+        # Calculate correlation
+        mask = np.isfinite(x_sampled) & np.isfinite(y_sampled)
+        if np.sum(mask) > 10:
+            corr = np.corrcoef(x_sampled[mask], y_sampled[mask])[0, 1]
+            # Add to legend
+            axes[0].plot([], [], ' ', label=f"R = {corr:.3f}")
+    
+    axes[0].set_xlabel(config.get('correlation_x', 'Stress Magnitude |σ|'), 
+                      fontsize=style_params.get('label_font_size', 14))
+    axes[0].set_ylabel(config.get('correlation_y', 'von Mises σ_vM'), 
+                      fontsize=style_params.get('label_font_size', 14))
+    axes[0].set_title(f"{config.get('correlation_x')} vs {config.get('correlation_y')}", 
+                     fontsize=style_params.get('title_font_size', 16),
+                     fontweight=style_params.get('title_weight', 'bold'))
+    axes[0].legend(fontsize=style_params.get('legend_fontsize', 12))
+    
+    # Create correlation matrix
+    if len(simulations) > 1:
+        components = ['sigma_mag', 'sigma_hydro', 'von_mises']
+        component_names = ['|σ|', 'σ_h', 'σ_vM']
+        
+        # Prepare correlation matrix
+        corr_matrix = np.zeros((3, 3))
+        
+        for i, comp_i in enumerate(components):
+            for j, comp_j in enumerate(components):
+                # Average correlation across simulations
+                corrs = []
+                for sim, frame in zip(simulations, frames):
+                    eta, stress_fields = sim['history'][frame]
+                    data_i = stress_fields[comp_i].flatten()
+                    data_j = stress_fields[comp_j].flatten()
+                    mask = np.isfinite(data_i) & np.isfinite(data_j)
+                    if np.sum(mask) > 10:
+                        corr = np.corrcoef(data_i[mask], data_j[mask])[0, 1]
+                        corrs.append(corr)
+                
+                if corrs:
+                    corr_matrix[i, j] = np.mean(corrs)
+        
+        # Plot correlation matrix
+        im = axes[1].imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1, aspect='auto')
+        
+        # Add text annotations
+        for i in range(3):
+            for j in range(3):
+                text = axes[1].text(j, i, f'{corr_matrix[i, j]:.3f}',
+                                   ha="center", va="center", color="white",
+                                   fontsize=style_params.get('label_font_size', 14),
+                                   fontweight='bold')
+        
+        axes[1].set_title("Stress Component Correlation Matrix", 
+                         fontsize=style_params.get('title_font_size', 16),
+                         fontweight=style_params.get('title_weight', 'bold'))
+        axes[1].set_xticks(range(3))
+        axes[1].set_yticks(range(3))
+        axes[1].set_xticklabels(component_names)
+        axes[1].set_yticklabels(component_names)
+        
+        # Add colorbar
+        plt.colorbar(im, ax=axes[1], shrink=0.8)
+    
+    # Apply styling
+    fig = EnhancedFigureStyler.apply_advanced_styling(fig, axes, style_params)
+    
+    return fig
+
+def create_evolution_timeline_plot(simulations, config, style_params):
+    """Create evolution timeline comparison plot"""
+    st.subheader("⏱️ Evolution Timeline Comparison")
+    
+    # Get evolution metrics
+    evolution_data = {}
+    
+    for sim in simulations:
+        history = sim['history']
+        params = sim['params']
+        
+        # Calculate evolution metrics
+        eta_evolution = []
+        stress_evolution = []
+        
+        stress_map = {
+            "Stress Magnitude |σ|": 'sigma_mag',
+            "Hydrostatic σ_h": 'sigma_hydro',
+            "von Mises σ_vM": 'von_mises'
+        }
+        stress_key = stress_map[config['stress_component']]
+        
+        for frame, (eta, stress_fields) in enumerate(history):
+            eta_evolution.append(np.mean(eta))
+            stress_evolution.append(np.mean(stress_fields[stress_key]))
+        
+        evolution_data[sim['id']] = {
+            'defect_type': params['defect_type'],
+            'orientation': params['orientation'],
+            'eta': eta_evolution,
+            'stress': stress_evolution,
+            'frames': len(history)
+        }
+    
+    # Create evolution plots
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.set_constrained_layout(True)
+    
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+    
+    # Plot 1: η evolution
+    ax1 = axes[0, 0]
+    for idx, (sim_id, data) in enumerate(evolution_data.items()):
+        frames = range(data['frames'])
+        ax1.plot(frames, data['eta'], 
+                color=colors[idx], 
+                linewidth=style_params.get('line_width', 2.0),
+                linestyle=config.get('line_style', 'solid'),
+                label=f"{data['defect_type']} - {data['orientation']}")
+    
+    ax1.set_xlabel("Frame Number", fontsize=style_params.get('label_font_size', 14))
+    ax1.set_ylabel("Average η", fontsize=style_params.get('label_font_size', 14))
+    ax1.set_title("Defect Evolution (η)", 
+                  fontsize=style_params.get('title_font_size', 16),
+                  fontweight=style_params.get('title_weight', 'bold'))
+    ax1.legend(fontsize=style_params.get('legend_fontsize', 12))
+    
+    # Plot 2: Stress evolution
+    ax2 = axes[0, 1]
+    for idx, (sim_id, data) in enumerate(evolution_data.items()):
+        frames = range(data['frames'])
+        ax2.plot(frames, data['stress'], 
+                color=colors[idx], 
+                linewidth=style_params.get('line_width', 2.0),
+                linestyle=config.get('line_style', 'solid'),
+                label=f"{data['defect_type']} - {data['orientation']}")
+    
+    ax2.set_xlabel("Frame Number", fontsize=style_params.get('label_font_size', 14))
+    ax2.set_ylabel(f"Average {config['stress_component']} (GPa)", 
+                  fontsize=style_params.get('label_font_size', 14))
+    ax2.set_title(f"Stress Evolution ({config['stress_component']})", 
+                  fontsize=style_params.get('title_font_size', 16),
+                  fontweight=style_params.get('title_weight', 'bold'))
+    ax2.legend(fontsize=style_params.get('legend_fontsize', 12))
+    
+    # Plot 3: Correlation between η and stress evolution
+    ax3 = axes[1, 0]
+    for idx, (sim_id, data) in enumerate(evolution_data.items()):
+        # Calculate moving correlation
+        eta_array = np.array(data['eta'])
+        stress_array = np.array(data['stress'])
+        
+        window_size = min(10, len(eta_array))
+        if window_size > 3:
+            correlations = []
+            for i in range(len(eta_array) - window_size + 1):
+                window_eta = eta_array[i:i+window_size]
+                window_stress = stress_array[i:i+window_size]
+                corr = np.corrcoef(window_eta, window_stress)[0, 1]
+                correlations.append(corr)
+            
+            frames = range(len(correlations))
+            ax3.plot(frames, correlations, 
+                    color=colors[idx], 
+                    linewidth=style_params.get('line_width', 2.0),
+                    label=f"{data['defect_type']} - {data['orientation']}")
+    
+    ax3.set_xlabel("Frame Window", fontsize=style_params.get('label_font_size', 14))
+    ax3.set_ylabel("Moving Correlation (η vs Stress)", 
+                  fontsize=style_params.get('label_font_size', 14))
+    ax3.set_title("Evolution Correlation", 
+                  fontsize=style_params.get('title_font_size', 16),
+                  fontweight=style_params.get('title_weight', 'bold'))
+    ax3.legend(fontsize=style_params.get('legend_fontsize', 12))
+    
+    # Plot 4: Evolution rate
+    ax4 = axes[1, 1]
+    for idx, (sim_id, data) in enumerate(evolution_data.items()):
+        eta_array = np.array(data['eta'])
+        stress_array = np.array(data['stress'])
+        
+        # Calculate rates of change
+        eta_rate = np.diff(eta_array)
+        stress_rate = np.diff(stress_array)
+        frames = range(1, len(eta_array))
+        ax4.scatter(frames, eta_rate, 
+                   color=colors[idx], 
+                   alpha=0.6, s=20,
+                   label=f"{data['defect_type']} - η rate")
+        
+        frames = range(1, len(stress_array))
+        ax4.scatter(frames, stress_rate, 
+                   color=colors[idx], 
+                   alpha=0.6, s=20,
+                   marker='s',
+                   label=f"{data['defect_type']} - stress rate")
+    
+    ax4.set_xlabel("Frame Number", fontsize=style_params.get('label_font_size', 14))
+    ax4.set_ylabel("Rate of Change", fontsize=style_params.get('label_font_size', 14))
+    ax4.set_title("Evolution Rates", 
+                  fontsize=style_params.get('title_font_size', 16),
+                  fontweight=style_params.get('title_weight', 'bold'))
+    
+    # Apply styling
+    fig = EnhancedFigureStyler.apply_advanced_styling(fig, axes, style_params)
+    
+    return fig
+
+def create_contour_comparison_plot(simulations, frames, config, style_params):
+    """Create contour comparison plot"""
+    st.subheader("🌀 Contour Level Comparison")
+    
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    n_sims = len(simulations)
+    cols = min(2, n_sims)
+    rows = (n_sims + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(8*cols, 6*rows), constrained_layout=True)
+    
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
+        axes = axes.reshape(1, -1)
+    elif cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+    
+    for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+        row = idx // cols
+        col = idx % cols
+        ax = axes[row, col]
+        
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
+        
+        # Create contour plot
+        levels = config.get('contour_levels', 10)
+        contour = ax.contour(X, Y, stress_data, 
+                            levels=levels,
+                            linewidths=config.get('contour_linewidth', 1.5),
+                            cmap=plt.cm.get_cmap(COLORMAPS.get(sim['params']['sigma_cmap'], 'viridis')))
+        
+        # Add contour labels
+        ax.clabel(contour, inline=True, fontsize=style_params.get('tick_font_size', 12))
+        
+        # Add defect contour
+        eta_contour = ax.contour(X, Y, eta, levels=[0.5], 
+                                colors='black', linewidths=2, linestyles='--')
+        
+        ax.set_title(f"{sim['params']['defect_type']} - {sim['params']['orientation']}", 
+                    fontsize=style_params.get('title_font_size', 16),
+                    fontweight=style_params.get('title_weight', 'bold'))
+        ax.set_xlabel("x (nm)", fontsize=style_params.get('label_font_size', 14))
+        ax.set_ylabel("y (nm)", fontsize=style_params.get('label_font_size', 14))
+        
+        # Add colorbar
+        plt.colorbar(contour, ax=ax, shrink=0.8)
+    
+    # Hide empty subplots
+    for idx in range(n_sims, rows*cols):
+        row = idx // cols
+        col = idx % cols
+        axes[row, col].axis('off')
+    
+    # Apply styling
+    fig = EnhancedFigureStyler.apply_advanced_styling(fig, axes, style_params)
+    
+    return fig
+
+# =============================================
 # MAIN CONTENT AREA
 # =============================================
 if operation_mode == "Run New Simulation":
+    # Show simulation preview
     st.header("🎯 New Simulation Preview")
     
     if 'sim_params' in st.session_state:
@@ -1361,24 +2574,27 @@ if operation_mode == "Run New Simulation":
         
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
         
+        # Apply styling
+        fig = EnhancedFigureStyler.apply_advanced_styling(fig, [ax1, ax2], advanced_styling)
+        
         # Initial defect
         im1 = ax1.imshow(init_eta, extent=extent, 
                         cmap=plt.cm.get_cmap(COLORMAPS.get(sim_params['eta_cmap'], 'viridis')), 
-                        origin='lower')
+                        origin='lower', aspect='equal')  # Fixed: aspect='equal'
         ax1.set_title(f"Initial {sim_params['defect_type']} - {sim_params['shape']}")
         ax1.set_xlabel("x (nm)")
         ax1.set_ylabel("y (nm)")
-        plt.colorbar(im1, ax=ax1, shrink=0.8)
+        plt.colorbar(im1, ax=ax1, shrink=advanced_styling.get('colorbar_shrink', 0.8))
         
-        # Stress preview
+        # Stress preview (calculated from initial state)
         stress_preview = compute_stress_fields(init_eta, sim_params['eps0'], sim_params['theta'])
         im2 = ax2.imshow(stress_preview['sigma_mag'], extent=extent, 
                         cmap=plt.cm.get_cmap(COLORMAPS.get(sim_params['sigma_cmap'], 'hot')), 
-                        origin='lower')
+                        origin='lower', aspect='equal')  # Fixed: aspect='equal'
         ax2.set_title(f"Initial Stress Magnitude")
         ax2.set_xlabel("x (nm)")
         ax2.set_ylabel("y (nm)")
-        plt.colorbar(im2, ax=ax2, shrink=0.8)
+        plt.colorbar(im2, ax=ax2, shrink=advanced_styling.get('colorbar_shrink', 0.8))
         
         st.pyplot(fig)
         
@@ -1415,71 +2631,48 @@ if operation_mode == "Run New Simulation":
                 - **Saved to database**
                 """)
                 
-                # Show final frame with line profile analysis
-                with st.expander("📊 Advanced Line Profile Analysis", expanded=True):
-                    st.subheader("Publication-Quality Line Profile Analysis")
-                    
-                    # Get final state
-                    final_eta, final_stress = history[-1]
-                    
-                    # Create publication-quality plot
-                    profile_config = {
-                        'center_x': st.session_state.profile_config['center_x'],
-                        'center_y': st.session_state.profile_config['center_y'],
-                        'length': st.session_state.profile_config['length'],
-                        'orientations': st.session_state.profile_config['orientations'],
-                        'stress_component': "Stress Magnitude |σ|",
-                        'probe_style': st.session_state.profile_config['probe_style']
-                    }
-                    
-                    # Get simulation data
-                    sim_data = SimulationDB.get_simulation(sim_id)
-                    
-                    # Create enhanced plot
-                    fig = create_publication_quality_plot(
-                        sim_data, 
-                        len(history)-1,  # Final frame
-                        profile_config,
-                        {}
-                    )
-                    
-                    st.pyplot(fig)
-                    
-                    # Export options
-                    col1, col2, col3 = st.columns(3)
+                # Show final frame with post-processing options
+                with st.expander("📊 Post-Process Final Results", expanded=True):
+                    col1, col2 = st.columns(2)
                     with col1:
-                        if st.button("📥 Save as PNG", type="secondary"):
-                            buf = BytesIO()
-                            fig.savefig(buf, format='png', dpi=600, bbox_inches='tight')
-                            buf.seek(0)
-                            st.download_button(
-                                "Download PNG",
-                                buf.getvalue(),
-                                f"publication_plot_{sim_id}.png",
-                                "image/png"
-                            )
+                        show_defect = st.checkbox("Show Defect Field", True)
+                        show_stress = st.checkbox("Show Stress Field", True)
                     with col2:
-                        if st.button("📥 Save as PDF", type="secondary"):
-                            buf = BytesIO()
-                            fig.savefig(buf, format='pdf', dpi=600, bbox_inches='tight')
-                            buf.seek(0)
-                            st.download_button(
-                                "Download PDF",
-                                buf.getvalue(),
-                                f"publication_plot_{sim_id}.pdf",
-                                "application/pdf"
-                            )
-                    with col3:
-                        if st.button("📥 Save as SVG", type="secondary"):
-                            buf = BytesIO()
-                            fig.savefig(buf, format='svg', bbox_inches='tight')
-                            buf.seek(0)
-                            st.download_button(
-                                "Download SVG",
-                                buf.getvalue(),
-                                f"publication_plot_{sim_id}.svg",
-                                "image/svg+xml"
-                            )
+                        custom_cmap = st.selectbox("Custom Colormap", cmap_list, 
+                                                  index=cmap_list.index('viridis'))
+                    
+                    if show_defect or show_stress:
+                        final_eta, final_stress = history[-1]
+                        
+                        n_plots = (1 if show_defect else 0) + (1 if show_stress else 0)
+                        fig2, axes = plt.subplots(1, n_plots, figsize=(6*n_plots, 5))
+                        
+                        if n_plots == 1:
+                            axes = [axes]
+                        
+                        plot_idx = 0
+                        if show_defect:
+                            im = axes[plot_idx].imshow(final_eta, extent=extent, 
+                                                      cmap=plt.cm.get_cmap(COLORMAPS.get(custom_cmap, 'viridis')), 
+                                                      origin='lower', aspect='equal')  # Fixed
+                            axes[plot_idx].set_title(f"Final {sim_params['defect_type']}")
+                            axes[plot_idx].set_xlabel("x (nm)")
+                            axes[plot_idx].set_ylabel("y (nm)")
+                            plt.colorbar(im, ax=axes[plot_idx], shrink=0.8)
+                            plot_idx += 1
+                        
+                        if show_stress:
+                            im = axes[plot_idx].imshow(final_stress['sigma_mag'], extent=extent,
+                                                      cmap=plt.cm.get_cmap(COLORMAPS.get(custom_cmap, 'viridis')), 
+                                                      origin='lower', aspect='equal')  # Fixed
+                            axes[plot_idx].set_title(f"Final Stress Magnitude")
+                            axes[plot_idx].set_xlabel("x (nm)")
+                            axes[plot_idx].set_ylabel("y (nm)")
+                            plt.colorbar(im, ax=axes[plot_idx], shrink=0.8)
+                        
+                        # Apply advanced styling
+                        fig2 = EnhancedFigureStyler.apply_advanced_styling(fig2, axes, advanced_styling)
+                        st.pyplot(fig2)
                 
                 # Clear the run flag
                 if 'run_new_simulation' in st.session_state:
@@ -1510,6 +2703,21 @@ if operation_mode == "Run New Simulation":
         
         df = pd.DataFrame(sim_data)
         st.dataframe(df, use_container_width=True)
+        
+        # Delete option
+        with st.expander("🗑️ Delete Simulations"):
+            delete_options = [f"{sim['name']} (ID: {sim['id']})" for sim in simulations]
+            to_delete = st.multiselect("Select simulations to delete", delete_options)
+            
+            if st.button("Delete Selected", type="secondary"):
+                for sim_name in to_delete:
+                    # Extract ID from string
+                    sim_id = sim_name.split("ID: ")[1].replace(")", "")
+                    if SimulationDB.delete_simulation(sim_id):
+                        st.success(f"Deleted simulation {sim_id}")
+                st.rerun()
+    else:
+        st.info("No simulations saved yet. Run a simulation to see it here!")
 
 else:  # COMPARE SAVED SIMULATIONS
     st.header("🔬 Multi-Simulation Comparison")
@@ -1537,11 +2745,14 @@ else:  # COMPARE SAVED SIMULATIONS
             # Determine frame index
             frame_idx = config['frame_idx']
             if config['frame_selection'] == "Final Frame":
+                # Use final frame for each simulation
                 frames = [len(sim['history']) - 1 for sim in simulations]
             elif config['frame_selection'] == "Same Evolution Time":
+                # Use same evolution time (percentage of total steps)
                 target_percentage = 0.8  # 80% of evolution
                 frames = [int(len(sim['history']) * target_percentage) for sim in simulations]
             else:
+                # Specific frame index
                 frames = [min(frame_idx, len(sim['history']) - 1) for sim in simulations]
             
             # Get stress component mapping
@@ -1553,210 +2764,92 @@ else:  # COMPARE SAVED SIMULATIONS
             stress_key = stress_map[config['stress_component']]
             
             # Create comparison based on type
-            if config['type'] == "Overlay Line Profiles":
-                st.subheader("📈 Publication-Quality Overlay Line Profile Comparison")
+            if config['type'] in ["Side-by-Side Heatmaps", "Overlay Line Profiles", 
+                                 "Statistical Summary", "Defect-Stress Correlation"]:
+                # Use enhanced publication-quality plotting
+                st.subheader(f"📰 Publication-Quality {config['type']}")
                 
-                # Create enhanced comparison plot
-                fig = plt.figure(figsize=(16, 12))
+                # Create enhanced plot
+                fig = create_enhanced_comparison_plot(simulations, frames, config, advanced_styling)
                 
-                # Define layout
-                gs = fig.add_gridspec(3, 3, hspace=0.25, wspace=0.25,
-                                     height_ratios=[1, 1, 0.5])
-                
-                # Main comparison plot
-                ax_main = fig.add_subplot(gs[0:2, 0:2])
-                
-                # Individual profile plots
-                ax_profiles = []
-                for i in range(4):
-                    ax_profiles.append(fig.add_subplot(gs[i//2, 2 + (i%2)]))
-                
-                # Statistics table
-                ax_stats = fig.add_subplot(gs[2, :])
-                ax_stats.axis('off')
-                
-                # Plot all simulations on main axis
-                colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
-                
-                for sim_idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
-                    # Get stress data
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
-                    
-                    # Extract line profiles
-                    center_x, center_y = N//2, N//2
-                    length = config.get('probe_length', 80)
-                    orientations = config.get('orientations', [0, 45, 90, 135])
-                    
-                    if orientations:
-                        first_orientation = orientations[0]
-                        profiles = LineProfileAnalyzer.get_line_profiles(
-                            stress_data, center_x, center_y, length, first_orientation
-                        )
-                        
-                        if first_orientation in profiles:
-                            profile_data = profiles[first_orientation]
-                            distances = profile_data['distances']
-                            profile = profile_data['profile']
-                            actual_distances = distances * length * dx
-                            
-                            # Plot on main axis
-                            ax_main.plot(actual_distances, profile,
-                                        color=color,
-                                        linewidth=config.get('profile_linewidth', 2),
-                                        alpha=0.8,
-                                        label=f"{sim['params']['defect_type']} - {sim['params']['orientation']}")
-                
-                ax_main.set_xlabel("Distance (nm)", fontsize=12)
-                ax_main.set_ylabel(f"{config['stress_component']} (GPa)", fontsize=12)
-                ax_main.set_title("Multi-Simulation Profile Overlay", fontsize=14, fontweight='bold')
-                ax_main.legend(fontsize=10, loc='upper right')
-                ax_main.grid(True, alpha=0.2, linestyle='--')
-                ax_main.tick_params(axis='both', which='major', labelsize=10)
-                
-                # Plot individual profiles
-                for idx, (ax, orientation) in enumerate(zip(ax_profiles, orientations[:4])):
-                    for sim_idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
-                        eta, stress_fields = sim['history'][frame]
-                        stress_data = stress_fields[stress_key]
-                        
-                        profiles = LineProfileAnalyzer.get_line_profiles(
-                            stress_data, center_x, center_y, length, orientation
-                        )
-                        
-                        if orientation in profiles:
-                            profile_data = profiles[orientation]
-                            distances = profile_data['distances']
-                            profile = profile_data['profile']
-                            actual_distances = distances * length * dx
-                            
-                            # Sort for clean plotting
-                            sort_idx = np.argsort(actual_distances)
-                            actual_distances = actual_distances[sort_idx]
-                            profile = profile[sort_idx]
-                            
-                            ax.plot(actual_distances, profile,
-                                   color=color,
-                                   linewidth=1.5,
-                                   alpha=0.7)
-                    
-                    ax.set_title(f"{orientation}° Orientation", fontsize=11, fontweight='bold')
-                    ax.set_xlabel("Distance (nm)", fontsize=10)
-                    if idx % 2 == 0:
-                        ax.set_ylabel("Stress (GPa)", fontsize=10)
-                    ax.grid(True, alpha=0.1, linestyle='--')
-                    ax.tick_params(axis='both', which='major', labelsize=9)
-                
-                # Add comprehensive statistics table
-                all_stats = []
-                for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
-                    
-                    profiles = LineProfileAnalyzer.get_line_profiles(
-                        stress_data, center_x, center_y, length, orientations
-                    )
-                    
-                    analysis = LineProfileAnalyzer.analyze_line_profiles(profiles)
-                    
-                    for angle, stats in analysis.items():
-                        all_stats.append({
-                            'Simulation': f"{sim['params']['defect_type']}",
-                            'Orientation': f"{sim['params']['orientation']}",
-                            'Profile Angle (°)': angle,
-                            'Mean Stress (GPa)': f"{stats.get('mean', 0):.3f}",
-                            'Max Stress (GPa)': f"{stats.get('max', 0):.3f}",
-                            'Stress Range (GPa)': f"{stats.get('range', 0):.3f}",
-                            'FWHM': f"{stats.get('fwhm', 0):.3f}"
-                        })
-                
-                if all_stats:
-                    df_stats = pd.DataFrame(all_stats)
-                    
-                    # Create table
-                    table_data = [df_stats.columns.tolist()] + df_stats.values.tolist()
-                    table = ax_stats.table(cellText=table_data,
-                                         cellLoc='center',
-                                         loc='center')
-                    
-                    table.auto_set_font_size(False)
-                    table.set_fontsize(9)
-                    table.scale(1.5, 2.0)
-                    
-                    # Style header row
-                    for j in range(len(df_stats.columns)):
-                        table[(0, j)].set_facecolor('#4A90E2')
-                        table[(0, j)].set_text_props(fontweight='bold', color='white')
-                    
-                    ax_stats.set_title("Comprehensive Statistical Comparison",
-                                     fontsize=12, fontweight='bold', pad=20)
-                
-                plt.suptitle("Publication-Quality Multi-Simulation Comparison",
-                           fontsize=16, fontweight='bold', y=0.98)
-                plt.tight_layout()
-                
-                st.pyplot(fig)
-                
-                # Export options
-                col1, col2 = st.columns(2)
+                # Display with enhanced options
+                col1, col2, col3 = st.columns([2, 1, 1])
                 with col1:
-                    if st.button("📥 Download Comparison as PDF", type="primary"):
-                        buf = BytesIO()
-                        fig.savefig(buf, format='pdf', dpi=600, bbox_inches='tight')
-                        buf.seek(0)
-                        st.download_button(
-                            "Download PDF Report",
-                            buf.getvalue(),
-                            "multi_simulation_comparison.pdf",
-                            "application/pdf"
-                        )
+                    st.pyplot(fig)
+                
                 with col2:
-                    if st.button("📊 Download Statistics as CSV", type="secondary"):
-                        if all_stats:
-                            csv = df_stats.to_csv(index=False)
-                            st.download_button(
-                                "Download CSV",
-                                csv,
-                                "profile_statistics.csv",
-                                "text/csv"
-                            )
+                    # Quick export info
+                    st.info(f"""
+                    **Publication Ready:**
+                    - Journal: {advanced_styling.get('journal_style', 'custom').title()}
+                    - DPI: {advanced_styling.get('figure_dpi', 600)}
+                    - Vector: {'Yes' if advanced_styling.get('vector_output', True) else 'No'}
+                    """)
+                
+                with col3:
+                    # Show figure info
+                    fig_size = fig.get_size_inches()
+                    st.metric("Figure Size", f"{fig_size[0]:.1f} × {fig_size[1]:.1f} in")
+                    st.metric("Resolution", f"{advanced_styling.get('figure_dpi', 600)} DPI")
+                
+                # Additional statistics for certain plot types
+                if config['type'] in ["Statistical Summary", "Defect-Stress Correlation"]:
+                    with st.expander("📊 Detailed Statistics", expanded=False):
+                        # Generate detailed statistics
+                        stats_data = []
+                        for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+                            eta, stress_fields = sim['history'][frame]
+                            stress_data = stress_fields[stress_key].flatten()
+                            stress_data = stress_data[np.isfinite(stress_data)]
+                            
+                            stats_data.append({
+                                'Simulation': f"{sim['params']['defect_type']} - {sim['params']['orientation']}",
+                                'N': len(stress_data),
+                                'Max (GPa)': float(np.nanmax(stress_data)),
+                                'Mean (GPa)': float(np.nanmean(stress_data)),
+                                'Median (GPa)': float(np.nanmedian(stress_data)),
+                                'Std Dev': float(np.nanstd(stress_data)),
+                                'Skewness': float(stats.skew(stress_data)),
+                                'Kurtosis': float(stats.kurtosis(stress_data))
+                            })
+                        
+                        df_stats = pd.DataFrame(stats_data)
+                        st.dataframe(df_stats.style.format({
+                            'Max (GPa)': '{:.3f}',
+                            'Mean (GPa)': '{:.3f}',
+                            'Median (GPa)': '{:.3f}',
+                            'Std Dev': '{:.3f}',
+                            'Skewness': '{:.3f}',
+                            'Kurtosis': '{:.3f}'
+                        }), use_container_width=True)
             
-            elif config['type'] == "Multi-Orientation Line Analysis":
-                st.subheader("📐 Multi-Orientation Line Profile Analysis")
-                
-                # Select a simulation for detailed analysis
-                sim_idx = st.selectbox(
-                    "Select simulation for detailed analysis",
-                    options=range(len(simulations)),
-                    format_func=lambda i: f"{simulations[i]['params']['defect_type']} - {simulations[i]['params']['orientation']}"
-                )
-                
-                sim = simulations[sim_idx]
-                frame = frames[sim_idx]
-                
-                # Create publication-quality plot for selected simulation
-                profile_config = {
-                    'center_x': N//2,
-                    'center_y': N//2,
-                    'length': config.get('probe_length', 80),
-                    'orientations': config.get('orientations', [0, 45, 90, 135]),
-                    'stress_component': config['stress_component'],
-                    'probe_style': config.get('probe_style', 'realistic')
-                }
-                
-                fig = create_publication_quality_plot(sim, frame, profile_config, {})
-                
+            elif config['type'] == "Overlay Line Profiles":
+                # This is now handled by create_enhanced_line_profiles
+                pass
+            
+            # Handle other comparison types
+            elif config['type'] == "Stress Component Cross-Correlation":
+                fig = create_stress_cross_correlation_plot(simulations, frames, config, advanced_styling)
                 st.pyplot(fig)
             
-            elif config['type'] == "Side-by-Side Heatmaps":
-                st.subheader("📰 Side-by-Side Heatmap Comparison")
+            elif config['type'] == "Evolution Timeline":
+                fig = create_evolution_timeline_plot(simulations, config, advanced_styling)
+                st.pyplot(fig)
+            
+            elif config['type'] == "Contour Comparison":
+                fig = create_contour_comparison_plot(simulations, frames, config, advanced_styling)
+                st.pyplot(fig)
+            
+            # 3D Surface Comparison (simplified 2D version)
+            elif config['type'] == "3D Surface Comparison":
+                st.subheader("🗻 3D Surface Comparison (2D Projection)")
                 
-                # Create heatmap comparison
+                # Create 2D surface plots
                 n_sims = len(simulations)
-                cols = min(3, n_sims)
+                cols = min(2, n_sims)
                 rows = (n_sims + cols - 1) // cols
                 
-                fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 4*rows))
+                fig, axes = plt.subplots(rows, cols, figsize=(8*cols, 6*rows), constrained_layout=True)
                 
                 if rows == 1 and cols == 1:
                     axes = np.array([[axes]])
@@ -1768,125 +2861,47 @@ else:  # COMPARE SAVED SIMULATIONS
                 for idx, (sim, frame) in enumerate(zip(simulations, frames)):
                     row = idx // cols
                     col = idx % cols
-                    ax = axes[row, col] if rows > 1 or cols > 1 else axes[idx]
+                    ax = axes[row, col]
                     
+                    # Get data
                     eta, stress_fields = sim['history'][frame]
                     stress_data = stress_fields[stress_key]
                     
-                    im = ax.imshow(stress_data, extent=extent,
-                                  cmap=plt.cm.get_cmap(COLORMAPS.get(
-                                      sim['params']['sigma_cmap'], 'hot')),
-                                  origin='lower',
-                                  aspect='auto')
+                    # Create surface plot (simplified 2D)
+                    im = ax.imshow(stress_data, extent=extent, 
+                                  cmap=plt.cm.get_cmap(COLORMAPS.get(sim['params']['sigma_cmap'], 'viridis')), 
+                                  origin='lower', aspect='equal')  # Fixed
                     
-                    ax.set_title(f"{sim['params']['defect_type']}\n{sim['params']['orientation']}",
-                                fontsize=10)
-                    ax.set_xlabel("x (nm)", fontsize=8)
-                    ax.set_ylabel("y (nm)", fontsize=8)
+                    ax.set_title(f"{sim['params']['defect_type']} - {sim['params']['orientation']}")
+                    ax.set_xlabel("x (nm)")
+                    ax.set_ylabel("y (nm)")
                     
-                    if idx == 0:
-                        plt.colorbar(im, ax=ax, shrink=0.8).set_label(
-                            f"{config['stress_component']} (GPa)", fontsize=8
-                        )
+                    plt.colorbar(im, ax=ax, shrink=0.8)
                 
                 # Hide empty subplots
                 for idx in range(n_sims, rows*cols):
                     row = idx // cols
                     col = idx % cols
-                    if rows > 1 and cols > 1:
-                        axes[row, col].axis('off')
-                    elif rows == 1:
-                        axes[col].axis('off')
-                    else:
-                        axes[row].axis('off')
+                    axes[row, col].axis('off')
                 
-                plt.tight_layout()
+                # Apply styling
+                fig = EnhancedFigureStyler.apply_advanced_styling(fig, axes, advanced_styling)
                 st.pyplot(fig)
             
-            elif config['type'] == "Statistical Summary":
-                st.subheader("📊 Comprehensive Statistical Summary")
+            # Post-processing options
+            with st.expander("🔄 Real-time Post-Processing", expanded=False):
+                st.subheader("Live Figure Customization")
                 
-                # Collect statistics from all simulations
-                all_stats = []
+                col1, col2 = st.columns(2)
+                with col1:
+                    update_fonts = st.checkbox("Update Font Sizes", True)
+                    update_lines = st.checkbox("Update Line Styles", True)
+                with col2:
+                    update_colors = st.checkbox("Update Colors", True)
+                    update_grid = st.checkbox("Update Grid", True)
                 
-                for sim, frame in zip(simulations, frames):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
-                    
-                    # Basic statistics
-                    flat_data = stress_data.flatten()
-                    stats = {
-                        'Simulation': f"{sim['params']['defect_type']}",
-                        'Orientation': sim['params']['orientation'],
-                        'Mean (GPa)': np.nanmean(flat_data),
-                        'Std Dev (GPa)': np.nanstd(flat_data),
-                        'Min (GPa)': np.nanmin(flat_data),
-                        'Max (GPa)': np.nanmax(flat_data),
-                        'Range (GPa)': np.nanmax(flat_data) - np.nanmin(flat_data),
-                        'Skewness': stats.skew(flat_data[np.isfinite(flat_data)]),
-                        'Kurtosis': stats.kurtosis(flat_data[np.isfinite(flat_data)])
-                    }
-                    
-                    all_stats.append(stats)
-                
-                # Create summary dataframe
-                df_summary = pd.DataFrame(all_stats)
-                
-                # Display summary table
-                st.dataframe(df_summary, use_container_width=True)
-                
-                # Create visualization
-                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-                
-                # Plot 1: Mean stress comparison
-                axes[0, 0].bar(range(len(simulations)), 
-                              [s['Mean (GPa)'] for s in all_stats],
-                              color=plt.cm.Set3(np.linspace(0, 1, len(simulations))))
-                axes[0, 0].set_title("Mean Stress Comparison", fontsize=12, fontweight='bold')
-                axes[0, 0].set_ylabel("Stress (GPa)", fontsize=10)
-                axes[0, 0].set_xticks(range(len(simulations)))
-                axes[0, 0].set_xticklabels([f"{s['Simulation']}\n{s['Orientation']}" for s in all_stats],
-                                          rotation=45, ha='right', fontsize=9)
-                
-                # Plot 2: Stress range comparison
-                axes[0, 1].bar(range(len(simulations)), 
-                              [s['Range (GPa)'] for s in all_stats],
-                              color=plt.cm.Set2(np.linspace(0, 1, len(simulations))))
-                axes[0, 1].set_title("Stress Range Comparison", fontsize=12, fontweight='bold')
-                axes[0, 1].set_ylabel("Stress Range (GPa)", fontsize=10)
-                axes[0, 1].set_xticks(range(len(simulations)))
-                axes[0, 1].set_xticklabels([f"{s['Simulation']}\n{s['Orientation']}" for s in all_stats],
-                                          rotation=45, ha='right', fontsize=9)
-                
-                # Plot 3: Statistical distribution
-                for idx, stats in enumerate(all_stats):
-                    axes[1, 0].hist(stress_fields[stress_key].flatten(), 
-                                   bins=50, alpha=0.5, 
-                                   label=f"{stats['Simulation']}",
-                                   density=True)
-                axes[1, 0].set_title("Stress Distribution Comparison", fontsize=12, fontweight='bold')
-                axes[1, 0].set_xlabel("Stress (GPa)", fontsize=10)
-                axes[1, 0].set_ylabel("Probability Density", fontsize=10)
-                axes[1, 0].legend(fontsize=9)
-                
-                # Plot 4: Skewness vs Kurtosis
-                scatter = axes[1, 1].scatter([s['Skewness'] for s in all_stats],
-                                            [s['Kurtosis'] for s in all_stats],
-                                            s=100, c=range(len(simulations)),
-                                            cmap='rainbow')
-                axes[1, 1].set_title("Distribution Shape Analysis", fontsize=12, fontweight='bold')
-                axes[1, 1].set_xlabel("Skewness", fontsize=10)
-                axes[1, 1].set_ylabel("Kurtosis", fontsize=10)
-                
-                # Add labels for scatter points
-                for idx, stats in enumerate(all_stats):
-                    axes[1, 1].text(stats['Skewness'], stats['Kurtosis'],
-                                   f"{stats['Simulation']}",
-                                   fontsize=8, ha='center', va='bottom')
-                
-                plt.colorbar(scatter, ax=axes[1, 1], label='Simulation Index')
-                plt.tight_layout()
-                st.pyplot(fig)
+                if st.button("🔄 Refresh with New Styling", type="secondary"):
+                    st.rerun()
             
             # Clear comparison flag
             if 'run_comparison' in st.session_state:
@@ -1894,18 +2909,49 @@ else:  # COMPARE SAVED SIMULATIONS
     
     else:
         st.info("Select simulations in the sidebar and click 'Run Comparison' to start!")
+        
+        # Show available simulations
+        simulations = SimulationDB.get_simulation_list()
+        
+        if simulations:
+            st.subheader("📚 Available Simulations")
+            
+            # Group by defect type
+            defect_groups = {}
+            for sim in simulations:
+                defect = sim['params']['defect_type']
+                if defect not in defect_groups:
+                    defect_groups[defect] = []
+                defect_groups[defect].append(sim)
+            
+            for defect_type, sims in defect_groups.items():
+                with st.expander(f"{defect_type} ({len(sims)} simulations)"):
+                    for sim in sims:
+                        params = sim['params']
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        with col1:
+                            st.text(f"ID: {sim['id']}")
+                        with col2:
+                            st.text(f"Orientation: {params['orientation']}")
+                        with col3:
+                            st.text(f"ε*={params['eps0']:.2f}, κ={params['kappa']:.2f}")
+        else:
+            st.warning("No simulations available. Run some simulations first!")
 
 # =============================================
-# EXPORT FUNCTIONALITY
+# EXPORT FUNCTIONALITY WITH POST-PROCESSING
 # =============================================
 st.sidebar.header("💾 Export Options")
 
 with st.sidebar.expander("📥 Advanced Export"):
     export_format = st.selectbox(
         "Export Format",
-        ["Complete Package (JSON + CSV + PNG)", "Publication-Ready Figures", 
-         "Line Profile Data", "Statistical Summary"]
+        ["Complete Package (JSON + CSV + PNG)", "JSON Parameters Only", 
+         "Publication-Ready Figures", "Raw Data CSV"]
     )
+    
+    include_styling = st.checkbox("Include Styling Parameters", True)
+    high_resolution = st.checkbox("High Resolution Figures", True)
     
     if st.button("📥 Generate Custom Export", type="primary"):
         simulations = SimulationDB.get_all_simulations()
@@ -1916,12 +2962,49 @@ with st.sidebar.expander("📥 Advanced Export"):
             with st.spinner("Creating custom export package..."):
                 buffer = BytesIO()
                 with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    # Create summary
+                    # Export each simulation
+                    for sim_id, sim_data in simulations.items():
+                        sim_dir = f"simulation_{sim_id}"
+                        
+                        # Export parameters
+                        params_json = json.dumps(sim_data['params'], indent=2)
+                        zf.writestr(f"{sim_dir}/parameters.json", params_json)
+                        
+                        # Export metadata
+                        metadata_json = json.dumps(sim_data['metadata'], indent=2)
+                        zf.writestr(f"{sim_dir}/metadata.json", metadata_json)
+                        
+                        # Export styling if requested
+                        if include_styling:
+                            styling_json = json.dumps(advanced_styling, indent=2)
+                            zf.writestr(f"{sim_dir}/styling_parameters.json", styling_json)
+                        
+                        # Export data frames
+                        if export_format in ["Complete Package (JSON + CSV + PNG)", "Raw Data CSV"]:
+                            for i, (eta, stress_fields) in enumerate(sim_data['history']):
+                                df = pd.DataFrame({
+                                    'eta': eta.flatten(order='F'),
+                                    'sxx': stress_fields['sxx'].flatten(order='F'),
+                                    'syy': stress_fields['syy'].flatten(order='F'),
+                                    'sxy': stress_fields['sxy'].flatten(order='F'),
+                                    'sigma_mag': stress_fields['sigma_mag'].flatten(order='F'),
+                                    'sigma_hydro': stress_fields['sigma_hydro'].flatten(order='F'),
+                                    'von_mises': stress_fields['von_mises'].flatten(order='F')
+                                })
+                                zf.writestr(f"{sim_dir}/frame_{i:04d}.csv", df.to_csv(index=False))
+                    
+                    # Create summary file
                     summary = f"""MULTI-SIMULATION EXPORT SUMMARY
 ========================================
 Generated: {datetime.now().isoformat()}
 Total Simulations: {len(simulations)}
 Export Format: {export_format}
+Includes Styling: {include_styling}
+High Resolution: {high_resolution}
+
+STYLING PARAMETERS:
+-------------------
+{json.dumps(advanced_styling, indent=2)}
 
 SIMULATIONS:
 ------------
@@ -1952,4 +3035,164 @@ SIMULATIONS:
                 )
                 st.sidebar.success("Export package ready!")
 
-st.caption("🔬 Advanced Multi-Defect Comparison • Publication-Quality Output • Multi-Orientation Line Profiles • 2025")
+# =============================================
+# THEORETICAL ANALYSIS
+# =============================================
+with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=False):
+    st.markdown("""
+    ### 🎯 **Enhanced Multi-Simulation Comparison Platform**
+    
+    #### **📊 NEW: Enhanced Line Profile Analysis**
+    
+    **Multiple Profile Directions:**
+    - **Horizontal Profiles**: Traditional stress analysis along x-axis
+    - **Vertical Profiles**: Stress variation along y-axis (now properly scaled!)
+    - **Diagonal Profiles**: 45° profiles for crystallographic analysis
+    - **Anti-Diagonal Profiles**: 135° profiles for complete coverage
+    - **Custom Angle Profiles**: Any angle from -180° to 180°
+    - **Multiple Profile Mode**: Compare all profiles simultaneously
+    
+    **FIXED: Aspect Ratio Scaling Issue**
+    - **Problem**: Horizontal profiles appeared stretched compared to vertical
+    - **Solution**: All plots now use `aspect='equal'` for proper scaling
+    - **Result**: Equal physical dimensions in x and y directions
+    - **Benefit**: Accurate distance measurements in all directions
+    
+    **Enhanced Profile Features:**
+    - **Position Control**: Adjust profile position relative to center (0-100%)
+    - **Proper Distance Calculation**: Correct scaling for diagonal distances (√2 factor)
+    - **Bilinear Interpolation**: Smooth profiles for custom angles
+    - **Visual Overlay**: Clear indication of profile locations on heatmaps
+    - **Color-coded Profiles**: Different colors for different profile types
+    
+    #### **📈 Scientific Benefits of Enhanced Profiles:**
+    
+    **Crystallographic Accuracy:**
+    - **Diagonal Profiles**: Capture stress along {110} directions
+    - **Custom Angles**: Align with specific crystallographic planes
+    - **Proper Scaling**: Accurate stress gradients in all directions
+    - **Orientation Analysis**: Study anisotropic stress distributions
+    
+    **Physical Insights:**
+    - **Anisotropy Detection**: Compare horizontal vs vertical stress gradients
+    - **Symmetry Analysis**: Diagonal vs anti-diagonal comparisons
+    - **Habit Plane Effects**: Profile alignment with defect orientation
+    - **Stress Concentration**: Identify hotspots in specific directions
+    
+    #### **🔧 Technical Implementation:**
+    
+    **EnhancedLineProfiler Class:**
+    - **Robust Extraction**: Handles all profile types with proper boundary conditions
+    - **Distance Calculation**: Correct physical distances for all orientations
+    - **Interpolation**: Smooth profiles with bilinear interpolation
+    - **Visualization**: Clear overlay of profile locations
+    
+    **Aspect Ratio Fix:**
+    - **Heatmaps**: `aspect='equal'` for proper scaling
+    - **Line Plots**: Correct distance calculations
+    - **Consistency**: Uniform scaling across all visualizations
+    - **Publication Quality**: Proper aspect ratios for scientific figures
+    
+    **Multiple Profile Mode:**
+    - **Simultaneous Comparison**: View all profiles in single figure
+    - **Statistical Summary**: Compare peak stresses across profiles
+    - **Visual Correlation**: See how stress varies with direction
+    - **Publication Layout**: Multi-panel figures for comprehensive analysis
+    
+    ### **🎨 Updated Styling & Visualization:**
+    
+    **Enhanced Color Schemes:**
+    - **Profile-specific Colors**: Red (horizontal), Blue (vertical), Green (diagonal)
+    - **Clear Legends**: Distinguish between simulation and profile types
+    - **Consistent Styling**: Maintain publication-quality throughout
+    
+    **Improved Layout:**
+    - **Multi-panel Figures**: A) Main profiles, B) Statistics, C) Locations, D) Individual profiles
+    - **Clear Labeling**: Panel labels (A, B, C, D) for publication
+    - **Optimized Spacing**: Balanced layout for clarity
+    - **Responsive Design**: Adapts to number of profiles and simulations
+    
+    #### **📊 Key Physical Insights from Enhanced Analysis:**
+    
+    **Horizontal vs Vertical Stress:**
+    - **Anisotropy Detection**: Different stress magnitudes in x vs y directions
+    - **Habit Plane Effects**: Orientation-dependent stress distributions
+    - **Defect Shape Influence**: How defect geometry affects stress anisotropy
+    
+    **Diagonal Stress Analysis:**
+    - **Crystallographic Alignment**: Stress along {110} family directions
+    - **Shear Stress Components**: Diagonal profiles capture shear components
+    - **Symmetry Breaking**: Detect deviations from cubic symmetry
+    
+    **Custom Angle Profiles:**
+    - **Specific Crystallographic Directions**: Align with experimental measurements
+    - **Gradient Analysis**: Stress gradients in arbitrary directions
+    - **Complete Coverage**: Full 360° stress characterization
+    
+    ### **🔬 Enhanced Scientific Workflow:**
+    
+    1. **Run Simulations** with different defect types and orientations
+    2. **Select Profile Type** (Horizontal, Vertical, Diagonal, Custom, Multiple)
+    3. **Adjust Position** to explore different regions of the defect
+    4. **Compare Profiles** across multiple simulations
+    5. **Analyze Anisotropy** by comparing different profile directions
+    6. **Export Results** for publication with proper scaling
+    
+    #### **📈 Enhanced Publication Output:**
+    
+    **Multi-profile Figures:**
+    - **Panel A**: Overlay of selected profiles
+    - **Panel B**: Statistical comparison of peak stresses
+    - **Panel C**: Visual map showing profile locations
+    - **Panel D**: Individual profile plots (for multiple profiles mode)
+    
+    **Proper Scaling:**
+    - **Equal Aspect Ratio**: True physical dimensions maintained
+    - **Correct Distance Labels**: Accurate nanometer measurements
+    - **Consistent Units**: Uniform scaling across all plots
+    
+    **Enhanced Annotation:**
+    - **Profile Type Labels**: Clear indication of each profile
+    - **Distance Markers**: Proper scaling for all orientations
+    - **Color Coding**: Intuitive color scheme for different profiles
+    
+    ### **🔬 Platform Capabilities Summary:**
+    
+    **Enhanced Line Profile Analysis:**
+    - **5 Profile Types**: Horizontal, Vertical, Diagonal, Anti-Diagonal, Custom
+    - **Position Control**: 0-100% from center
+    - **Angle Control**: -180° to 180° for custom profiles
+    - **Multiple Mode**: Simultaneous comparison of all profiles
+    
+    **Fixed Scaling Issues:**
+    - **Aspect Ratio Correction**: Proper `aspect='equal'` implementation
+    - **Distance Calculation**: Correct scaling for all orientations
+    - **Consistent Visualization**: Uniform scaling across all plots
+    
+    **Scientific Accuracy:**
+    - **Crystallographic Alignment**: Profiles along specific crystallographic directions
+    - **Physical Distance**: Correct nanometer measurements
+    - **Stress Gradients**: Accurate calculation in all directions
+    
+    **Publication Quality:**
+    - **Multi-panel Layout**: Comprehensive analysis in single figure
+    - **Professional Styling**: Journal-ready formatting
+    - **Clear Visualization**: Intuitive presentation of complex data
+    
+    **Advanced crystallographic stress analysis platform with enhanced line profile capabilities and proper scaling!**
+    """)
+    
+    # Display platform statistics
+    simulations = SimulationDB.get_all_simulations()
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Simulations", len(simulations))
+    with col2:
+        total_frames = sum([len(sim['history']) for sim in simulations.values()]) if simulations else 0
+        st.metric("Total Frames", f"{total_frames:,}")
+    with col3:
+        st.metric("Profile Types", "5+")
+    with col4:
+        st.metric("Fixed Scaling", "✓ Aspect Ratio")
+
+st.caption("🔬 Enhanced Multi-Defect Comparison • Multi-direction Line Profiles • Fixed Scaling • 2025")
