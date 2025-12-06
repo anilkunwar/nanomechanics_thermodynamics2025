@@ -78,13 +78,24 @@
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual12-streamlit-red)](https://defect-evolution-in-nanomaterial26.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24)
 
 Excellent postprocessing
+
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual13-streamlit-red)](https://defect-evolution-in-nanomaterial27.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24) 
 
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual14-streamlit-red)](https://defect-evolution-in-nanomaterial28.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24) 
 
 [![continuummodelsintering2d](https://img.shields.io/badge/2dvisual15-streamlit-red)](https://defect-evolution-in-nanomaterial29.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual16-streamlit-red)](https://defect-evolution-in-nanomaterial30.streamlit.app/) (2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24) 
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual16-streamlit-red)](https://defect-evolution-in-nanomaterial30.streamlit.app/) (Excellent, 2D with scatter diagrams, Comprehensive stress analysis - anisotropic, comparison between different aspects of defects,  enhanced 24)   
+
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual17-streamlit-red)](https://defect-evolution-in-nanomaterial31.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual18-streamlit-red)](https://defect-evolution-in-nanomaterial32.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual19-streamlit-red)](https://defect-evolution-in-nanomaterial33.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual20-streamlit-red)](https://defect-evolution-in-nanomaterial34.streamlit.app/)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/2dvisual21-streamlit-red)](https://defect-evolution-in-nanomaterial35.streamlit.app/)
 
 
 
