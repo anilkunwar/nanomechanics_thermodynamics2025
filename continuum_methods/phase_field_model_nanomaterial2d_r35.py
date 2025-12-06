@@ -233,9 +233,9 @@ C11 = 124.0  # ± 2 GPa
 C12 = 93.4   # ± 2 GPa
 C44 = 46.1   # ± 1 GPa
 
-# Grid parameters
-N = 192  # Increased for better visualization
-dx = 0.08  # Finer grid spacing (nm)
+# Grid parameters - Using original robust values
+N = 128  # Original robust value
+dx = 0.1  # Original robust value (nm)
 extent = [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
 X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
                    np.linspace(extent[2], extent[3], N))
@@ -305,6 +305,158 @@ vonmises_cmaps = ['plasma', 'inferno', 'magma', 'rocket', 'adv_mat_stress']
 magnitude_cmaps = ['viridis', 'mako', 'crest', 'nature_sequential']
 
 cmap_list = list(COLORMAPS.keys())
+
+# =============================================
+# JOURNAL-SPECIFIC STYLING TEMPLATES
+# =============================================
+class JournalTemplates:
+    """Publication-quality journal templates"""
+    
+    @staticmethod
+    def get_journal_styles():
+        """Return journal-specific style parameters"""
+        return {
+            'nature': {
+                'figure_width_single': 8.9,  # cm to inches
+                'figure_width_double': 18.3,
+                'font_family': 'Arial',
+                'font_size_small': 7,
+                'font_size_medium': 8,
+                'font_size_large': 9,
+                'line_width': 0.5,
+                'axes_linewidth': 0.5,
+                'tick_width': 0.5,
+                'tick_length': 2,
+                'grid_alpha': 0.1,
+                'dpi': 600,
+                'color_cycle': ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+            },
+            'science': {
+                'figure_width_single': 5.5,
+                'figure_width_double': 11.4,
+                'font_family': 'Helvetica',
+                'font_size_small': 8,
+                'font_size_medium': 9,
+                'font_size_large': 10,
+                'line_width': 0.75,
+                'axes_linewidth': 0.75,
+                'tick_width': 0.75,
+                'tick_length': 3,
+                'grid_alpha': 0.15,
+                'dpi': 600,
+                'color_cycle': ['#0072BD', '#D95319', '#EDB120', '#7E2F8E', '#77AC30',
+                              '#4DBEEE', '#A2142F', '#FF00FF', '#00FFFF', '#FFA500']
+            },
+            'advanced_materials': {
+                'figure_width_single': 8.6,
+                'figure_width_double': 17.8,
+                'font_family': 'Arial',
+                'font_size_small': 8,
+                'font_size_medium': 9,
+                'font_size_large': 10,
+                'line_width': 1.0,
+                'axes_linewidth': 1.0,
+                'tick_width': 1.0,
+                'tick_length': 4,
+                'grid_alpha': 0.2,
+                'dpi': 600,
+                'color_cycle': ['#004488', '#DDAA33', '#BB5566', '#000000', '#44AA99',
+                              '#882255', '#117733', '#999933', '#AA4499', '#88CCEE']
+            },
+            'prl': {
+                'figure_width_single': 3.4,
+                'figure_width_double': 7.0,
+                'font_family': 'Times New Roman',
+                'font_size_small': 8,
+                'font_size_medium': 10,
+                'font_size_large': 12,
+                'line_width': 1.0,
+                'axes_linewidth': 1.0,
+                'tick_width': 1.0,
+                'tick_length': 4,
+                'grid_alpha': 0,
+                'dpi': 600,
+                'color_cycle': ['#000000', '#E69F00', '#56B4E9', '#009E73', '#F0E442',
+                              '#0072B2', '#D55E00', '#CC79A7', '#999999', '#FFFFFF']
+            },
+            'custom': {
+                'figure_width_single': 6.0,
+                'figure_width_double': 12.0,
+                'font_family': 'DejaVu Sans',
+                'font_size_small': 10,
+                'font_size_medium': 12,
+                'font_size_large': 14,
+                'line_width': 1.5,
+                'axes_linewidth': 1.5,
+                'tick_width': 1.0,
+                'tick_length': 5,
+                'grid_alpha': 0.3,
+                'dpi': 300,
+                'color_cycle': plt.cm.Set2(np.linspace(0, 1, 10))
+            }
+        }
+    
+    @staticmethod
+    def apply_journal_style(fig, axes, journal_name='nature'):
+        """Apply journal-specific styling to figure"""
+        styles = JournalTemplates.get_journal_styles()
+        style = styles.get(journal_name, styles['nature'])
+        
+        # Set rcParams for consistent styling
+        rcParams.update({
+            'font.family': style['font_family'],
+            'font.size': style['font_size_medium'],
+            'axes.linewidth': style['axes_linewidth'],
+            'axes.labelsize': style['font_size_medium'],
+            'axes.titlesize': style['font_size_large'],
+            'xtick.labelsize': style['font_size_small'],
+            'ytick.labelsize': style['font_size_small'],
+            'legend.fontsize': style['font_size_small'],
+            'figure.titlesize': style['font_size_large'],
+            'lines.linewidth': style['line_width'],
+            'lines.markersize': 4,
+            'xtick.major.width': style['tick_width'],
+            'ytick.major.width': style['tick_width'],
+            'xtick.minor.width': style['tick_width'] * 0.5,
+            'ytick.minor.width': style['tick_width'] * 0.5,
+            'xtick.major.size': style['tick_length'],
+            'ytick.major.size': style['tick_length'],
+            'xtick.minor.size': style['tick_length'] * 0.6,
+            'ytick.minor.size': style['tick_length'] * 0.6,
+            'axes.grid': False,
+            'savefig.dpi': style['dpi'],
+            'savefig.bbox': 'tight',
+            'savefig.pad_inches': 0.1,
+            'axes.prop_cycle': plt.cycler(color=style['color_cycle'])
+        })
+        
+        # Apply to all axes
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
+        
+        for ax in axes_flat:
+            if ax is not None:
+                # Add minor ticks
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+                ax.yaxis.set_minor_locator(AutoMinorLocator())
+                
+                # Set spine visibility
+                ax.spines['top'].set_visible(True)
+                ax.spines['right'].set_visible(True)
+                ax.spines['top'].set_linewidth(style['axes_linewidth'] * 0.5)
+                ax.spines['right'].set_linewidth(style['axes_linewidth'] * 0.5)
+                
+                # Improve tick formatting
+                ax.tick_params(which='both', direction='in', top=True, right=True)
+                ax.tick_params(which='major', length=style['tick_length'])
+                ax.tick_params(which='minor', length=style['tick_length'] * 0.6)
+        
+        return fig, style
 
 # =============================================
 # ADVANCED PROFILE EXTRACTION SYSTEM
@@ -558,47 +710,276 @@ class PublicationProfileExtractor:
             }
         
         return profiles
+
+# =============================================
+# POST-PROCESSING STYLING SYSTEM
+# =============================================
+class FigureStyler:
+    """Advanced figure styling and post-processing system"""
     
     @staticmethod
-    def create_multi_component_comparison(simulations, frames, component_angles_map):
-        """
-        Create comprehensive multi-component, multi-angle profile comparison
+    def apply_advanced_styling(fig, axes, style_params):
+        """Apply advanced styling to figure and axes"""
         
-        Parameters:
-        -----------
-        simulations : list
-            List of simulation data dictionaries
-        frames : list
-            Frame indices for each simulation
-        component_angles_map : dict
-            Mapping of component names to optimal angles
-            Example: {'sigma_hydro': [45, 135], 'von_mises': [0, 90]}
+        # Apply to all axes in figure
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
         
-        Returns:
-        --------
-        comparison_data : dict
-            Nested dictionary of profiles for each simulation and component
-        """
-        comparison_data = {}
+        for ax in axes_flat:
+            if ax is not None:
+                # Apply axis styling
+                ax.tick_params(axis='both', which='major', 
+                              labelsize=style_params.get('tick_font_size', 12),
+                              width=style_params.get('tick_width', 2.0),
+                              length=style_params.get('tick_length', 6))
+                
+                # Apply spine styling
+                for spine in ax.spines.values():
+                    spine.set_linewidth(style_params.get('spine_width', 2.5))
+                    spine.set_color(style_params.get('spine_color', 'black'))
+                
+                # Apply grid if requested
+                if style_params.get('show_grid', True):
+                    ax.grid(True, 
+                           alpha=style_params.get('grid_alpha', 0.3),
+                           linestyle=style_params.get('grid_style', '--'),
+                           linewidth=style_params.get('grid_width', 0.5))
+                
+                # Apply title styling
+                if hasattr(ax, 'title'):
+                    title = ax.get_title()
+                    if title:
+                        ax.set_title(title, 
+                                    fontsize=style_params.get('title_font_size', 16),
+                                    fontweight=style_params.get('title_weight', 'bold'),
+                                    color=style_params.get('title_color', 'black'))
+                
+                # Apply label styling
+                if ax.get_xlabel():
+                    ax.set_xlabel(ax.get_xlabel(),
+                                 fontsize=style_params.get('label_font_size', 14),
+                                 fontweight=style_params.get('label_weight', 'bold'))
+                if ax.get_ylabel():
+                    ax.set_ylabel(ax.get_ylabel(),
+                                 fontsize=style_params.get('label_font_size', 14),
+                                 fontweight=style_params.get('label_weight', 'bold'))
         
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            eta, stress_fields = sim['history'][frame]
+        # Apply figure background
+        if style_params.get('figure_facecolor'):
+            fig.set_facecolor(style_params['figure_facecolor'])
+        
+        return fig
+    
+    @staticmethod
+    def get_styling_controls():
+        """Get comprehensive styling controls"""
+        style_params = {}
+        
+        st.sidebar.header("🎨 Advanced Post-Processing")
+        
+        with st.sidebar.expander("📐 Font & Text Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['title_font_size'] = st.slider("Title Size", 8, 32, 16)
+                style_params['label_font_size'] = st.slider("Label Size", 8, 28, 14)
+                style_params['tick_font_size'] = st.slider("Tick Size", 6, 20, 12)
+            with col2:
+                style_params['title_weight'] = st.selectbox("Title Weight", 
+                                                           ['normal', 'bold', 'light', 'semibold'], 
+                                                           index=1)
+                style_params['label_weight'] = st.selectbox("Label Weight", 
+                                                           ['normal', 'bold', 'light'], 
+                                                           index=1)
+                style_params['title_color'] = st.color_picker("Title Color", "#000000")
+        
+        with st.sidebar.expander("📏 Line & Border Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['line_width'] = st.slider("Line Width", 0.5, 5.0, 2.0, 0.5)
+                style_params['spine_width'] = st.slider("Spine Width", 1.0, 4.0, 2.5, 0.5)
+                style_params['tick_width'] = st.slider("Tick Width", 0.5, 3.0, 2.0, 0.5)
+            with col2:
+                style_params['tick_length'] = st.slider("Tick Length", 2, 15, 6)
+                style_params['spine_color'] = st.color_picker("Spine Color", "#000000")
+                style_params['grid_width'] = st.slider("Grid Width", 0.1, 2.0, 0.5, 0.1)
+        
+        with st.sidebar.expander("🌐 Grid & Background", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['show_grid'] = st.checkbox("Show Grid", True)
+                style_params['grid_style'] = st.selectbox("Grid Style", 
+                                                         ['-', '--', '-.', ':'],
+                                                         index=1)
+                style_params['grid_alpha'] = st.slider("Grid Alpha", 0.0, 1.0, 0.3, 0.05)
+            with col2:
+                style_params['figure_facecolor'] = st.color_picker("Figure Background", "#FFFFFF")
+                style_params['axes_facecolor'] = st.color_picker("Axes Background", "#FFFFFF")
+        
+        with st.sidebar.expander("📊 Legend & Annotation", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['legend_fontsize'] = st.slider("Legend Size", 8, 20, 12)
+                style_params['legend_location'] = st.selectbox("Legend Location",
+                                                              ['best', 'upper right', 'upper left', 
+                                                               'lower right', 'lower left', 'center'],
+                                                              index=0)
+            with col2:
+                style_params['show_legend'] = st.checkbox("Show Legend", True)
+                style_params['legend_frame'] = st.checkbox("Legend Frame", True)
+        
+        with st.sidebar.expander("🎨 Colorbar Styling", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['colorbar_fontsize'] = st.slider("Colorbar Font", 8, 20, 12)
+                style_params['colorbar_width'] = st.slider("Colorbar Width", 0.2, 1.0, 0.6, 0.05)
+            with col2:
+                style_params['colorbar_shrink'] = st.slider("Colorbar Shrink", 0.5, 1.0, 0.8, 0.05)
+                style_params['colorbar_pad'] = st.slider("Colorbar Pad", 0.0, 0.2, 0.05, 0.01)
+        
+        return style_params
+
+# =============================================
+# ENHANCED FIGURE STYLER WITH PUBLICATION FEATURES
+# =============================================
+class EnhancedFigureStyler(FigureStyler):
+    """Extended figure styler with publication-quality enhancements"""
+    
+    @staticmethod
+    def apply_publication_styling(fig, axes, style_params):
+        """Apply enhanced publication styling"""
+        # Apply base styling
+        fig = FigureStyler.apply_advanced_styling(fig, axes, style_params)
+        
+        # Get axes list
+        if isinstance(axes, np.ndarray):
+            axes_flat = axes.flatten()
+        elif isinstance(axes, list):
+            axes_flat = axes
+        else:
+            axes_flat = [axes]
+        
+        # Enhanced styling for each axis
+        for ax in axes_flat:
+            if ax is not None:
+                # Set scientific notation for large/small numbers
+                try:
+                    ax.ticklabel_format(axis='y', style='sci', scilimits=(-3, 3), useMathText=True)
+                except AttributeError:
+                    pass
+                try:
+                    ax.ticklabel_format(axis='x', style='sci', scilimits=(-3, 3), useMathText=True)
+                except AttributeError:
+                    pass
+                
+                # Add minor ticks
+                ax.xaxis.set_minor_locator(AutoMinorLocator())
+                ax.yaxis.set_minor_locator(AutoMinorLocator())
+                
+                # Set tick parameters
+                ax.tick_params(which='both', direction='in', top=True, right=True)
+                ax.tick_params(which='major', length=6, width=style_params.get('tick_width', 1.0))
+                ax.tick_params(which='minor', length=3, width=style_params.get('tick_width', 1.0) * 0.5)
+                
+                # Format axis labels with LaTeX
+                if style_params.get('use_latex', False):
+                    xlabel = ax.get_xlabel()
+                    ylabel = ax.get_ylabel()
+                    if xlabel:
+                        ax.set_xlabel(f'${xlabel}$')
+                    if ylabel:
+                        ax.set_ylabel(f'${ylabel}$')
+        
+        # Adjust layout
+        fig.set_constrained_layout(True)
+        
+        return fig
+    
+    @staticmethod
+    def get_publication_controls():
+        """Get enhanced publication styling controls"""
+        style_params = FigureStyler.get_styling_controls()
+        
+        st.sidebar.header("📰 Publication-Quality Settings")
+        
+        with st.sidebar.expander("🎯 Journal Templates", expanded=False):
+            journal = st.selectbox(
+                "Journal Style",
+                ["Nature", "Science", "Advanced Materials", "Physical Review Letters", "Custom"],
+                index=0,
+                key="pub_journal_style"
+            )
             
-            comparison_data[sim_id] = {
-                'params': sim['params'],
-                'profiles': {}
-            }
-            
-            for component, angles in component_angles_map.items():
-                if component in stress_fields:
-                    profiles = PublicationProfileExtractor.extract_stress_component_profiles(
-                        stress_fields, component, angles,
-                        length_ratio=0.7, sampling_factor=4
-                    )
-                    comparison_data[sim_id]['profiles'][component] = profiles
+            style_params['journal_style'] = journal.lower()
+            style_params['use_latex'] = st.checkbox("Use LaTeX Formatting", False, key="pub_use_latex")
+            style_params['vector_output'] = st.checkbox("Enable Vector Export (PDF/SVG)", True, key="pub_vector_export")
         
-        return comparison_data
+        with st.sidebar.expander("📐 Advanced Layout", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['layout_pad'] = st.slider("Layout Padding", 0.5, 3.0, 1.0, 0.1,
+                                                       key="pub_layout_pad")
+                style_params['wspace'] = st.slider("Horizontal Spacing", 0.1, 1.0, 0.3, 0.05,
+                                                   key="pub_wspace")
+            with col2:
+                style_params['hspace'] = st.slider("Vertical Spacing", 0.1, 1.0, 0.4, 0.05,
+                                                   key="pub_hspace")
+                style_params['figure_dpi'] = st.select_slider(
+                    "Figure DPI", 
+                    options=[150, 300, 600, 1200], 
+                    value=600,
+                    key="pub_figure_dpi"
+                )
+        
+        with st.sidebar.expander("📈 Enhanced Plot Features", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['show_minor_ticks'] = st.checkbox("Show Minor Ticks", True,
+                                                               key="pub_minor_ticks")
+                style_params['show_error_bars'] = st.checkbox("Show Error Bars", True,
+                                                              key="pub_error_bars")
+                style_params['show_confidence'] = st.checkbox("Show Confidence Intervals", False,
+                                                              key="pub_confidence")
+            with col2:
+                style_params['grid_style'] = st.selectbox(
+                    "Grid Style", 
+                    ['-', '--', '-.', ':'],
+                    index=1,
+                    key="pub_grid_style"
+                )
+                style_params['grid_zorder'] = st.slider("Grid Z-Order", 0, 10, 0,
+                                                        key="pub_grid_zorder")
+        
+        with st.sidebar.expander("🎨 Enhanced Color Settings", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                style_params['colorbar_extend'] = st.selectbox(
+                    "Colorbar Extend", 
+                    ['neither', 'both', 'min', 'max'],
+                    index=0,
+                    key="pub_colorbar_extend"
+                )
+                style_params['colorbar_format'] = st.selectbox(
+                    "Colorbar Format", 
+                    ['auto', 'sci', 'plain'],
+                    index=0,
+                    key="pub_colorbar_format"
+                )
+            with col2:
+                style_params['cmap_normalization'] = st.selectbox(
+                    "Colormap Normalization",
+                    ['linear', 'log', 'power'],
+                    index=0,
+                    key="pub_cmap_normalization"
+                )
+                if style_params['cmap_normalization'] == 'power':
+                    style_params['gamma'] = st.slider("Gamma", 0.1, 3.0, 1.0, 0.1,
+                                                      key="pub_gamma")
+        
+        return style_params
 
 # =============================================
 # PUBLICATION-QUALITY VISUALIZATION SYSTEM
@@ -747,976 +1128,77 @@ class PublicationVisualizer:
         fig.set_constrained_layout_pads(w_pad=0.05, h_pad=0.05)
         
         return fig
+
+# =============================================
+# SIMULATION DATABASE SYSTEM (Session State)
+# =============================================
+class SimulationDB:
+    """In-memory simulation database for storing and retrieving simulations"""
     
     @staticmethod
-    def create_comprehensive_overlay_plot(simulations, frames, config, style_params=None):
-        """
-        Create comprehensive overlay plot with multiple stress components and orientations
-        
-        Parameters:
-        -----------
-        simulations : list
-            List of simulation data dictionaries
-        frames : list
-            Frame indices for each simulation
-        config : dict
-            Configuration dictionary with plot settings
-        style_params : dict or None
-            Styling parameters (uses defaults if None)
-        
-        Returns:
-        --------
-        fig : matplotlib Figure
-            Publication-quality figure
-        """
-        if style_params is None:
-            style_params = PublicationVisualizer.create_enhanced_styling_params()
-        
-        # Get stress component
-        stress_map = {
-            "Stress Magnitude |σ|": 'sigma_mag',
-            "Hydrostatic σ_h": 'sigma_hydro',
-            "von Mises σ_vM": 'von_mises'
-        }
-        stress_key = stress_map[config.get('stress_component', 'Stress Magnitude |σ|')]
-        
-        # Get orientations
-        orientations = config.get('orientations', [0, 45, 90, 135])
-        
-        # Create figure with enhanced layout
-        fig = plt.figure(figsize=(20, 16))
-        
-        # Create grid specification for complex layout
-        gs = fig.add_gridspec(4, 4, height_ratios=[1.2, 1, 1, 1.5], 
-                             hspace=0.3, wspace=0.3)
-        
-        # Define subplots
-        ax_main = fig.add_subplot(gs[0, :])  # Main overlay plot
-        ax_horizontal = fig.add_subplot(gs[1, 0])  # Horizontal profiles
-        ax_vertical = fig.add_subplot(gs[1, 1])   # Vertical profiles
-        ax_diagonal1 = fig.add_subplot(gs[1, 2])  # 45° diagonal
-        ax_diagonal2 = fig.add_subplot(gs[1, 3])  # 135° diagonal
-        ax_stats = fig.add_subplot(gs[2, 0:2])    # Statistical summary
-        ax_comparison = fig.add_subplot(gs[2, 2:]) # Component comparison
-        ax_domain = fig.add_subplot(gs[3, :])     # Domain with probe lines
-        
-        # Get colors for simulations
-        colors = plt.cm.Set2(np.linspace(0, 1, len(simulations)))
-        
-        # Extract and plot profiles
-        all_profiles = {}
-        
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            eta, stress_fields = sim['history'][frame]
-            stress_data = stress_fields[stress_key]
-            
-            all_profiles[sim_id] = {}
-            
-            for angle in orientations:
-                # Extract profile
-                distances, profile, endpoints, metadata = PublicationProfileExtractor.extract_profile_2d(
-                    stress_data, angle, 'center', 0, 0.7, 4, 3
-                )
-                
-                all_profiles[sim_id][angle] = {
-                    'distances': distances,
-                    'profile': profile,
-                    'metadata': metadata
-                }
-                
-                # Plot in main overlay
-                line_style = config.get('line_style', 'solid')
-                line_width = style_params['lines']['linewidth']
-                
-                label = f"{sim['params']['defect_type']} - {angle}°"
-                ax_main.plot(distances, profile, 
-                           color=colors[sim_idx],
-                           linestyle=line_style,
-                           linewidth=line_width,
-                           alpha=0.85,
-                           label=label if sim_idx == 0 else None)
-        
-        # Configure main overlay panel
-        ax_main.set_xlabel("Distance from Center (nm)", 
-                          fontsize=style_params['axes']['labelsize'] + 2,
-                          fontweight='bold')
-        ax_main.set_ylabel(f"{config['stress_component']} (GPa)", 
-                          fontsize=style_params['axes']['labelsize'] + 2,
-                          fontweight='bold')
-        ax_main.set_title("Multi-Orientation Stress Profile Overlay", 
-                         fontsize=style_params['axes']['titlesize'] + 2,
-                         fontweight='bold',
-                         pad=20)
-        ax_main.legend(fontsize=style_params['legend']['fontsize'], 
-                      ncol=2, loc='upper right',
-                      framealpha=0.95)
-        ax_main.grid(True, alpha=0.3, linestyle='--')
-        ax_main.axvline(x=0, color='gray', linestyle='--', alpha=0.5, linewidth=1)
-        
-        # Create orientation-specific panels
-        orientation_panels = [
-            (ax_horizontal, 0, "Horizontal (0°)"),
-            (ax_vertical, 90, "Vertical (90°)"),
-            (ax_diagonal1, 45, "Diagonal (45°)"),
-            (ax_diagonal2, 135, "Anti-Diagonal (135°)")
-        ]
-        
-        for ax, target_angle, title in orientation_panels:
-            if target_angle in orientations:
-                for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
-                    
-                    distances, profile, endpoints, metadata = PublicationProfileExtractor.extract_profile_2d(
-                        stress_data, target_angle, 'center', 0, 0.7
-                    )
-                    
-                    line_style = config.get('line_style', 'solid')
-                    label = f"{sim['params']['defect_type']}" if sim_idx == 0 else None
-                    
-                    ax.plot(distances, profile, 
-                           color=colors[sim_idx],
-                           linestyle=line_style,
-                           linewidth=line_width,
-                           alpha=0.8,
-                           label=label)
-            
-            ax.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-            ax.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-            ax.set_title(title, fontsize=style_params['axes']['titlesize'], 
-                        fontweight='bold', pad=10)
-            ax.grid(True, alpha=0.3, linestyle='--')
-            ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-            
-            if target_angle == 0:
-                ax.legend(fontsize=style_params['legend']['fontsize'] - 1)
-        
-        # Statistical summary panel
-        if all_profiles:
-            stats_data = []
-            
-            for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-                for angle, data in profiles.items():
-                    if angle in orientations:
-                        metadata = data['metadata']
-                        stats_data.append({
-                            'Simulation': simulations[sim_idx]['params']['defect_type'],
-                            'Angle': f'{angle}°',
-                            'Max (GPa)': metadata['max_value'],
-                            'Mean (GPa)': metadata['mean_value'],
-                            'FWHM (nm)': metadata['fwhm_nm'],
-                            'Peak Pos (nm)': metadata['peak_position_nm'],
-                            'Symmetry': f"{metadata['symmetry_index']:.3f}"
-                        })
-            
-            # Create bar plot for maximum stresses
-            if stats_data:
-                df_stats = pd.DataFrame(stats_data)
-                unique_sims = df_stats['Simulation'].unique()
-                unique_angles = df_stats['Angle'].unique()
-                
-                x = np.arange(len(unique_sims))
-                width = 0.8 / len(unique_angles)
-                
-                for i, angle in enumerate(unique_angles):
-                    angle_data = df_stats[df_stats['Angle'] == angle]
-                    max_values = []
-                    for sim in unique_sims:
-                        sim_data = angle_data[angle_data['Simulation'] == sim]
-                        max_values.append(sim_data['Max (GPa)'].values[0] if not sim_data.empty else 0)
-                    
-                    bars = ax_stats.bar(x + i*width - width*(len(unique_angles)-1)/2, 
-                                       max_values, width,
-                                       label=angle, alpha=0.8)
-                
-                ax_stats.set_xlabel("Simulation", fontsize=style_params['axes']['labelsize'])
-                ax_stats.set_ylabel("Maximum Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-                ax_stats.set_title("Peak Stress by Orientation", 
-                                 fontsize=style_params['axes']['titlesize'],
-                                 fontweight='bold', pad=10)
-                ax_stats.set_xticks(x)
-                ax_stats.set_xticklabels(unique_sims, rotation=45, ha='right')
-                ax_stats.legend(fontsize=style_params['legend']['fontsize'] - 1)
-                ax_stats.grid(True, alpha=0.3, axis='y')
-        
-        # Stress component comparison panel
-        if simulations and len(simulations) > 0:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            
-            # Extract profiles for different stress components
-            components = ['sigma_mag', 'sigma_hydro', 'von_mises']
-            component_names = ['|σ|', 'σ_h', 'σ_vM']
-            
-            # Use optimal angles for each component
-            optimal_angles = {'sigma_mag': [0, 90], 'sigma_hydro': [45, 135], 'von_mises': [0, 90]}
-            
-            for comp_idx, component in enumerate(components):
-                if component in stress_fields:
-                    # Use first optimal angle for comparison
-                    angle = optimal_angles[component][0] if component in optimal_angles else 0
-                    distances, profile, endpoints, metadata = PublicationProfileExtractor.extract_profile_2d(
-                        stress_fields[component], angle, 'center', 0, 0.7
-                    )
-                    
-                    ax_comparison.plot(distances, profile, 
-                                     linewidth=line_width,
-                                     label=component_names[comp_idx])
-            
-            ax_comparison.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-            ax_comparison.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-            ax_comparison.set_title("Stress Component Comparison", 
-                                  fontsize=style_params['axes']['titlesize'],
-                                  fontweight='bold', pad=10)
-            ax_comparison.legend(fontsize=style_params['legend']['fontsize'])
-            ax_comparison.grid(True, alpha=0.3, linestyle='--')
-            ax_comparison.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-        
-        # Domain with probe lines panel
-        if simulations:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            
-            # Set fixed aspect ratio
-            ax_domain.set_aspect('equal')
-            
-            # Plot domain with enhanced colormap
-            cmap_name = sim['params'].get('eta_cmap', 'viridis')
-            cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'viridis'))
-            
-            # Enhanced visualization with contour overlay
-            im = ax_domain.imshow(eta, extent=extent, cmap=cmap, 
-                                origin='lower', alpha=0.85)
-            
-            # Add contour lines for defect boundary
-            contour = ax_domain.contour(X, Y, eta, levels=[0.5], 
-                                      colors='white', linewidths=2, 
-                                      linestyles='--', alpha=0.8)
-            
-            # Add probe lines with enhanced styling
-            line_colors = ['red', 'blue', 'green', 'purple', 'orange']
-            line_styles = ['-', '--', '-.', ':']
-            
-            for idx, angle in enumerate(orientations):
-                # Extract line for visualization
-                distances, profile, endpoints, metadata = PublicationProfileExtractor.extract_profile_2d(
-                    eta, angle, 'center', 0, 0.6
-                )
-                x_start, y_start, x_end, y_end = endpoints
-                
-                # Draw probe line
-                line = ax_domain.plot([x_start, x_end], [y_start, y_end], 
-                                    color=line_colors[idx % len(line_colors)],
-                                    linewidth=3,
-                                    linestyle=line_styles[idx % len(line_styles)],
-                                    alpha=0.9,
-                                    label=f'{angle}°',
-                                    solid_capstyle='round')[0]
-                
-                # Add angle annotation with enhanced styling
-                mid_x = (x_start + x_end) / 2
-                mid_y = (y_start + y_end) / 2
-                ax_domain.annotate(f'{angle}°', xy=(mid_x, mid_y),
-                                 xytext=(15, 15), textcoords='offset points',
-                                 color=line_colors[idx % len(line_colors)],
-                                 fontsize=12, fontweight='bold',
-                                 bbox=dict(boxstyle="round,pad=0.4", 
-                                          facecolor='white', alpha=0.9,
-                                          edgecolor=line_colors[idx % len(line_colors)],
-                                          linewidth=2),
-                                 arrowprops=dict(arrowstyle='->', 
-                                               color=line_colors[idx % len(line_colors)],
-                                               linewidth=2, alpha=0.7))
-            
-            ax_domain.set_xlabel("x (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_ylabel("y (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_title("Simulation Domain with Probe Lines", 
-                              fontsize=style_params['axes']['titlesize'] + 1,
-                              fontweight='bold', pad=15)
-            ax_domain.legend(fontsize=style_params['legend']['fontsize'], 
-                           loc='upper right', framealpha=0.95)
-            
-            # Add scale bar
-            PublicationVisualizer._add_publication_scale_bar(ax_domain, 5.0, 
-                                                           location='lower right',
-                                                           color='white')
-            
-            # Add colorbar with enhanced styling
-            cbar = plt.colorbar(im, ax=ax_domain, 
-                              shrink=style_params['colorbar']['shrink'],
-                              pad=style_params['colorbar']['pad'])
-            cbar.set_label('Defect Parameter η', 
-                          fontsize=style_params['colorbar']['fontsize'],
-                          fontweight='bold')
-            cbar.ax.tick_params(labelsize=style_params['ticks']['labelsize'] - 1)
-        
-        # Add panel labels (A, B, C, ...)
-        panel_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
-        panel_axes = [ax_main, ax_horizontal, ax_vertical, ax_diagonal1, 
-                     ax_diagonal2, ax_stats, ax_comparison, ax_domain]
-        
-        for ax, label in zip(panel_axes, panel_labels):
-            if ax is not None:
-                ax.text(-0.08, 1.08, label, transform=ax.transAxes,
-                       fontsize=20, fontweight='bold', va='top',
-                       bbox=dict(boxstyle="round,pad=0.3", 
-                                facecolor='white', alpha=0.9,
-                                edgecolor='black', linewidth=1.5))
-        
-        # Apply publication styling
-        fig = PublicationVisualizer.apply_publication_style(fig, panel_axes, style_params)
-        
-        return fig
+    def generate_id(sim_params):
+        """Generate unique ID for simulation"""
+        param_str = json.dumps(sim_params, sort_keys=True)
+        return hashlib.md5(param_str.encode()).hexdigest()[:8]
     
     @staticmethod
-    def _add_publication_scale_bar(ax, length_nm, location='lower right', color='white'):
-        """Add publication-quality scale bar"""
-        xlim = ax.get_xlim()
-        ylim = ax.get_ylim()
-        x_range = xlim[1] - xlim[0]
-        y_range = ylim[1] - ylim[0]
+    def save_simulation(sim_params, history, metadata):
+        """Save simulation to database"""
+        if 'simulations' not in st.session_state:
+            st.session_state.simulations = {}
         
-        if location == 'lower right':
-            bar_x_start = xlim[1] - x_range * 0.15
-            bar_x_end = bar_x_start - length_nm
-            bar_y = ylim[0] + y_range * 0.05
-            text_y = bar_y + y_range * 0.025
-            text_ha = 'center'
-            text_va = 'bottom'
-        elif location == 'lower left':
-            bar_x_start = xlim[0] + x_range * 0.05
-            bar_x_end = bar_x_start + length_nm
-            bar_y = ylim[0] + y_range * 0.05
-            text_y = bar_y + y_range * 0.025
-            text_ha = 'center'
-            text_va = 'bottom'
-        else:
-            return
+        sim_id = SimulationDB.generate_id(sim_params)
         
-        # Draw enhanced scale bar
-        ax.plot([bar_x_start, bar_x_end], [bar_y, bar_y], 
-               color=color, linewidth=4, solid_capstyle='butt',
-               zorder=1000)
-        
-        # Add enhanced end caps
-        cap_length = y_range * 0.02
-        ax.plot([bar_x_start, bar_x_start], 
-               [bar_y - cap_length, bar_y + cap_length],
-               color=color, linewidth=4, solid_capstyle='butt',
-               zorder=1000)
-        ax.plot([bar_x_end, bar_x_end], 
-               [bar_y - cap_length, bar_y + cap_length],
-               color=color, linewidth=4, solid_capstyle='butt',
-               zorder=1000)
-        
-        # Add text with enhanced background
-        text = ax.text((bar_x_start + bar_x_end) / 2, text_y,
-                      f'{length_nm} nm', ha=text_ha, va=text_va,
-                      color=color, fontsize=12, fontweight='bold',
-                      zorder=1001)
-        
-        # Enhanced text background
-        text.set_bbox(dict(boxstyle="round,pad=0.5", 
-                          facecolor='black', alpha=0.7,
-                          edgecolor='white', linewidth=2))
-    
-    @staticmethod
-    def create_stress_component_specific_plot(simulations, frames, config, style_params=None):
-        """
-        Create stress component-specific visualization with optimal probe orientations
-        
-        Parameters:
-        -----------
-        simulations : list
-            List of simulation data dictionaries
-        frames : list
-            Frame indices for each simulation
-        config : dict
-            Configuration with stress component and orientation settings
-        style_params : dict or None
-            Styling parameters
-        
-        Returns:
-        --------
-        fig : matplotlib Figure
-            Publication-quality figure optimized for specific stress component
-        """
-        if style_params is None:
-            style_params = PublicationVisualizer.create_enhanced_styling_params()
-        
-        # Get stress component
-        stress_component = config.get('stress_component', 'Stress Magnitude |σ|')
-        stress_map = {
-            "Stress Magnitude |σ|": 'sigma_mag',
-            "Hydrostatic σ_h": 'sigma_hydro',
-            "von Mises σ_vM": 'von_mises'
-        }
-        stress_key = stress_map[stress_component]
-        
-        # Define optimal probe orientations for each stress component
-        optimal_orientations = {
-            'sigma_mag': [0, 45, 90, 135],  # All orientations for magnitude
-            'sigma_hydro': [45, 135],       # Diagonals for hydrostatic stress
-            'von_mises': [0, 90]            # Horizontal/vertical for von Mises
+        # Store simulation data
+        st.session_state.simulations[sim_id] = {
+            'id': sim_id,
+            'params': sim_params,
+            'history': history,
+            'metadata': metadata,
+            'created_at': datetime.now().isoformat()
         }
         
-        # Get optimal orientations for this component
-        orientations = config.get('orientations', 
-                                optimal_orientations.get(stress_key, [0, 45, 90, 135]))
-        
-        # Create figure optimized for specific component
-        if stress_key == 'sigma_hydro':
-            # Specialized layout for hydrostatic stress (diagonals emphasized)
-            fig = plt.figure(figsize=(18, 14))
-            gs = fig.add_gridspec(3, 3, height_ratios=[1.2, 1, 1.5], 
-                                 hspace=0.25, wspace=0.25)
-            
-            ax_main = fig.add_subplot(gs[0, :])  # Main diagonal comparison
-            ax_diag1 = fig.add_subplot(gs[1, 0])  # 45° diagonal
-            ax_diag2 = fig.add_subplot(gs[1, 1])  # 135° diagonal
-            ax_symmetry = fig.add_subplot(gs[1, 2])  # Symmetry analysis
-            ax_domain = fig.add_subplot(gs[2, :])  # Domain with diagonals
-            
-            # Emphasize diagonal orientations
-            diagonal_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
-            
-        elif stress_key == 'von_mises':
-            # Specialized layout for von Mises stress (horizontal/vertical emphasized)
-            fig = plt.figure(figsize=(18, 14))
-            gs = fig.add_gridspec(3, 3, height_ratios=[1.2, 1, 1.5], 
-                                 hspace=0.25, wspace=0.25)
-            
-            ax_main = fig.add_subplot(gs[0, :])  # Main comparison
-            ax_horizontal = fig.add_subplot(gs[1, 0])  # Horizontal
-            ax_vertical = fig.add_subplot(gs[1, 1])    # Vertical
-            ax_anisotropy = fig.add_subplot(gs[1, 2])  # Anisotropy analysis
-            ax_domain = fig.add_subplot(gs[2, :])      # Domain
-            
-        else:  # Stress magnitude
-            # General layout for magnitude
-            fig = plt.figure(figsize=(20, 16))
-            gs = fig.add_gridspec(4, 4, height_ratios=[1.2, 1, 1, 1.5], 
-                                 hspace=0.3, wspace=0.3)
-            
-            ax_main = fig.add_subplot(gs[0, :])  # Main overlay
-            ax_hv = fig.add_subplot(gs[1, 0:2])  # Horizontal/vertical comparison
-            ax_diag = fig.add_subplot(gs[1, 2:])  # Diagonal comparison
-            ax_stats = fig.add_subplot(gs[2, 0:2])  # Statistics
-            ax_polar = fig.add_subplot(gs[2, 2:], projection='polar')  # Polar distribution
-            ax_domain = fig.add_subplot(gs[3, :])  # Domain with all probes
-        
-        # Get colors for simulations
-        colors = plt.cm.tab10(np.linspace(0, 1, len(simulations)))
-        
-        # Extract and analyze profiles
-        analyzer = PublicationProfileExtractor()
-        all_profiles = {}
-        
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            eta, stress_fields = sim['history'][frame]
-            stress_data = stress_fields[stress_key]
-            
-            all_profiles[sim_id] = {}
-            
-            for angle in orientations:
-                distances, profile, endpoints, metadata = analyzer.extract_profile_2d(
-                    stress_data, angle, 'center', 0, 0.7, 4, 3
-                )
-                
-                all_profiles[sim_id][angle] = {
-                    'distances': distances,
-                    'profile': profile,
-                    'metadata': metadata,
-                    'endpoints': endpoints
-                }
-        
-        # Create component-specific visualizations
-        if stress_key == 'sigma_hydro':
-            # Hydrostatic stress visualization
-            PublicationVisualizer._create_hydrostatic_visualization(
-                fig, ax_main, ax_diag1, ax_diag2, ax_symmetry, ax_domain,
-                simulations, frames, stress_key, all_profiles, colors, config, style_params
-            )
-        elif stress_key == 'von_mises':
-            # von Mises stress visualization
-            PublicationVisualizer._create_vonmises_visualization(
-                fig, ax_main, ax_horizontal, ax_vertical, ax_anisotropy, ax_domain,
-                simulations, frames, stress_key, all_profiles, colors, config, style_params
-            )
-        else:
-            # Stress magnitude visualization
-            PublicationVisualizer._create_magnitude_visualization(
-                fig, ax_main, ax_hv, ax_diag, ax_stats, ax_polar, ax_domain,
-                simulations, frames, stress_key, all_profiles, colors, config, style_params
-            )
-        
-        # Apply publication styling
-        all_axes = [ax for ax in [ax_main, ax_domain] + 
-                   ([ax_diag1, ax_diag2, ax_symmetry] if stress_key == 'sigma_hydro' else
-                    [ax_horizontal, ax_vertical, ax_anisotropy] if stress_key == 'von_mises' else
-                    [ax_hv, ax_diag, ax_stats, ax_polar]) if ax is not None]
-        
-        fig = PublicationVisualizer.apply_publication_style(fig, all_axes, style_params)
-        
-        return fig
+        return sim_id
     
     @staticmethod
-    def _create_hydrostatic_visualization(fig, ax_main, ax_diag1, ax_diag2, ax_symmetry, ax_domain,
-                                         simulations, frames, stress_key, all_profiles, colors, config, style_params):
-        """Create specialized visualization for hydrostatic stress"""
-        
-        line_width = style_params['lines']['linewidth']
-        
-        # Main plot: Compare 45° and 135° diagonals
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            
-            # 45° diagonal
-            if 45 in all_profiles[sim_id]:
-                data45 = all_profiles[sim_id][45]
-                ax_main.plot(data45['distances'], data45['profile'],
-                           color=colors[sim_idx], linewidth=line_width,
-                           linestyle='-', alpha=0.8,
-                           label=f"{sim['params']['defect_type']} - 45°")
-            
-            # 135° diagonal
-            if 135 in all_profiles[sim_id]:
-                data135 = all_profiles[sim_id][135]
-                ax_main.plot(data135['distances'], data135['profile'],
-                           color=colors[sim_idx], linewidth=line_width,
-                           linestyle='--', alpha=0.8,
-                           label=f"{sim['params']['defect_type']} - 135°")
-        
-        ax_main.set_xlabel("Distance from Center (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_ylabel("Hydrostatic Stress σ_h (GPa)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_title("Hydrostatic Stress: Diagonal Profile Comparison", 
-                         fontsize=style_params['axes']['titlesize'] + 2,
-                         fontweight='bold', pad=15)
-        ax_main.legend(fontsize=style_params['legend']['fontsize'], ncol=2)
-        ax_main.grid(True, alpha=0.3)
-        ax_main.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-        
-        # Individual diagonal plots
-        PublicationVisualizer._plot_individual_diagonal(ax_diag1, simulations, all_profiles, 45, colors, style_params)
-        PublicationVisualizer._plot_individual_diagonal(ax_diag2, simulations, all_profiles, 135, colors, style_params)
-        
-        # Symmetry analysis
-        if len(simulations) > 0:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            stress_data = stress_fields[stress_key]
-            
-            # Extract profiles for symmetry analysis
-            analyzer = PublicationProfileExtractor()
-            dist45, prof45, _, meta45 = analyzer.extract_profile_2d(stress_data, 45, 'center', 0, 0.7)
-            dist135, prof135, _, meta135 = analyzer.extract_profile_2d(stress_data, 135, 'center', 0, 0.7)
-            
-            # Plot symmetry comparison
-            ax_symmetry.plot(dist45, prof45, 'b-', linewidth=line_width, alpha=0.7, label='45°')
-            ax_symmetry.plot(dist135, prof135, 'r--', linewidth=line_width, alpha=0.7, label='135°')
-            ax_symmetry.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-            ax_symmetry.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-            ax_symmetry.set_title("Diagonal Symmetry Analysis", 
-                                 fontsize=style_params['axes']['titlesize'],
-                                 fontweight='bold')
-            ax_symmetry.legend(fontsize=style_params['legend']['fontsize'])
-            ax_symmetry.grid(True, alpha=0.3)
-        
-        # Domain plot with diagonals
-        if simulations:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            
-            ax_domain.set_aspect('equal')
-            cmap = plt.cm.get_cmap(COLORMAPS.get('coolwarm', 'coolwarm'))
-            im = ax_domain.imshow(stress_fields[stress_key], extent=extent, 
-                                cmap=cmap, origin='lower', alpha=0.85)
-            
-            # Add diagonal lines
-            for angle in [45, 135]:
-                if angle in all_profiles[next(iter(all_profiles.keys()))]:
-                    endpoints = all_profiles[next(iter(all_profiles.keys()))][angle]['endpoints']
-                    x_start, y_start, x_end, y_end = endpoints
-                    color = 'red' if angle == 45 else 'blue'
-                    ax_domain.plot([x_start, x_end], [y_start, y_end],
-                                 color=color, linewidth=3, alpha=0.9,
-                                 label=f'{angle}°')
-            
-            ax_domain.set_xlabel("x (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_ylabel("y (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_title("Hydrostatic Stress Field with Diagonal Probes", 
-                              fontsize=style_params['axes']['titlesize'] + 1,
-                              fontweight='bold', pad=15)
-            ax_domain.legend(fontsize=style_params['legend']['fontsize'])
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax_domain, shrink=0.8)
-            cbar.set_label('Hydrostatic Stress σ_h (GPa)', 
-                          fontsize=style_params['colorbar']['fontsize'])
+    def get_simulation(sim_id):
+        """Retrieve simulation by ID"""
+        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
+            return st.session_state.simulations[sim_id]
+        return None
     
     @staticmethod
-    def _create_vonmises_visualization(fig, ax_main, ax_horizontal, ax_vertical, ax_anisotropy, ax_domain,
-                                      simulations, frames, stress_key, all_profiles, colors, config, style_params):
-        """Create specialized visualization for von Mises stress"""
-        
-        line_width = style_params['lines']['linewidth']
-        
-        # Main plot: Overlay of horizontal and vertical profiles
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            
-            # Horizontal profile
-            if 0 in all_profiles[sim_id]:
-                data0 = all_profiles[sim_id][0]
-                ax_main.plot(data0['distances'], data0['profile'],
-                           color=colors[sim_idx], linewidth=line_width,
-                           linestyle='-', alpha=0.8,
-                           label=f"{sim['params']['defect_type']} - Horizontal")
-            
-            # Vertical profile
-            if 90 in all_profiles[sim_id]:
-                data90 = all_profiles[sim_id][90]
-                ax_main.plot(data90['distances'], data90['profile'],
-                           color=colors[sim_idx], linewidth=line_width,
-                           linestyle='--', alpha=0.8,
-                           label=f"{sim['params']['defect_type']} - Vertical")
-        
-        ax_main.set_xlabel("Distance from Center (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_ylabel("von Mises Stress σ_vM (GPa)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_title("von Mises Stress: Horizontal vs Vertical Profiles", 
-                         fontsize=style_params['axes']['titlesize'] + 2,
-                         fontweight='bold', pad=15)
-        ax_main.legend(fontsize=style_params['legend']['fontsize'], ncol=2)
-        ax_main.grid(True, alpha=0.3)
-        ax_main.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-        
-        # Individual horizontal and vertical plots
-        PublicationVisualizer._plot_individual_orientation(ax_horizontal, simulations, all_profiles, 0, colors, style_params, "Horizontal")
-        PublicationVisualizer._plot_individual_orientation(ax_vertical, simulations, all_profiles, 90, colors, style_params, "Vertical")
-        
-        # Anisotropy analysis
-        if len(simulations) > 0:
-            # Calculate anisotropy ratio (vertical/horizontal)
-            anisotropy_ratios = []
-            sim_labels = []
-            
-            for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-                sim_id = sim.get('id', f'sim_{sim_idx}')
-                
-                if 0 in all_profiles[sim_id] and 90 in all_profiles[sim_id]:
-                    data0 = all_profiles[sim_id][0]
-                    data90 = all_profiles[sim_id][90]
-                    
-                    # Calculate peak ratio
-                    peak0 = data0['metadata']['max_value']
-                    peak90 = data90['metadata']['max_value']
-                    
-                    if peak0 > 0:
-                        anisotropy_ratio = peak90 / peak0
-                        anisotropy_ratios.append(anisotropy_ratio)
-                        sim_labels.append(sim['params']['defect_type'])
-            
-            if anisotropy_ratios:
-                x_pos = np.arange(len(anisotropy_ratios))
-                bars = ax_anisotropy.bar(x_pos, anisotropy_ratios, 
-                                        color=colors[:len(anisotropy_ratios)], alpha=0.7)
-                
-                ax_anisotropy.axhline(y=1.0, color='red', linestyle='--', alpha=0.7, linewidth=2)
-                ax_anisotropy.set_xlabel("Simulation", fontsize=style_params['axes']['labelsize'])
-                ax_anisotropy.set_ylabel("Anisotropy Ratio (V/H)", fontsize=style_params['axes']['labelsize'])
-                ax_anisotropy.set_title("Stress Anisotropy", 
-                                       fontsize=style_params['axes']['titlesize'],
-                                       fontweight='bold')
-                ax_anisotropy.set_xticks(x_pos)
-                ax_anisotropy.set_xticklabels(sim_labels, rotation=45, ha='right')
-                ax_anisotropy.grid(True, alpha=0.3, axis='y')
-                
-                # Add value labels
-                for bar, ratio in zip(bars, anisotropy_ratios):
-                    ax_anisotropy.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                                     f'{ratio:.2f}', ha='center', va='bottom', fontsize=10)
-        
-        # Domain plot with horizontal/vertical lines
-        if simulations:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            
-            ax_domain.set_aspect('equal')
-            cmap = plt.cm.get_cmap(COLORMAPS.get('plasma', 'plasma'))
-            im = ax_domain.imshow(stress_fields[stress_key], extent=extent, 
-                                cmap=cmap, origin='lower', alpha=0.85)
-            
-            # Add horizontal and vertical lines
-            for angle in [0, 90]:
-                if angle in all_profiles[next(iter(all_profiles.keys()))]:
-                    endpoints = all_profiles[next(iter(all_profiles.keys()))][angle]['endpoints']
-                    x_start, y_start, x_end, y_end = endpoints
-                    color = 'red' if angle == 0 else 'blue'
-                    ax_domain.plot([x_start, x_end], [y_start, y_end],
-                                 color=color, linewidth=3, alpha=0.9,
-                                 label=f'{angle}°')
-            
-            ax_domain.set_xlabel("x (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_ylabel("y (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_title("von Mises Stress Field with HV Probes", 
-                              fontsize=style_params['axes']['titlesize'] + 1,
-                              fontweight='bold', pad=15)
-            ax_domain.legend(fontsize=style_params['legend']['fontsize'])
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax_domain, shrink=0.8)
-            cbar.set_label('von Mises Stress σ_vM (GPa)', 
-                          fontsize=style_params['colorbar']['fontsize'])
+    def get_all_simulations():
+        """Get all stored simulations"""
+        if 'simulations' in st.session_state:
+            return st.session_state.simulations
+        return {}
     
     @staticmethod
-    def _create_magnitude_visualization(fig, ax_main, ax_hv, ax_diag, ax_stats, ax_polar, ax_domain,
-                                       simulations, frames, stress_key, all_profiles, colors, config, style_params):
-        """Create specialized visualization for stress magnitude"""
-        
-        line_width = style_params['lines']['linewidth']
-        
-        # Main plot: Overlay of all profiles
-        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
-            sim_id = sim.get('id', f'sim_{sim_idx}')
-            
-            for angle in [0, 45, 90, 135]:
-                if angle in all_profiles[sim_id]:
-                    data = all_profiles[sim_id][angle]
-                    linestyle = ['-', '--', '-.', ':'][[0, 45, 90, 135].index(angle)]
-                    ax_main.plot(data['distances'], data['profile'],
-                               color=colors[sim_idx], linewidth=line_width,
-                               linestyle=linestyle, alpha=0.7,
-                               label=f"{sim['params']['defect_type']} - {angle}°")
-        
-        ax_main.set_xlabel("Distance from Center (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_ylabel("Stress Magnitude |σ| (GPa)", fontsize=style_params['axes']['labelsize'] + 1)
-        ax_main.set_title("Stress Magnitude: Multi-Orientation Analysis", 
-                         fontsize=style_params['axes']['titlesize'] + 2,
-                         fontweight='bold', pad=15)
-        ax_main.legend(fontsize=style_params['legend']['fontsize'] - 1, ncol=2)
-        ax_main.grid(True, alpha=0.3)
-        ax_main.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-        
-        # HV comparison plot
-        PublicationVisualizer._plot_hv_comparison(ax_hv, simulations, all_profiles, colors, style_params)
-        
-        # Diagonal comparison plot
-        PublicationVisualizer._plot_diagonal_comparison(ax_diag, simulations, all_profiles, colors, style_params)
-        
-        # Statistics plot
-        PublicationVisualizer._plot_magnitude_statistics(ax_stats, simulations, all_profiles, colors, style_params)
-        
-        # Polar distribution plot
-        if len(simulations) > 0:
-            sim = simulations[0]
-            sim_id = next(iter(all_profiles.keys()))
-            
-            # Collect peak values at different angles
-            angles = []
-            peaks = []
-            
-            for angle in [0, 45, 90, 135]:
-                if angle in all_profiles[sim_id]:
-                    metadata = all_profiles[sim_id][angle]['metadata']
-                    angles.append(np.deg2rad(angle))
-                    peaks.append(metadata['max_value'])
-            
-            if angles and peaks:
-                # Close the polar plot
-                angles = angles + [angles[0]]
-                peaks = peaks + [peaks[0]]
-                
-                ax_polar.plot(angles, peaks, 'b-', linewidth=line_width, alpha=0.7)
-                ax_polar.fill(angles, peaks, 'b', alpha=0.3)
-                ax_polar.set_title("Angular Distribution of Peak Stress", 
-                                 fontsize=style_params['axes']['titlesize'],
-                                 fontweight='bold', pad=20)
-                ax_polar.grid(True, alpha=0.5)
-        
-        # Domain plot with all probe lines
-        if simulations:
-            sim = simulations[0]
-            eta, stress_fields = sim['history'][frames[0]]
-            
-            ax_domain.set_aspect('equal')
-            cmap = plt.cm.get_cmap(COLORMAPS.get('viridis', 'viridis'))
-            im = ax_domain.imshow(stress_fields[stress_key], extent=extent, 
-                                cmap=cmap, origin='lower', alpha=0.85)
-            
-            # Add all probe lines
-            line_colors = ['red', 'blue', 'green', 'purple']
-            for idx, angle in enumerate([0, 45, 90, 135]):
-                if angle in all_profiles[next(iter(all_profiles.keys()))]:
-                    endpoints = all_profiles[next(iter(all_profiles.keys()))][angle]['endpoints']
-                    x_start, y_start, x_end, y_end = endpoints
-                    ax_domain.plot([x_start, x_end], [y_start, y_end],
-                                 color=line_colors[idx], linewidth=2.5, alpha=0.8,
-                                 label=f'{angle}°')
-            
-            ax_domain.set_xlabel("x (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_ylabel("y (nm)", fontsize=style_params['axes']['labelsize'] + 1)
-            ax_domain.set_title("Stress Magnitude Field with Multi-Orientation Probes", 
-                              fontsize=style_params['axes']['titlesize'] + 1,
-                              fontweight='bold', pad=15)
-            ax_domain.legend(fontsize=style_params['legend']['fontsize'], ncol=2)
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax_domain, shrink=0.8)
-            cbar.set_label('Stress Magnitude |σ| (GPa)', 
-                          fontsize=style_params['colorbar']['fontsize'])
+    def delete_simulation(sim_id):
+        """Delete simulation from database"""
+        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
+            del st.session_state.simulations[sim_id]
+            return True
+        return False
     
     @staticmethod
-    def _plot_individual_diagonal(ax, simulations, all_profiles, angle, colors, style_params):
-        """Plot individual diagonal profile"""
-        line_width = style_params['lines']['linewidth']
+    def get_simulation_list():
+        """Get list of simulations for dropdown"""
+        if 'simulations' not in st.session_state:
+            return []
         
-        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-            if angle in profiles:
-                data = profiles[angle]
-                ax.plot(data['distances'], data['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       alpha=0.8, label=simulations[sim_idx]['params']['defect_type'])
+        simulations = []
+        for sim_id, sim_data in st.session_state.simulations.items():
+            params = sim_data['params']
+            name = f"{params['defect_type']} - {params['orientation']} (ε*={params['eps0']:.2f}, κ={params['kappa']:.2f})"
+            simulations.append({
+                'id': sim_id,
+                'name': name,
+                'params': params
+            })
         
-        ax.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-        ax.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-        ax.set_title(f"{angle}° Diagonal Profile", 
-                    fontsize=style_params['axes']['titlesize'],
-                    fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-        
-        if angle == 45:
-            ax.legend(fontsize=style_params['legend']['fontsize'] - 1)
-    
-    @staticmethod
-    def _plot_individual_orientation(ax, simulations, all_profiles, angle, colors, style_params, orientation_name):
-        """Plot individual orientation profile"""
-        line_width = style_params['lines']['linewidth']
-        
-        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-            if angle in profiles:
-                data = profiles[angle]
-                ax.plot(data['distances'], data['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       alpha=0.8, label=simulations[sim_idx]['params']['defect_type'])
-        
-        ax.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-        ax.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-        ax.set_title(f"{orientation_name} Profile", 
-                    fontsize=style_params['axes']['titlesize'],
-                    fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-    
-    @staticmethod
-    def _plot_hv_comparison(ax, simulations, all_profiles, colors, style_params):
-        """Plot horizontal vs vertical comparison"""
-        line_width = style_params['lines']['linewidth']
-        
-        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-            if 0 in profiles and 90 in profiles:
-                data0 = profiles[0]
-                data90 = profiles[90]
-                
-                # Plot horizontal
-                ax.plot(data0['distances'], data0['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       linestyle='-', alpha=0.6,
-                       label=f"{simulations[sim_idx]['params']['defect_type']} - H")
-                
-                # Plot vertical
-                ax.plot(data90['distances'], data90['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       linestyle='--', alpha=0.6,
-                       label=f"{simulations[sim_idx]['params']['defect_type']} - V")
-        
-        ax.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-        ax.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-        ax.set_title("Horizontal vs Vertical Comparison", 
-                    fontsize=style_params['axes']['titlesize'],
-                    fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-    
-    @staticmethod
-    def _plot_diagonal_comparison(ax, simulations, all_profiles, colors, style_params):
-        """Plot diagonal comparison"""
-        line_width = style_params['lines']['linewidth']
-        
-        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-            if 45 in profiles and 135 in profiles:
-                data45 = profiles[45]
-                data135 = profiles[135]
-                
-                # Plot 45° diagonal
-                ax.plot(data45['distances'], data45['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       linestyle='-', alpha=0.6,
-                       label=f"{simulations[sim_idx]['params']['defect_type']} - 45°")
-                
-                # Plot 135° diagonal
-                ax.plot(data135['distances'], data135['profile'],
-                       color=colors[sim_idx], linewidth=line_width,
-                       linestyle='--', alpha=0.6,
-                       label=f"{simulations[sim_idx]['params']['defect_type']} - 135°")
-        
-        ax.set_xlabel("Distance (nm)", fontsize=style_params['axes']['labelsize'])
-        ax.set_ylabel("Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-        ax.set_title("Diagonal Comparison", 
-                    fontsize=style_params['axes']['titlesize'],
-                    fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
-    
-    @staticmethod
-    def _plot_magnitude_statistics(ax, simulations, all_profiles, colors, style_params):
-        """Plot stress magnitude statistics"""
-        
-        # Collect statistics
-        stats_data = []
-        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
-            for angle, data in profiles.items():
-                metadata = data['metadata']
-                stats_data.append({
-                    'Simulation': simulations[sim_idx]['params']['defect_type'],
-                    'Angle': f'{angle}°',
-                    'Peak (GPa)': metadata['max_value'],
-                    'FWHM (nm)': metadata['fwhm_nm'],
-                    'Symmetry': metadata['symmetry_index']
-                })
-        
-        if stats_data:
-            df_stats = pd.DataFrame(stats_data)
-            
-            # Create grouped bar plot for peak stresses
-            unique_sims = df_stats['Simulation'].unique()
-            unique_angles = sorted(df_stats['Angle'].unique())
-            
-            x = np.arange(len(unique_sims))
-            width = 0.8 / len(unique_angles)
-            
-            for i, angle in enumerate(unique_angles):
-                angle_data = df_stats[df_stats['Angle'] == angle]
-                peak_values = []
-                for sim in unique_sims:
-                    sim_data = angle_data[angle_data['Simulation'] == sim]
-                    peak_values.append(sim_data['Peak (GPa)'].values[0] if not sim_data.empty else 0)
-                
-                bars = ax.bar(x + i*width - width*(len(unique_angles)-1)/2, 
-                            peak_values, width,
-                            label=angle, alpha=0.8)
-            
-            ax.set_xlabel("Simulation", fontsize=style_params['axes']['labelsize'])
-            ax.set_ylabel("Peak Stress (GPa)", fontsize=style_params['axes']['labelsize'])
-            ax.set_title("Peak Stress Statistics by Orientation", 
-                        fontsize=style_params['axes']['titlesize'],
-                        fontweight='bold')
-            ax.set_xticks(x)
-            ax.set_xticklabels(unique_sims, rotation=45, ha='right')
-            ax.legend(fontsize=style_params['legend']['fontsize'] - 1)
-            ax.grid(True, alpha=0.3, axis='y')
+        return simulations
 
 # =============================================
 # ENHANCED VISUALIZATION CONTROLS
@@ -1833,501 +1315,1371 @@ class EnhancedVisualizationControls:
         return controls
 
 # =============================================
-# MAIN VISUALIZATION INTERFACE
+# SIMULATION ENGINE (Reusable Functions)
 # =============================================
-def create_enhanced_visualization_interface():
-    """Create enhanced visualization interface"""
+def create_initial_eta(shape, defect_type):
+    """Create initial defect configuration"""
+    # Set initial amplitude based on defect type
+    amplitudes = {"ISF": 0.70, "ESF": 0.75, "Twin": 0.90}
+    init_amplitude = amplitudes[defect_type]
     
-    st.markdown('<div class="section-header">📊 Publication-Quality Stress Visualization</div>', 
+    eta = np.zeros((N, N))
+    cx, cy = N//2, N//2
+    w, h = (24, 12) if shape in ["Rectangle", "Horizontal Fault"] else (16, 16)
+    
+    if shape == "Square":
+        eta[cy-h:cy+h, cx-h:cx+h] = init_amplitude
+    elif shape == "Horizontal Fault":
+        eta[cy-4:cy+4, cx-w:cx+w] = init_amplitude
+    elif shape == "Vertical Fault":
+        eta[cy-w:cy+w, cx-4:cx+4] = init_amplitude
+    elif shape == "Rectangle":
+        eta[cy-h:cy+h, cx-w:cx+w] = init_amplitude
+    elif shape == "Ellipse":
+        mask = ((X/(w*1.5))**2 + (Y/(h*1.5))**2) <= 1
+        eta[mask] = init_amplitude
+    
+    eta += 0.02 * np.random.randn(N, N)
+    return np.clip(eta, 0.0, 1.0)
+
+@jit(nopython=True, parallel=True)
+def evolve_phase_field(eta, kappa, dt, dx, N):
+    """Phase field evolution with Allen-Cahn equation"""
+    eta_new = eta.copy()
+    dx2 = dx * dx
+    for i in prange(1, N-1):
+        for j in prange(1, N-1):
+            lap = (eta[i+1,j] + eta[i-1,j] + eta[i,j+1] + eta[i,j-1] - 4*eta[i,j]) / dx2
+            dF = 2*eta[i,j]*(1-eta[i,j])*(eta[i,j]-0.5)
+            eta_new[i,j] = eta[i,j] + dt * (-dF + kappa * lap)
+            eta_new[i,j] = np.maximum(0.0, np.minimum(1.0, eta_new[i,j]))
+    eta_new[0,:] = eta_new[-2,:]; eta_new[-1,:] = eta_new[1,:]
+    eta_new[:,0] = eta_new[:,-2]; eta_new[:,-1] = eta_new[:,1]
+    return eta_new
+
+@st.cache_data
+def compute_stress_fields(eta, eps0, theta):
+    """FFT-based stress solver with rotated eigenstrain"""
+    # Plane-strain reduced constants (Pa)
+    C11_p = (C11 - C12**2 / C11) * 1e9
+    C12_p = (C12 - C12**2 / C11) * 1e9
+    C44_p = C44 * 1e9
+    
+    # Wavevectors
+    kx = np.fft.fftfreq(N, d=dx)
+    ky = np.fft.fftfreq(N, d=dx)
+    KX, KY = np.meshgrid(2 * np.pi * kx, 2 * np.pi * ky)
+    K2 = KX**2 + KY**2
+    K2[0, 0] = 1e-12
+    mask = K2 > 0
+    
+    n1 = np.zeros_like(KX)
+    n2 = np.zeros_like(KX)
+    n1[mask] = KX[mask] / np.sqrt(K2[mask])
+    n2[mask] = KY[mask] / np.sqrt(K2[mask])
+    
+    # Acoustic tensor components
+    A11 = np.zeros_like(KX)
+    A22 = np.zeros_like(KX)
+    A12 = np.zeros_like(KX)
+    A11[mask] = C11_p * n1[mask]**2 + C44_p * n2[mask]**2
+    A22[mask] = C11_p * n2[mask]**2 + C44_p * n1[mask]**2
+    A12[mask] = (C12_p + C44_p) * n1[mask] * n2[mask]
+    
+    det = A11 * A22 - A12**2
+    G11 = np.zeros_like(KX)
+    G22 = np.zeros_like(KX)
+    G12 = np.zeros_like(KX)
+    G11[mask] = A22[mask] / det[mask]
+    G22[mask] = A11[mask] / det[mask]
+    G12[mask] = -A12[mask] / det[mask]
+    
+    # Eigenstrain (rotated)
+    gamma = eps0
+    ct, st = np.cos(theta), np.sin(theta)
+    n = np.array([ct, st])
+    s = np.array([-st, ct])
+    delta = 0.02  # Small dilatation
+    eps_local = delta * np.outer(n, n) + gamma * (np.outer(n, s) + np.outer(s, n)) / 2
+    R = np.array([[ct, -st], [st, ct]])
+    eps_star = R @ eps_local @ R.T
+    
+    eps_xx_star = eps_star[0,0] * eta
+    eps_yy_star = eps_star[1,1] * eta
+    eps_xy_star = eps_star[0,1] * eta
+    
+    # Polarization stress tau = C : eps*
+    tau_xx = C11_p * eps_xx_star + C12_p * eps_yy_star
+    tau_yy = C12_p * eps_xx_star + C11_p * eps_yy_star
+    tau_xy = 2 * C44_p * eps_xy_star
+    
+    tau_hat_xx = np.fft.fft2(tau_xx)
+    tau_hat_yy = np.fft.fft2(tau_yy)
+    tau_hat_xy = np.fft.fft2(tau_xy)
+    
+    S_hat_x = KX * tau_hat_xx + KY * tau_hat_xy
+    S_hat_y = KX * tau_hat_xy + KY * tau_hat_yy
+    
+    u_hat_x = np.zeros_like(KX, dtype=complex)
+    u_hat_y = np.zeros_like(KX, dtype=complex)
+    u_hat_x[mask] = -1j * (G11[mask] * S_hat_x[mask] + G12[mask] * S_hat_y[mask])
+    u_hat_y[mask] = -1j * (G12[mask] * S_hat_x[mask] + G22[mask] * S_hat_y[mask])
+    
+    u_hat_x[0, 0] = 0
+    u_hat_y[0, 0] = 0
+    
+    # Displacements
+    ux = np.real(np.fft.ifft2(u_hat_x))
+    uy = np.real(np.fft.ifft2(u_hat_y))
+    
+    # Elastic strains
+    exx = np.real(np.fft.ifft2(1j * KX * u_hat_x))
+    eyy = np.real(np.fft.ifft2(1j * KY * u_hat_y))
+    exy = 0.5 * np.real(np.fft.ifft2(1j * (KX * u_hat_y + KY * u_hat_x)))
+    
+    # Elastic stresses (Pa → GPa)
+    sxx = (C11_p * (exx - eps_xx_star) + C12_p * (eyy - eps_yy_star)) / 1e9
+    syy = (C12_p * (exx - eps_xx_star) + C11_p * (eyy - eps_yy_star)) / 1e9
+    sxy = 2 * C44_p * (exy - eps_xy_star) / 1e9
+    szz = (C12 / (C11 + C12)) * (sxx + syy)  # Plane strain approximation
+    
+    # Derived quantities (GPa)
+    sigma_mag = np.sqrt(sxx**2 + syy**2 + 2*sxy**2)
+    sigma_hydro = (sxx + syy) / 2
+    von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*sxy**2))
+    
+    return {
+        'sxx': sxx, 'syy': syy, 'sxy': sxy, 'szz': szz,
+        'sigma_mag': sigma_mag, 'sigma_hydro': sigma_hydro, 'von_mises': von_mises
+    }
+
+def run_simulation(sim_params):
+    """Run a complete simulation with given parameters"""
+    # Create initial defect
+    eta = create_initial_eta(sim_params['shape'], sim_params['defect_type'])
+    
+    # Run evolution
+    history = []
+    for step in range(sim_params['steps'] + 1):
+        if step > 0:
+            eta = evolve_phase_field(eta, sim_params['kappa'], dt=0.004, dx=dx, N=N)
+        if step % sim_params['save_every'] == 0 or step == sim_params['steps']:
+            stress_fields = compute_stress_fields(eta, sim_params['eps0'], sim_params['theta'])
+            history.append((eta.copy(), stress_fields))
+    
+    return history
+
+# =============================================
+# ENHANCED PUBLICATION-QUALITY PLOTTING FUNCTIONS
+# =============================================
+def create_publication_heatmaps(simulations, frames, config, style_params):
+    """Publication-quality heatmap comparison"""
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[config['stress_component']]
+    
+    n_sims = len(simulations)
+    cols = min(3, n_sims)
+    rows = (n_sims + cols - 1) // cols
+    
+    # Create figure with journal sizing
+    journal_styles = JournalTemplates.get_journal_styles()
+    journal = style_params.get('journal_style', 'nature')
+    fig_width = journal_styles[journal]['figure_width_double'] / 2.54  # Convert cm to inches
+    
+    fig, axes = plt.subplots(rows, cols, 
+                            figsize=(fig_width, fig_width * 0.8 * rows/cols),
+                            constrained_layout=True)
+    
+    if rows == 1 and cols == 1:
+        axes = np.array([[axes]])
+    elif rows == 1:
+        axes = axes.reshape(1, -1)
+    elif cols == 1:
+        axes = axes.reshape(-1, 1)
+    
+    for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+        row = idx // cols
+        col = idx % cols
+        ax = axes[row, col]
+        
+        # Get data
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
+        
+        # Apply smoothing for better visualization
+        if style_params.get('apply_smoothing', True):
+            stress_data = gaussian_filter(stress_data, sigma=1)
+        
+        # Choose colormap
+        cmap_name = sim['params']['sigma_cmap']
+        cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'viridis'))
+        
+        # Create heatmap with enhanced settings
+        im = ax.imshow(stress_data, extent=extent, cmap=cmap, 
+                      origin='lower', aspect='auto')
+        
+        # Add contour lines for defect boundary
+        contour = ax.contour(X, Y, eta, levels=[0.5], colors='white', 
+                           linewidths=1, linestyles='--', alpha=0.8)
+        
+        # Enhanced title
+        title = f"{sim['params']['defect_type']}"
+        if sim['params']['orientation'] != "Horizontal {111} (0°)":
+            title += f"\n{sim['params']['orientation'].split(' ')[0]}"
+        
+        ax.set_title(title, fontsize=style_params.get('title_font_size', 10),
+                    fontweight='semibold', pad=10)
+        
+        # Axis labels only on edge plots
+        if row == rows - 1:
+            ax.set_xlabel("x (nm)", fontsize=style_params.get('label_font_size', 9))
+        if col == 0:
+            ax.set_ylabel("y (nm)", fontsize=style_params.get('label_font_size', 9))
+        
+        # Enhanced colorbar
+        cbar = plt.colorbar(im, ax=ax, orientation='vertical')
+        cbar.set_label(f"{config['stress_component']} (GPa)", fontsize=8)
+        cbar.ax.tick_params(labelsize=7)
+    
+    # Hide empty subplots
+    for idx in range(n_sims, rows*cols):
+        row = idx // cols
+        col = idx % cols
+        axes[row, col].axis('off')
+    
+    # Apply publication styling
+    fig = EnhancedFigureStyler.apply_publication_styling(fig, axes, style_params)
+    
+    return fig
+
+def create_multi_orientation_analysis(simulations, frames, config, controls):
+    """Create multi-orientation stress analysis with publication-quality visualization"""
+    
+    if not simulations:
+        st.error("No simulations available for analysis")
+        return
+    
+    # Get stress component
+    stress_component = config.get('stress_component', 'Stress Magnitude |σ|')
+    stress_map = {
+        "Stress Magnitude |σ|": 'sigma_mag',
+        "Hydrostatic σ_h": 'sigma_hydro',
+        "von Mises σ_vM": 'von_mises'
+    }
+    stress_key = stress_map[stress_component]
+    
+    # Get optimal angles for this component
+    if stress_key == 'sigma_hydro':
+        orientations = controls.get('hydrostatic_angles', [45, 135])
+    elif stress_key == 'von_mises':
+        orientations = controls.get('vonmises_angles', [0, 90])
+    else:
+        orientations = controls.get('magnitude_angles', [0, 45, 90, 135])
+    
+    st.markdown(f'<div class="section-header">📊 {stress_component} - Multi-Orientation Analysis</div>', 
                 unsafe_allow_html=True)
     
-    # Get visualization controls
-    controls = EnhancedVisualizationControls.get_visualization_controls()
+    # Create multi-panel visualization
+    fig = plt.figure(figsize=(20, 16))
+    fig.set_constrained_layout(True)
     
-    # Create tabs for different visualization types
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🎯 Component-Specific Analysis",
-        "📈 Multi-Orientation Overlay", 
-        "🌀 Comparative Analysis",
-        "📊 Statistical Summary"
-    ])
+    # Define grid layout
+    gs = fig.add_gridspec(3, 4, height_ratios=[1.2, 1, 1.5], hspace=0.25, wspace=0.25)
     
-    with tab1:
-        st.markdown('<h3 style="color: #2D3748; margin-bottom: 1.5rem;">Stress Component-Specific Visualization</h3>', 
-                   unsafe_allow_html=True)
+    # Panel A: Main overlay plot
+    ax_main = fig.add_subplot(gs[0, :])
+    
+    # Panel B: Individual orientation profiles
+    orientation_axes = []
+    for i, angle in enumerate(orientations[:4]):  # Show up to 4 orientations
+        if i == 0:
+            ax = fig.add_subplot(gs[1, i])
+        else:
+            ax = fig.add_subplot(gs[1, i])
+        orientation_axes.append(ax)
+    
+    # Panel C: Statistical summary
+    ax_stats = fig.add_subplot(gs[2, 0:2])
+    
+    # Panel D: Domain visualization
+    ax_domain = fig.add_subplot(gs[2, 2:])
+    
+    # Get colors for simulations
+    colors = plt.cm.tab10(np.linspace(0, 1, len(simulations)))
+    
+    # Extract and analyze profiles
+    analyzer = PublicationProfileExtractor()
+    all_profiles = {}
+    
+    for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
+        sim_id = sim.get('id', f'sim_{sim_idx}')
+        eta, stress_fields = sim['history'][frame]
+        stress_data = stress_fields[stress_key]
         
-        col1, col2, col3 = st.columns(3)
+        all_profiles[sim_id] = {}
+        
+        for angle in orientations:
+            distances, profile, endpoints, metadata = analyzer.extract_profile_2d(
+                stress_data, angle, 'center', 0, 0.7, 4, 3
+            )
+            
+            all_profiles[sim_id][angle] = {
+                'distances': distances,
+                'profile': profile,
+                'metadata': metadata,
+                'endpoints': endpoints
+            }
+            
+            # Plot in main overlay
+            line_style = config.get('line_style', 'solid')
+            label = f"{sim['params']['defect_type']} - {angle}°" if sim_idx == 0 else None
+            
+            ax_main.plot(distances, profile, 
+                       color=colors[sim_idx],
+                       linestyle=line_style,
+                       linewidth=controls.get('line_width', 2.5),
+                       alpha=0.85,
+                       label=label)
+    
+    # Configure main overlay panel
+    ax_main.set_xlabel("Distance from Center (nm)", fontsize=14, fontweight='bold')
+    ax_main.set_ylabel(f"{stress_component} (GPa)", fontsize=14, fontweight='bold')
+    ax_main.set_title(f"{stress_component}: Multi-Orientation Profile Overlay", 
+                     fontsize=16, fontweight='bold', pad=20)
+    ax_main.legend(fontsize=11, ncol=2, loc='upper right', framealpha=0.95)
+    ax_main.grid(True, alpha=0.3, linestyle='--')
+    ax_main.axvline(x=0, color='gray', linestyle='--', alpha=0.5, linewidth=1)
+    
+    # Plot individual orientation profiles
+    for i, (ax, angle) in enumerate(zip(orientation_axes, orientations[:len(orientation_axes)])):
+        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
+            if angle in profiles:
+                data = profiles[angle]
+                ax.plot(data['distances'], data['profile'],
+                       color=colors[sim_idx],
+                       linewidth=controls.get('line_width', 2.5),
+                       alpha=0.8,
+                       label=simulations[sim_idx]['params']['defect_type'] if i == 0 else None)
+        
+        ax.set_xlabel("Distance (nm)", fontsize=12)
+        ax.set_ylabel("Stress (GPa)", fontsize=12)
+        ax.set_title(f"{angle}° Profile", fontsize=14, fontweight='bold', pad=10)
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.axvline(x=0, color='gray', linestyle='--', alpha=0.5)
+        
+        if i == 0:
+            ax.legend(fontsize=10)
+    
+    # Statistical summary panel
+    if all_profiles:
+        stats_data = []
+        
+        for sim_idx, (sim_id, profiles) in enumerate(all_profiles.items()):
+            for angle, data in profiles.items():
+                metadata = data['metadata']
+                stats_data.append({
+                    'Simulation': simulations[sim_idx]['params']['defect_type'],
+                    'Angle': f'{angle}°',
+                    'Max (GPa)': metadata['max_value'],
+                    'Mean (GPa)': metadata['mean_value'],
+                    'FWHM (nm)': metadata['fwhm_nm'],
+                    'Peak Pos (nm)': metadata['peak_position_nm']
+                })
+        
+        if stats_data:
+            df_stats = pd.DataFrame(stats_data)
+            unique_sims = df_stats['Simulation'].unique()
+            unique_angles = df_stats['Angle'].unique()
+            
+            x = np.arange(len(unique_sims))
+            width = 0.8 / len(unique_angles)
+            
+            for i, angle in enumerate(unique_angles):
+                angle_data = df_stats[df_stats['Angle'] == angle]
+                max_values = []
+                for sim in unique_sims:
+                    sim_data = angle_data[angle_data['Simulation'] == sim]
+                    max_values.append(sim_data['Max (GPa)'].values[0] if not sim_data.empty else 0)
+                
+                bars = ax_stats.bar(x + i*width - width*(len(unique_angles)-1)/2, 
+                                   max_values, width,
+                                   label=angle, alpha=0.8)
+            
+            ax_stats.set_xlabel("Simulation", fontsize=12)
+            ax_stats.set_ylabel("Maximum Stress (GPa)", fontsize=12)
+            ax_stats.set_title("Peak Stress by Orientation", 
+                             fontsize=14, fontweight='bold', pad=10)
+            ax_stats.set_xticks(x)
+            ax_stats.set_xticklabels(unique_sims, rotation=45, ha='right')
+            ax_stats.legend(fontsize=10)
+            ax_stats.grid(True, alpha=0.3, axis='y')
+    
+    # Domain visualization panel
+    if simulations:
+        sim = simulations[0]
+        eta, stress_fields = sim['history'][frames[0]]
+        
+        ax_domain.set_aspect('equal')
+        
+        # Choose appropriate colormap
+        if stress_key == 'sigma_hydro':
+            cmap = plt.cm.get_cmap('coolwarm')
+        elif stress_key == 'von_mises':
+            cmap = plt.cm.get_cmap('plasma')
+        else:
+            cmap = plt.cm.get_cmap('viridis')
+        
+        im = ax_domain.imshow(stress_fields[stress_key], extent=extent, 
+                            cmap=cmap, origin='lower', alpha=0.85)
+        
+        # Add probe lines
+        line_colors = ['red', 'blue', 'green', 'purple', 'orange']
+        for i, angle in enumerate(orientations[:len(line_colors)]):
+            if angle in all_profiles[next(iter(all_profiles.keys()))]:
+                endpoints = all_profiles[next(iter(all_profiles.keys()))][angle]['endpoints']
+                x_start, y_start, x_end, y_end = endpoints
+                ax_domain.plot([x_start, x_end], [y_start, y_end],
+                             color=line_colors[i], linewidth=3, alpha=0.9,
+                             label=f'{angle}°')
+        
+        ax_domain.set_xlabel("x (nm)", fontsize=12)
+        ax_domain.set_ylabel("y (nm)", fontsize=12)
+        ax_domain.set_title("Stress Field with Probe Lines", 
+                          fontsize=14, fontweight='bold', pad=15)
+        ax_domain.legend(fontsize=10)
+        
+        # Add scale bar
+        PublicationVisualizer._add_scale_bar(ax_domain, 5.0, location='lower right')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax_domain, shrink=0.8)
+        cbar.set_label(f'{stress_component} (GPa)', fontsize=12)
+    
+    # Apply publication styling
+    style_params = PublicationVisualizer.create_enhanced_styling_params()
+    style_params['lines']['linewidth'] = controls.get('line_width', 2.5)
+    style_params['figure']['dpi'] = controls.get('dpi', 600)
+    
+    all_axes = [ax_main, ax_stats, ax_domain] + orientation_axes
+    fig = PublicationVisualizer.apply_publication_style(fig, all_axes, style_params)
+    
+    # Add panel labels
+    panel_labels = ['A', 'B', 'C', 'D', 'E', 'F', 'G']
+    for ax, label in zip(all_axes[:len(panel_labels)], panel_labels):
+        if ax is not None:
+            ax.text(-0.08, 1.08, label, transform=ax.transAxes,
+                   fontsize=20, fontweight='bold', va='top',
+                   bbox=dict(boxstyle="round,pad=0.3", 
+                            facecolor='white', alpha=0.9,
+                            edgecolor='black', linewidth=1.5))
+    
+    return fig
+
+# Add missing scale bar method to PublicationVisualizer
+PublicationVisualizer._add_scale_bar = lambda ax, length_nm, location='lower right', color='white': \
+    ax.plot([0, length_nm], [0, 0], color=color, linewidth=4)
+
+# =============================================
+# SIDEBAR CONFIGURATION
+# =============================================
+st.sidebar.header("🎨 Global Chart Styling")
+
+# Get enhanced publication controls
+advanced_styling = EnhancedFigureStyler.get_publication_controls()
+
+# Color maps selection
+st.sidebar.subheader("Default Colormap Selection")
+eta_cmap_name = st.sidebar.selectbox("Default η colormap", cmap_list, index=cmap_list.index('viridis'))
+sigma_cmap_name = st.sidebar.selectbox("Default |σ| colormap", cmap_list, index=cmap_list.index('hot'))
+hydro_cmap_name = st.sidebar.selectbox("Default Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
+vm_cmap_name = st.sidebar.selectbox("Default von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
+
+# =============================================
+# SIDEBAR - Multi-Simulation Control Panel
+# =============================================
+st.sidebar.header("🚀 Multi-Simulation Manager")
+
+# Operation mode
+operation_mode = st.sidebar.radio(
+    "Operation Mode",
+    ["Run New Simulation", "Compare Saved Simulations", "Publication-Quality Analysis"],
+    index=0
+)
+
+if operation_mode == "Run New Simulation":
+    st.sidebar.header("🎛️ New Simulation Setup")
+    
+    # Custom CSS for larger slider labels
+    st.markdown("""
+    <style>
+        .stSlider label {
+            font-size: 16px !important;
+            font-weight: 600 !important;
+        }
+        .stSelectbox label {
+            font-size: 16px !important;
+            font-weight: 600 !important;
+        }
+        .stNumberInput label {
+            font-size: 14px !important;
+            font-weight: 600 !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
+    
+    # Physical eigenstrain values
+    if defect_type == "ISF":
+        default_eps = 0.707
+        default_kappa = 0.6
+        init_amplitude = 0.70
+        caption = "Intrinsic Stacking Fault"
+    elif defect_type == "ESF":
+        default_eps = 1.414
+        default_kappa = 0.7
+        init_amplitude = 0.75
+        caption = "Extrinsic Stacking Fault"
+    else:  # Twin
+        default_eps = 2.121
+        default_kappa = 0.3
+        init_amplitude = 0.90
+        caption = "Coherent Twin Boundary"
+    
+    st.sidebar.info(f"**{caption}**")
+    
+    shape = st.sidebar.selectbox("Initial Seed Shape",
+        ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
+    
+    # Enhanced sliders
+    eps0 = st.sidebar.slider(
+        "Eigenstrain magnitude ε*",
+        0.3, 3.0,
+        value=default_eps,
+        step=0.01
+    )
+    
+    kappa = st.sidebar.slider(
+        "Interface energy coeff κ",
+        0.1, 2.0,
+        value=default_kappa,
+        step=0.05
+    )
+    
+    steps = st.sidebar.slider("Evolution steps", 20, 200, 100, 10)
+    save_every = st.sidebar.slider("Save frame every", 10, 50, 20)
+    
+    # Crystal Orientation
+    st.sidebar.subheader("Crystal Orientation")
+    orientation = st.sidebar.selectbox(
+        "Habit Plane Orientation",
+        ["Horizontal {111} (0°)", 
+         "Tilted 30° (1¯10 projection)", 
+         "Tilted 60°", 
+         "Vertical {111} (90°)", 
+         "Custom Angle"],
+        index=0
+    )
+    
+    if orientation == "Custom Angle":
+        angle_deg = st.sidebar.slider("Custom tilt angle (°)", -180, 180, 0, 5)
+        theta = np.deg2rad(angle_deg)
+    else:
+        angle_map = {
+            "Horizontal {111} (0°)": 0,
+            "Tilted 30° (1¯10 projection)": 30,
+            "Tilted 60°": 60,
+            "Vertical {111} (90°)": 90,
+        }
+        theta = np.deg2rad(angle_map[orientation])
+    
+    st.sidebar.info(f"Selected tilt: **{np.rad2deg(theta):.1f}°** from horizontal")
+    
+    # Visualization settings
+    st.sidebar.subheader("Simulation-Specific Colormaps")
+    sim_eta_cmap_name = st.sidebar.selectbox("η colormap for this sim", cmap_list, 
+                                           index=cmap_list.index(eta_cmap_name))
+    sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(sigma_cmap_name))
+    sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap for this sim", cmap_list, 
+                                             index=cmap_list.index(hydro_cmap_name))
+    sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap for this sim", cmap_list, 
+                                          index=cmap_list.index(vm_cmap_name))
+    
+    # Run button
+    if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
+        st.session_state.run_new_simulation = True
+        st.session_state.sim_params = {
+            'defect_type': defect_type,
+            'shape': shape,
+            'eps0': eps0,
+            'kappa': kappa,
+            'orientation': orientation,
+            'theta': theta,
+            'steps': steps,
+            'save_every': save_every,
+            'eta_cmap': sim_eta_cmap_name,
+            'sigma_cmap': sim_sigma_cmap_name,
+            'hydro_cmap': sim_hydro_cmap_name,
+            'vm_cmap': sim_vm_cmap_name
+        }
+
+elif operation_mode == "Compare Saved Simulations":
+    st.sidebar.header("🔍 Simulation Comparison Setup")
+    
+    # Get available simulations
+    simulations = SimulationDB.get_simulation_list()
+    
+    if not simulations:
+        st.sidebar.warning("No simulations saved yet. Run some simulations first!")
+    else:
+        # Multi-select for comparison
+        sim_options = {f"{sim['name']} (ID: {sim['id']})": sim['id'] for sim in simulations}
+        selected_sim_ids = st.sidebar.multiselect(
+            "Select Simulations to Compare",
+            options=list(sim_options.keys()),
+            default=list(sim_options.keys())[:min(3, len(sim_options))]
+        )
+        
+        # Convert back to IDs
+        selected_ids = [sim_options[name] for name in selected_sim_ids]
+        
+        # Comparison settings
+        st.sidebar.subheader("Comparison Settings")
+        
+        comparison_type = st.sidebar.selectbox(
+            "Comparison Type",
+            ["Side-by-Side Heatmaps", "Overlay Line Profiles", "Radial Profile Comparison", 
+             "Statistical Summary", "Defect-Stress Correlation", "Stress Component Cross-Correlation",
+             "Evolution Timeline", "Contour Comparison", "3D Surface Comparison"],
+            index=0
+        )
+        
+        stress_component = st.sidebar.selectbox(
+            "Stress Component", 
+            ["Stress Magnitude |σ|", "Hydrostatic σ_h", "von Mises σ_vM"],
+            index=0
+        )
+        
+        frame_selection = st.sidebar.radio(
+            "Frame Selection",
+            ["Final Frame", "Same Evolution Time", "Specific Frame Index"],
+            horizontal=True
+        )
+        
+        if frame_selection == "Specific Frame Index":
+            frame_idx = st.sidebar.slider("Frame Index", 0, 100, 0)
+        else:
+            frame_idx = None
+        
+        # Run comparison
+        if st.sidebar.button("🔬 Run Comparison", type="primary"):
+            st.session_state.run_comparison = True
+            st.session_state.comparison_config = {
+                'sim_ids': selected_ids,
+                'type': comparison_type,
+                'stress_component': stress_component,
+                'frame_selection': frame_selection,
+                'frame_idx': frame_idx
+            }
+
+else:  # Publication-Quality Analysis
+    st.sidebar.header("📰 Publication-Quality Analysis")
+    
+    # Get enhanced visualization controls
+    viz_controls = EnhancedVisualizationControls.get_visualization_controls()
+    
+    # Get available simulations
+    simulations = SimulationDB.get_simulation_list()
+    
+    if not simulations:
+        st.sidebar.warning("No simulations saved yet. Run some simulations first!")
+    else:
+        # Simulation selection
+        sim_options = {f"{sim['name']} (ID: {sim['id']})": sim['id'] for sim in simulations}
+        selected_sim_ids = st.sidebar.multiselect(
+            "Select Simulations for Analysis",
+            options=list(sim_options.keys()),
+            default=list(sim_options.keys())[:min(3, len(sim_options))]
+        )
+        
+        # Convert back to IDs
+        selected_ids = [sim_options[name] for name in selected_sim_ids]
+        
+        # Analysis settings
+        st.sidebar.subheader("Analysis Settings")
+        
+        analysis_component = st.sidebar.selectbox(
+            "Stress Component for Analysis",
+            ["Hydrostatic σ_h", "von Mises σ_vM", "Stress Magnitude |σ|"],
+            index=0
+        )
+        
+        frame_selection = st.sidebar.radio(
+            "Frame Selection",
+            ["Final Frame", "Specific Frame Index"],
+            horizontal=True
+        )
+        
+        if frame_selection == "Specific Frame Index":
+            frame_idx = st.sidebar.slider("Analysis Frame Index", 0, 100, 50)
+        else:
+            frame_idx = None
+        
+        # Run analysis
+        if st.sidebar.button("📊 Generate Publication Analysis", type="primary"):
+            st.session_state.run_publication_analysis = True
+            st.session_state.publication_config = {
+                'sim_ids': selected_ids,
+                'stress_component': analysis_component,
+                'frame_selection': frame_selection,
+                'frame_idx': frame_idx,
+                'viz_controls': viz_controls
+            }
+
+# =============================================
+# MAIN CONTENT AREA
+# =============================================
+if operation_mode == "Run New Simulation":
+    # Show simulation preview
+    st.markdown('<div class="section-header">🎯 New Simulation Preview</div>', 
+                unsafe_allow_html=True)
+    
+    if 'sim_params' in st.session_state:
+        sim_params = st.session_state.sim_params
+        
+        # Display simulation parameters
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            component = st.selectbox(
-                "Stress Component",
-                ["Hydrostatic σ_h", "von Mises σ_vM", "Stress Magnitude |σ|"],
-                index=0,
-                key="component_select"
-            )
-            
-            # Show optimal probe recommendations
-            if component == "Hydrostatic σ_h":
-                st.info("**Optimal Probes:** 45°, 135° diagonals\n\nHydrostatic stress shows maximum sensitivity along crystal diagonals.")
-            elif component == "von Mises σ_vM":
-                st.info("**Optimal Probes:** 0°, 90° (horizontal/vertical)\n\nvon Mises stress is best analyzed along principal axes.")
-            else:
-                st.info("**Optimal Probes:** All orientations (0°, 45°, 90°, 135°)\n\nStress magnitude requires multi-orientation analysis.")
-        
+            st.markdown('<div class="metric-card"><div class="metric-value">' + sim_params['defect_type'] + '</div><div class="metric-label">Defect Type</div></div>', unsafe_allow_html=True)
         with col2:
-            # Get sample simulations from session state
-            if 'simulations' in st.session_state and st.session_state.simulations:
-                sim_options = list(st.session_state.simulations.keys())
-                selected_sims = st.multiselect(
-                    "Select Simulations",
-                    sim_options,
-                    default=sim_options[:min(3, len(sim_options))],
-                    key="comp_sim_select"
-                )
-                
-                if selected_sims:
-                    frame_idx = st.slider(
-                        "Frame Index",
-                        0, 100, 50,
-                        key="comp_frame_slider"
-                    )
-                else:
-                    st.warning("No simulations selected")
-            else:
-                st.info("Run simulations first to enable visualization")
-        
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{sim_params["eps0"]:.3f}</div><div class="metric-label">ε*</div></div>', unsafe_allow_html=True)
         with col3:
-            # Visualization options
-            colormap = st.selectbox(
-                "Colormap",
-                cmap_list,
-                index=cmap_list.index('coolwarm' if component == "Hydrostatic σ_h" else 
-                                     'plasma' if component == "von Mises σ_vM" else 
-                                     'viridis'),
-                key="comp_cmap"
-            )
-            
-            show_domain = st.checkbox("Show Domain with Probes", True, key="comp_show_domain")
-            show_stats = st.checkbox("Show Statistics", True, key="comp_show_stats")
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{sim_params["kappa"]:.2f}</div><div class="metric-label">κ</div></div>', unsafe_allow_html=True)
+        with col4:
+            st.markdown(f'<div class="metric-card"><div class="metric-value">{sim_params["orientation"]}</div><div class="metric-label">Orientation</div></div>', unsafe_allow_html=True)
         
-        # Generate visualization button
-        if st.button("🎨 Generate Publication Figure", type="primary", key="gen_comp_fig"):
-            if 'simulations' in st.session_state and selected_sims:
-                # Prepare simulation data
-                simulations = []
-                frames = []
+        # Show initial configuration
+        init_eta = create_initial_eta(sim_params['shape'], sim_params['defect_type'])
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # Apply styling
+        fig = EnhancedFigureStyler.apply_advanced_styling(fig, [ax1, ax2], advanced_styling)
+        
+        # Initial defect
+        im1 = ax1.imshow(init_eta, extent=extent, 
+                        cmap=plt.cm.get_cmap(COLORMAPS.get(sim_params['eta_cmap'], 'viridis')), 
+                        origin='lower')
+        ax1.set_title(f"Initial {sim_params['defect_type']} - {sim_params['shape']}")
+        ax1.set_xlabel("x (nm)")
+        ax1.set_ylabel("y (nm)")
+        plt.colorbar(im1, ax=ax1, shrink=advanced_styling.get('colorbar_shrink', 0.8))
+        
+        # Stress preview (calculated from initial state)
+        stress_preview = compute_stress_fields(init_eta, sim_params['eps0'], sim_params['theta'])
+        im2 = ax2.imshow(stress_preview['sigma_mag'], extent=extent, 
+                        cmap=plt.cm.get_cmap(COLORMAPS.get(sim_params['sigma_cmap'], 'hot')), 
+                        origin='lower')
+        ax2.set_title(f"Initial Stress Magnitude")
+        ax2.set_xlabel("x (nm)")
+        ax2.set_ylabel("y (nm)")
+        plt.colorbar(im2, ax=ax2, shrink=advanced_styling.get('colorbar_shrink', 0.8))
+        
+        st.pyplot(fig)
+        
+        # Run simulation button
+        if st.button("▶️ Start Full Simulation", type="primary"):
+            with st.spinner(f"Running {sim_params['defect_type']} simulation..."):
+                start_time = time.time()
                 
-                for sim_id in selected_sims:
-                    sim_data = st.session_state.simulations[sim_id]
-                    simulations.append(sim_data)
-                    frames.append(min(frame_idx, len(sim_data['history']) - 1))
+                # Run simulation
+                history = run_simulation(sim_params)
                 
-                # Create configuration
-                config = {
-                    'stress_component': component,
-                    'orientations': controls['hydrostatic_angles'] if component == "Hydrostatic σ_h" else
-                                   controls['vonmises_angles'] if component == "von Mises σ_vM" else
-                                   controls['magnitude_angles'],
-                    'line_style': 'solid',
-                    'show_domain': show_domain,
-                    'show_statistics': show_stats
+                # Create metadata
+                metadata = {
+                    'run_time': time.time() - start_time,
+                    'frames': len(history),
+                    'grid_size': N,
+                    'dx': dx,
+                    'colormaps': {
+                        'eta': sim_params['eta_cmap'],
+                        'sigma': sim_params['sigma_cmap'],
+                        'hydro': sim_params['hydro_cmap'],
+                        'vm': sim_params['vm_cmap']
+                    }
                 }
                 
-                # Create styling parameters
-                style_params = PublicationVisualizer.create_enhanced_styling_params()
-                style_params['lines']['linewidth'] = controls['line_width']
-                style_params['figure']['dpi'] = controls['dpi']
-                style_params['axes']['labelsize'] = controls['font_size'] + 2
-                style_params['axes']['titlesize'] = controls['font_size'] + 4
-                style_params['legend']['fontsize'] = controls['font_size']
+                # Save to database
+                sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
                 
-                # Generate figure
-                with st.spinner("Creating publication-quality figure..."):
-                    fig = PublicationVisualizer.create_stress_component_specific_plot(
-                        simulations, frames, config, style_params
+                st.success(f"""
+                ✅ Simulation Complete!
+                - **ID**: `{sim_id}`
+                - **Frames**: {len(history)}
+                - **Time**: {metadata['run_time']:.1f} seconds
+                - **Saved to database**
+                """)
+                
+                # Show final frame with post-processing options
+                with st.expander("📊 Post-Process Final Results", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        show_defect = st.checkbox("Show Defect Field", True)
+                        show_stress = st.checkbox("Show Stress Field", True)
+                    with col2:
+                        custom_cmap = st.selectbox("Custom Colormap", cmap_list, 
+                                                  index=cmap_list.index('viridis'))
+                    
+                    if show_defect or show_stress:
+                        final_eta, final_stress = history[-1]
+                        
+                        n_plots = (1 if show_defect else 0) + (1 if show_stress else 0)
+                        fig2, axes = plt.subplots(1, n_plots, figsize=(6*n_plots, 5))
+                        
+                        if n_plots == 1:
+                            axes = [axes]
+                        
+                        plot_idx = 0
+                        if show_defect:
+                            im = axes[plot_idx].imshow(final_eta, extent=extent, 
+                                                      cmap=plt.cm.get_cmap(COLORMAPS.get(custom_cmap, 'viridis')), 
+                                                      origin='lower')
+                            axes[plot_idx].set_title(f"Final {sim_params['defect_type']}")
+                            axes[plot_idx].set_xlabel("x (nm)")
+                            axes[plot_idx].set_ylabel("y (nm)")
+                            plt.colorbar(im, ax=axes[plot_idx], shrink=0.8)
+                            plot_idx += 1
+                        
+                        if show_stress:
+                            im = axes[plot_idx].imshow(final_stress['sigma_mag'], extent=extent,
+                                                      cmap=plt.cm.get_cmap(COLORMAPS.get(custom_cmap, 'viridis')), 
+                                                      origin='lower')
+                            axes[plot_idx].set_title(f"Final Stress Magnitude")
+                            axes[plot_idx].set_xlabel("x (nm)")
+                            axes[plot_idx].set_ylabel("y (nm)")
+                            plt.colorbar(im, ax=axes[plot_idx], shrink=0.8)
+                        
+                        # Apply advanced styling
+                        fig2 = EnhancedFigureStyler.apply_advanced_styling(fig2, axes, advanced_styling)
+                        st.pyplot(fig2)
+                
+                # Clear the run flag
+                if 'run_new_simulation' in st.session_state:
+                    del st.session_state.run_new_simulation
+    
+    else:
+        st.info("Configure simulation parameters in the sidebar and click 'Run & Save Simulation'")
+    
+    # Show saved simulations
+    st.markdown('<div class="section-header">📋 Saved Simulations</div>', 
+                unsafe_allow_html=True)
+    simulations = SimulationDB.get_simulation_list()
+    
+    if simulations:
+        # Create a dataframe of saved simulations
+        sim_data = []
+        for sim in simulations:
+            params = sim['params']
+            sim_data.append({
+                'ID': sim['id'],
+                'Defect Type': params['defect_type'],
+                'Orientation': params['orientation'],
+                'ε*': params['eps0'],
+                'κ': params['kappa'],
+                'Shape': params['shape'],
+                'Steps': params['steps'],
+                'Frames': len(SimulationDB.get_simulation(sim['id'])['history'])
+            })
+        
+        df = pd.DataFrame(sim_data)
+        st.dataframe(df, use_container_width=True)
+        
+        # Delete option
+        with st.expander("🗑️ Delete Simulations"):
+            delete_options = [f"{sim['name']} (ID: {sim['id']})" for sim in simulations]
+            to_delete = st.multiselect("Select simulations to delete", delete_options)
+            
+            if st.button("Delete Selected", type="secondary"):
+                for sim_name in to_delete:
+                    # Extract ID from string
+                    sim_id = sim_name.split("ID: ")[1].replace(")", "")
+                    if SimulationDB.delete_simulation(sim_id):
+                        st.success(f"Deleted simulation {sim_id}")
+                st.rerun()
+    else:
+        st.info("No simulations saved yet. Run a simulation to see it here!")
+
+elif operation_mode == "Compare Saved Simulations":
+    st.markdown('<div class="section-header">🔬 Multi-Simulation Comparison</div>', 
+                unsafe_allow_html=True)
+    
+    if 'run_comparison' in st.session_state and st.session_state.run_comparison:
+        config = st.session_state.comparison_config
+        
+        # Load selected simulations
+        simulations = []
+        valid_sim_ids = []
+        
+        for sim_id in config['sim_ids']:
+            sim_data = SimulationDB.get_simulation(sim_id)
+            if sim_data:
+                simulations.append(sim_data)
+                valid_sim_ids.append(sim_id)
+            else:
+                st.warning(f"Simulation {sim_id} not found!")
+        
+        if not simulations:
+            st.error("No valid simulations selected for comparison!")
+        else:
+            st.success(f"Loaded {len(simulations)} simulations for comparison")
+            
+            # Determine frame index
+            frame_idx = config['frame_idx']
+            if config['frame_selection'] == "Final Frame":
+                # Use final frame for each simulation
+                frames = [len(sim['history']) - 1 for sim in simulations]
+            elif config['frame_selection'] == "Same Evolution Time":
+                # Use same evolution time (percentage of total steps)
+                target_percentage = 0.8  # 80% of evolution
+                frames = [int(len(sim['history']) * target_percentage) for sim in simulations]
+            else:
+                # Specific frame index
+                frames = [min(frame_idx, len(sim['history']) - 1) for sim in simulations]
+            
+            # Create comparison based on type
+            if config['type'] == "Side-by-Side Heatmaps":
+                # Use enhanced publication-quality plotting
+                st.subheader(f"📰 Publication-Quality {config['type']}")
+                
+                # Create enhanced plot
+                fig = create_publication_heatmaps(simulations, frames, config, advanced_styling)
+                
+                # Display with enhanced options
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    st.pyplot(fig)
+                
+                with col2:
+                    # Quick export info
+                    st.info(f"""
+                    **Publication Ready:**
+                    - Journal: {advanced_styling.get('journal_style', 'custom').title()}
+                    - DPI: {advanced_styling.get('figure_dpi', 600)}
+                    - Vector: {'Yes' if advanced_styling.get('vector_output', True) else 'No'}
+                    """)
+                
+                with col3:
+                    # Show figure info
+                    fig_size = fig.get_size_inches()
+                    st.metric("Figure Size", f"{fig_size[0]:.1f} × {fig_size[1]:.1f} in")
+                    st.metric("Resolution", f"{advanced_styling.get('figure_dpi', 600)} DPI")
+            
+            elif config['type'] == "Overlay Line Profiles":
+                # Enhanced overlay plot using PublicationProfileExtractor
+                st.subheader("📈 Enhanced Line Profile Comparison")
+                
+                # Use PublicationProfileExtractor for better profiles
+                analyzer = PublicationProfileExtractor()
+                
+                # Create figure
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+                
+                colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+                
+                for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+                    eta, stress_fields = sim['history'][frame]
+                    stress_key = {
+                        "Stress Magnitude |σ|": 'sigma_mag',
+                        "Hydrostatic σ_h": 'sigma_hydro',
+                        "von Mises σ_vM": 'von_mises'
+                    }[config['stress_component']]
+                    
+                    stress_data = stress_fields[stress_key]
+                    
+                    # Extract horizontal profile
+                    distances, profile, endpoints, metadata = analyzer.extract_profile_2d(
+                        stress_data, 0, 'center', 0, 0.7, 4, 3
                     )
                     
-                    # Display figure
-                    st.pyplot(fig)
+                    label = f"{sim['params']['defect_type']} - {sim['params']['orientation']}"
+                    ax1.plot(distances, profile, color=color, 
+                           linewidth=advanced_styling.get('line_width', 2.0),
+                           label=label)
                     
-                    # Export options
-                    with st.expander("💾 Export Options", expanded=True):
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            if 'PNG' in controls['export_format']:
-                                buf = BytesIO()
-                                fig.savefig(buf, format='png', dpi=controls['dpi'], 
-                                           bbox_inches='tight', facecolor='white')
-                                buf.seek(0)
-                                
-                                st.download_button(
-                                    label="📸 Download PNG",
-                                    data=buf,
-                                    file_name=f"{component.replace(' ', '_')}_analysis.png",
-                                    mime="image/png"
-                                )
-                        
-                        with col2:
-                            if 'PDF' in controls['export_format']:
-                                buf = BytesIO()
-                                fig.savefig(buf, format='pdf', dpi=controls['dpi'],
-                                           bbox_inches='tight', facecolor='white')
-                                buf.seek(0)
-                                
-                                st.download_button(
-                                    label="📄 Download PDF",
-                                    data=buf,
-                                    file_name=f"{component.replace(' ', '_')}_analysis.pdf",
-                                    mime="application/pdf"
-                                )
-                        
-                        with col3:
-                            # Copy figure settings
-                            fig_settings = {
-                                'component': component,
-                                'simulations': selected_sims,
-                                'frame': frame_idx,
-                                'colormap': colormap,
-                                'style_params': style_params
-                            }
+                    # Extract vertical profile
+                    distances, profile, endpoints, metadata = analyzer.extract_profile_2d(
+                        stress_data, 90, 'center', 0, 0.7, 4, 3
+                    )
+                    
+                    ax2.plot(distances, profile, color=color,
+                           linewidth=advanced_styling.get('line_width', 2.0),
+                           label=label)
+                
+                ax1.set_xlabel("Horizontal Distance (nm)")
+                ax1.set_ylabel("Stress (GPa)")
+                ax1.set_title("Horizontal Profile")
+                ax1.legend(fontsize=10)
+                ax1.grid(True, alpha=0.3)
+                
+                ax2.set_xlabel("Vertical Distance (nm)")
+                ax2.set_ylabel("Stress (GPa)")
+                ax2.set_title("Vertical Profile")
+                ax2.legend(fontsize=10)
+                ax2.grid(True, alpha=0.3)
+                
+                # Apply advanced styling
+                fig = EnhancedFigureStyler.apply_advanced_styling(fig, [ax1, ax2], advanced_styling)
+                st.pyplot(fig)
+            
+            else:
+                # For other comparison types, use simpler visualization
+                st.info(f"Comparison type '{config['type']}' selected. Using basic visualization.")
+                
+                # Basic visualization
+                fig, ax = plt.subplots(figsize=(10, 6))
+                
+                colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+                
+                for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
+                    eta, stress_fields = sim['history'][frame]
+                    stress_key = {
+                        "Stress Magnitude |σ|": 'sigma_mag',
+                        "Hydrostatic σ_h": 'sigma_hydro',
+                        "von Mises σ_vM": 'von_mises'
+                    }[config['stress_component']]
+                    
+                    stress_data = stress_fields[stress_key]
+                    
+                    # Simple line plot of mean stress
+                    mean_stress = np.mean(stress_data)
+                    ax.bar(idx, mean_stress, color=color, alpha=0.7, 
+                           label=f"{sim['params']['defect_type']}")
+                
+                ax.set_xlabel("Simulation")
+                ax.set_ylabel(f"Mean {config['stress_component']} (GPa)")
+                ax.set_title(f"{config['type']} Comparison")
+                ax.legend()
+                
+                # Apply advanced styling
+                fig = EnhancedFigureStyler.apply_advanced_styling(fig, ax, advanced_styling)
+                st.pyplot(fig)
+            
+            # Clear comparison flag
+            if 'run_comparison' in st.session_state:
+                del st.session_state.run_comparison
+    
+    else:
+        st.info("Select simulations in the sidebar and click 'Run Comparison' to start!")
+
+else:  # Publication-Quality Analysis
+    st.markdown('<div class="section-header">📰 Publication-Quality Stress Analysis</div>', 
+                unsafe_allow_html=True)
+    
+    if 'run_publication_analysis' in st.session_state and st.session_state.run_publication_analysis:
+        config = st.session_state.publication_config
+        
+        # Load selected simulations
+        simulations = []
+        valid_sim_ids = []
+        
+        for sim_id in config['sim_ids']:
+            sim_data = SimulationDB.get_simulation(sim_id)
+            if sim_data:
+                simulations.append(sim_data)
+                valid_sim_ids.append(sim_id)
+            else:
+                st.warning(f"Simulation {sim_id} not found!")
+        
+        if not simulations:
+            st.error("No valid simulations selected for analysis!")
+        else:
+            st.success(f"Loaded {len(simulations)} simulations for publication-quality analysis")
+            
+            # Determine frame index
+            if config['frame_selection'] == "Final Frame":
+                # Use final frame for each simulation
+                frames = [len(sim['history']) - 1 for sim in simulations]
+            else:
+                # Specific frame index
+                frames = [min(config['frame_idx'], len(sim['history']) - 1) for sim in simulations]
+            
+            # Create enhanced configuration
+            enhanced_config = {
+                'stress_component': config['stress_component'],
+                'line_style': 'solid'
+            }
+            
+            # Generate publication-quality visualization
+            with st.spinner("Generating publication-quality analysis..."):
+                fig = create_multi_orientation_analysis(
+                    simulations, frames, enhanced_config, config['viz_controls']
+                )
+                
+                # Display the figure
+                st.pyplot(fig)
+                
+                # Export options
+                with st.expander("💾 Export Publication Figure", expanded=True):
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if 'PNG' in config['viz_controls']['export_format']:
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=config['viz_controls']['dpi'], 
+                                       bbox_inches='tight', facecolor='white')
+                            buf.seek(0)
                             
                             st.download_button(
-                                label="⚙️ Export Settings",
-                                data=json.dumps(fig_settings, indent=2),
-                                file_name="figure_settings.json",
-                                mime="application/json"
+                                label="📸 Download PNG",
+                                data=buf,
+                                file_name=f"publication_analysis_{config['stress_component'].replace(' ', '_')}.png",
+                                mime="image/png"
                             )
-            else:
-                st.error("No simulation data available. Please run simulations first.")
-    
-    with tab2:
-        st.markdown('<h3 style="color: #2D3748; margin-bottom: 1.5rem;">Multi-Orientation Overlay Analysis</h3>', 
-                   unsafe_allow_html=True)
-        
-        # Multi-orientation overlay configuration
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            overlay_component = st.selectbox(
-                "Stress Component for Overlay",
-                ["Stress Magnitude |σ|", "Hydrostatic σ_h", "von Mises σ_vM"],
-                index=0,
-                key="overlay_component"
-            )
-            
-            overlay_orientations = st.multiselect(
-                "Select Orientations",
-                [0, 45, 90, 135],
-                default=[0, 45, 90, 135],
-                key="overlay_orientations"
-            )
-            
-            line_style = st.selectbox(
-                "Line Style",
-                ['solid', 'dashed', 'dotted', 'dashdot'],
-                index=0,
-                key="overlay_line_style"
-            )
-        
-        with col2:
-            if 'simulations' in st.session_state and st.session_state.simulations:
-                sim_options = list(st.session_state.simulations.keys())
-                overlay_sims = st.multiselect(
-                    "Select Simulations for Overlay",
-                    sim_options,
-                    default=sim_options[:min(4, len(sim_options))],
-                    key="overlay_sims"
-                )
-                
-                if overlay_sims:
-                    overlay_frame = st.slider(
-                        "Frame Index",
-                        0, 100, 50,
-                        key="overlay_frame"
-                    )
-            else:
-                st.info("Run simulations first to enable overlay visualization")
-        
-        # Generate overlay plot
-        if st.button("📈 Generate Overlay Plot", type="primary", key="gen_overlay"):
-            if 'simulations' in st.session_state and overlay_sims:
-                # Prepare data
-                simulations = []
-                frames = []
-                
-                for sim_id in overlay_sims:
-                    sim_data = st.session_state.simulations[sim_id]
-                    simulations.append(sim_data)
-                    frames.append(min(overlay_frame, len(sim_data['history']) - 1))
-                
-                # Create configuration
-                config = {
-                    'stress_component': overlay_component,
-                    'orientations': overlay_orientations,
-                    'line_style': line_style
-                }
-                
-                # Generate figure
-                with st.spinner("Creating multi-orientation overlay..."):
-                    fig = PublicationVisualizer.create_comprehensive_overlay_plot(
-                        simulations, frames, config
-                    )
                     
-                    # Display figure
-                    st.pyplot(fig)
+                    with col2:
+                        if 'PDF' in config['viz_controls']['export_format']:
+                            buf = BytesIO()
+                            fig.savefig(buf, format='pdf', dpi=config['viz_controls']['dpi'],
+                                       bbox_inches='tight', facecolor='white')
+                            buf.seek(0)
+                            
+                            st.download_button(
+                                label="📄 Download PDF",
+                                data=buf,
+                                file_name=f"publication_analysis_{config['stress_component'].replace(' ', '_')}.pdf",
+                                mime="application/pdf"
+                            )
                     
-                    # Show statistics
-                    with st.expander("📊 Overlay Statistics", expanded=True):
-                        # Extract and display profile statistics
+                    with col3:
+                        # Export analysis data
+                        analysis_data = []
                         analyzer = PublicationProfileExtractor()
-                        stats_data = []
                         
-                        for sim_idx, (sim, frame) in enumerate(zip(simulations, frames)):
+                        for sim, frame in zip(simulations, frames):
                             eta, stress_fields = sim['history'][frame]
                             stress_key = {
-                                "Stress Magnitude |σ|": 'sigma_mag',
                                 "Hydrostatic σ_h": 'sigma_hydro',
-                                "von Mises σ_vM": 'von_mises'
-                            }[overlay_component]
+                                "von Mises σ_vM": 'von_mises',
+                                "Stress Magnitude |σ|": 'sigma_mag'
+                            }[config['stress_component']]
                             
                             stress_data = stress_fields[stress_key]
                             
-                            for angle in overlay_orientations:
+                            orientation_results = {}
+                            for angle in config['viz_controls'].get('hydrostatic_angles', [45, 135]):
                                 distances, profile, endpoints, metadata = analyzer.extract_profile_2d(
                                     stress_data, angle, 'center', 0, 0.7
                                 )
                                 
-                                stats_data.append({
-                                    'Simulation': sim['params']['defect_type'],
-                                    'Orientation': f'{angle}°',
-                                    'Max (GPa)': metadata['max_value'],
-                                    'Mean (GPa)': metadata['mean_value'],
-                                    'FWHM (nm)': metadata['fwhm_nm'],
-                                    'Peak Position (nm)': metadata['peak_position_nm']
-                                })
+                                orientation_results[f"{angle}°"] = {
+                                    'distances': distances.tolist(),
+                                    'profile': profile.tolist(),
+                                    'metadata': metadata
+                                }
+                            
+                            analysis_data.append({
+                                'simulation_id': sim['id'],
+                                'defect_type': sim['params']['defect_type'],
+                                'orientation': sim['params']['orientation'],
+                                'stress_component': config['stress_component'],
+                                'profiles': orientation_results
+                            })
                         
-                        if stats_data:
-                            df_stats = pd.DataFrame(stats_data)
-                            st.dataframe(
-                                df_stats.style.format({
-                                    'Max (GPa)': '{:.3f}',
-                                    'Mean (GPa)': '{:.3f}',
-                                    'FWHM (nm)': '{:.2f}',
-                                    'Peak Position (nm)': '{:.2f}'
-                                }),
-                                use_container_width=True
-                            )
-            else:
-                st.error("Please select simulations for overlay analysis.")
+                        json_data = json.dumps(analysis_data, indent=2)
+                        st.download_button(
+                            label="📊 Export Analysis Data",
+                            data=json_data,
+                            file_name="analysis_data.json",
+                            mime="application/json"
+                        )
+            
+            # Clear analysis flag
+            if 'run_publication_analysis' in st.session_state:
+                del st.session_state.run_publication_analysis
     
-    with tab3:
-        st.markdown('<h3 style="color: #2D3748; margin-bottom: 1.5rem;">Comparative Stress Analysis</h3>', 
-                   unsafe_allow_html=True)
-        
-        # Comparative analysis configuration
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            compare_type = st.selectbox(
-                "Comparison Type",
-                ["Hydrostatic vs von Mises", "Diagonal vs Horizontal/Vertical", 
-                 "Multi-Component Analysis", "Orientation Sensitivity"],
-                index=0,
-                key="compare_type"
-            )
-            
-            if 'simulations' in st.session_state and st.session_state.simulations:
-                compare_sims = st.multiselect(
-                    "Select Simulations to Compare",
-                    list(st.session_state.simulations.keys()),
-                    default=list(st.session_state.simulations.keys())[:2],
-                    key="compare_sims"
-                )
-            else:
-                st.info("Run at least 2 simulations for comparison")
-        
-        with col2:
-            compare_metric = st.selectbox(
-                "Comparison Metric",
-                ["Peak Stress", "Stress Distribution", "Symmetry Index", 
-                 "FWHM", "Gradient Analysis"],
-                index=0,
-                key="compare_metric"
-            )
-            
-            compare_frame = st.slider(
-                "Comparison Frame",
-                0, 100, 50,
-                key="compare_frame"
-            )
-        
-        # Generate comparative analysis
-        if st.button("🔬 Generate Comparative Analysis", type="primary", key="gen_compare"):
-            if 'simulations' in st.session_state and len(compare_sims) >= 2:
-                # Prepare comparative visualization
-                st.success(f"Comparative analysis of {len(compare_sims)} simulations")
-                
-                # Create comparative plots based on selection
-                if compare_type == "Hydrostatic vs von Mises":
-                    PublicationVisualizer._create_component_comparison(compare_sims, compare_frame)
-                elif compare_type == "Diagonal vs Horizontal/Vertical":
-                    PublicationVisualizer._create_orientation_comparison(compare_sims, compare_frame)
-                # Add other comparison types as needed
-            else:
-                st.error("Select at least 2 simulations for comparative analysis.")
-    
-    with tab4:
-        st.markdown('<h3 style="color: #2D3748; margin-bottom: 1.5rem;">Statistical Summary & Insights</h3>', 
-                   unsafe_allow_html=True)
-        
-        # Statistical summary configuration
-        if 'simulations' in st.session_state and st.session_state.simulations:
-            # Calculate overall statistics
-            total_sims = len(st.session_state.simulations)
-            total_frames = sum(len(sim['history']) for sim in st.session_state.simulations.values())
-            
-            # Display summary metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Simulations", total_sims)
-            with col2:
-                st.metric("Total Frames", total_frames)
-            with col3:
-                # Count by defect type
-                defect_counts = {}
-                for sim in st.session_state.simulations.values():
-                    defect = sim['params']['defect_type']
-                    defect_counts[defect] = defect_counts.get(defect, 0) + 1
-                st.metric("Defect Types", len(defect_counts))
-            with col4:
-                # Average stress values
-                avg_stresses = []
-                for sim in st.session_state.simulations.values():
-                    for eta, stress_fields in sim['history']:
-                        avg_stresses.append(np.mean(stress_fields['sigma_mag']))
-                st.metric("Avg Stress", f"{np.mean(avg_stresses):.2f} GPa")
-            
-            # Detailed statistics
-            with st.expander("📈 Detailed Statistics", expanded=True):
-                # Create comprehensive statistics table
-                stats_table = []
-                
-                for sim_id, sim_data in st.session_state.simulations.items():
-                    params = sim_data['params']
-                    history = sim_data['history']
-                    
-                    if history:
-                        # Get final frame statistics
-                        eta, stress_fields = history[-1]
-                        
-                        stats_table.append({
-                            'ID': sim_id[:8],
-                            'Defect': params['defect_type'],
-                            'ε*': params['eps0'],
-                            'κ': params['kappa'],
-                            'Frames': len(history),
-                            'Max |σ| (GPa)': np.max(stress_fields['sigma_mag']),
-                            'Mean σ_h (GPa)': np.mean(stress_fields['sigma_hydro']),
-                            'Max σ_vM (GPa)': np.max(stress_fields['von_mises']),
-                            'Defect Area (nm²)': np.sum(eta > 0.5) * dx**2
-                        })
-                
-                if stats_table:
-                    df_stats = pd.DataFrame(stats_table)
-                    st.dataframe(
-                        df_stats.style.format({
-                            'ε*': '{:.3f}',
-                            'κ': '{:.2f}',
-                            'Max |σ| (GPa)': '{:.3f}',
-                            'Mean σ_h (GPa)': '{:.3f}',
-                            'Max σ_vM (GPa)': '{:.3f}',
-                            'Defect Area (nm²)': '{:.1f}'
-                        }),
-                        use_container_width=True
-                    )
-            
-            # Generate insights
-            with st.expander("🔍 Scientific Insights", expanded=True):
-                st.markdown("""
-                ### Key Observations from Stress Analysis:
-                
-                **Hydrostatic Stress (σ_h):**
-                - Best visualized along **45° and 135° diagonals**
-                - Shows maximum sensitivity to crystal symmetry
-                - Diagonal probes capture dilatational components
-                
-                **von Mises Stress (σ_vM):**
-                - Optimal analysis with **0° and 90° probes**
-                - Horizontal/vertical probes capture shear components
-                - Shows material yield criteria sensitivity
-                
-                **Stress Magnitude (|σ|):**
-                - Requires **multi-orientation analysis** (0°, 45°, 90°, 135°)
-                - Provides comprehensive stress field characterization
-                - Essential for failure analysis
-                
-                ### Publication Recommendations:
-                1. **Hydrostatic stress**: Use diagonal probes with coolwarm colormap
-                2. **von Mises stress**: Use horizontal/vertical probes with plasma colormap
-                3. **Stress magnitude**: Multi-orientation overlay with viridis colormap
-                4. **Comparative studies**: Include symmetry analysis and statistical validation
-                
-                ### Best Practices:
-                - Always include scale bars and physical units
-                - Use consistent color schemes across figures
-                - Report statistical significance of observations
-                - Include error bars for experimental comparisons
-                """)
-        else:
-            st.info("Run simulations to generate statistical summary")
+    else:
+        st.info("Configure publication-quality analysis settings in the sidebar and click 'Generate Publication Analysis'")
 
 # =============================================
-# MAIN APPLICATION
+# THEORETICAL ANALYSIS
 # =============================================
-def main():
-    """Main application function"""
-    
-    # Initialize session state for simulations
-    if 'simulations' not in st.session_state:
-        st.session_state.simulations = {}
-    
-    # Create main interface
-    create_enhanced_visualization_interface()
-    
-    # Add enhanced footer
-    st.markdown("---")
+with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=False):
     st.markdown("""
-    <div style="text-align: center; padding: 3rem; background: linear-gradient(135deg, #F8FAFC 0%, #E2E8F0 100%); border-radius: 20px; margin-top: 3rem;">
-        <p style="font-size: 1.3rem; font-weight: 700; color: #2D3748; margin-bottom: 1rem;">
-            🔬 Ag Nanoparticle Stress Analysis Platform Pro
-        </p>
-        <p style="color: #4A5568; margin-bottom: 1.5rem;">
-            Publication-quality stress visualization • Multi-orientation profiling • Enhanced post-processing
-        </p>
-        <div style="display: flex; justify-content: center; gap: 3rem; margin-top: 2rem;">
-            <div style="text-align: center;">
-                <div style="font-size: 1.5rem; color: #667eea; margin-bottom: 0.5rem;">📐</div>
-                <div style="font-weight: 600; color: #4A5568;">Hydrostatic Stress</div>
-                <div style="color: #718096; font-size: 0.9rem;">Diagonal probes (45°, 135°)</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.5rem; color: #764ba2; margin-bottom: 0.5rem;">📈</div>
-                <div style="font-weight: 600; color: #4A5568;">von Mises Stress</div>
-                <div style="color: #718096; font-size: 0.9rem;">HV probes (0°, 90°)</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.5rem; color: #f5576c; margin-bottom: 0.5rem;">🎯</div>
-                <div style="font-weight: 600; color: #4A5568;">Stress Magnitude</div>
-                <div style="color: #718096; font-size: 0.9rem;">Multi-orientation</div>
-            </div>
-            <div style="text-align: center;">
-                <div style="font-size: 1.5rem; color: #ffd166; margin-bottom: 0.5rem;">📊</div>
-                <div style="font-weight: 600; color: #4A5568;">Publication Ready</div>
-                <div style="color: #718096; font-size: 0.9rem;">600 DPI export</div>
-            </div>
+    ### 🎯 **Enhanced Multi-Simulation Comparison Platform**
+    
+    #### **📊 Advanced Publication-Quality Features:**
+    
+    **1. Multi-Orientation Stress Analysis:**
+    - **Hydrostatic Stress (σ_h)**: Optimal analysis along 45° and 135° diagonals
+    - **von Mises Stress (σ_vM)**: Best visualized with 0° and 90° probes
+    - **Stress Magnitude (|σ|)**: Comprehensive multi-orientation analysis
+    
+    **2. Publication-Ready Visualization:**
+    - **Multi-panel Figures**: Professional (A, B, C, D) labeling
+    - **Enhanced Colormaps**: Science-optimized palettes for different stress components
+    - **Scale Bars & Annotations**: Essential for microscopy-style images
+    - **Statistical Overlays**: Comprehensive statistical analysis integrated
+    
+    **3. Advanced Profile Extraction:**
+    - **High-Resolution Sampling**: 4x oversampling for smooth curves
+    - **Cubic Spline Interpolation**: Publication-quality accuracy
+    - **Comprehensive Metadata**: FWHM, peak positions, symmetry indices
+    - **Boundary-Aware Extraction**: Intelligent handling of domain edges
+    
+    #### **🔬 Scientific Insights from Enhanced Analysis:**
+    
+    **Hydrostatic Stress Analysis:**
+    - **Diagonal Sensitivity**: Maximum stress gradients along 45°/135° directions
+    - **Dilatational Components**: Captures volumetric strain effects
+    - **Crystal Symmetry**: Reveals FCC symmetry in stress distribution
+    - **Publication Standard**: Coolwarm colormap recommended
+    
+    **von Mises Stress Analysis:**
+    - **Shear Components**: Best visualized along principal axes
+    - **Yield Criteria**: Direct relevance to material failure
+    - **Anisotropy Detection**: Horizontal vs vertical stress differences
+    - **Publication Standard**: Plasma colormap recommended
+    
+    **Stress Magnitude Analysis:**
+    - **Comprehensive Coverage**: All orientations (0°, 45°, 90°, 135°)
+    - **Failure Analysis**: Essential for fracture mechanics
+    - **Multi-scale Analysis**: From atomic defects to continuum
+    - **Publication Standard**: Viridis colormap recommended
+    """)
+
+# =============================================
+# EXPORT FUNCTIONALITY
+# =============================================
+st.sidebar.header("💾 Export Options")
+
+with st.sidebar.expander("📥 Advanced Export"):
+    export_format = st.selectbox(
+        "Export Format",
+        ["Complete Package (JSON + CSV + PNG)", "JSON Parameters Only", 
+         "Publication-Ready Figures", "Raw Data CSV"]
+    )
+    
+    include_styling = st.checkbox("Include Styling Parameters", True)
+    high_resolution = st.checkbox("High Resolution Figures", True)
+    
+    if st.button("📥 Generate Custom Export", type="primary"):
+        simulations = SimulationDB.get_all_simulations()
+        
+        if not simulations:
+            st.sidebar.warning("No simulations to export!")
+        else:
+            with st.spinner("Creating custom export package..."):
+                buffer = BytesIO()
+                with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    # Export each simulation
+                    for sim_id, sim_data in simulations.items():
+                        sim_dir = f"simulation_{sim_id}"
+                        
+                        # Export parameters
+                        params_json = json.dumps(sim_data['params'], indent=2)
+                        zf.writestr(f"{sim_dir}/parameters.json", params_json)
+                        
+                        # Export metadata
+                        metadata_json = json.dumps(sim_data['metadata'], indent=2)
+                        zf.writestr(f"{sim_dir}/metadata.json", metadata_json)
+                        
+                        # Export styling if requested
+                        if include_styling:
+                            styling_json = json.dumps(advanced_styling, indent=2)
+                            zf.writestr(f"{sim_dir}/styling_parameters.json", styling_json)
+                        
+                        # Export data frames
+                        if export_format in ["Complete Package (JSON + CSV + PNG)", "Raw Data CSV"]:
+                            for i, (eta, stress_fields) in enumerate(sim_data['history']):
+                                df = pd.DataFrame({
+                                    'eta': eta.flatten(order='F'),
+                                    'sxx': stress_fields['sxx'].flatten(order='F'),
+                                    'syy': stress_fields['syy'].flatten(order='F'),
+                                    'sxy': stress_fields['sxy'].flatten(order='F'),
+                                    'sigma_mag': stress_fields['sigma_mag'].flatten(order='F'),
+                                    'sigma_hydro': stress_fields['sigma_hydro'].flatten(order='F'),
+                                    'von_mises': stress_fields['von_mises'].flatten(order='F')
+                                })
+                                zf.writestr(f"{sim_dir}/frame_{i:04d}.csv", df.to_csv(index=False))
+                    
+                    # Create summary file
+                    summary = f"""MULTI-SIMULATION EXPORT SUMMARY
+========================================
+Generated: {datetime.now().isoformat()}
+Total Simulations: {len(simulations)}
+Export Format: {export_format}
+Includes Styling: {include_styling}
+High Resolution: {high_resolution}
+
+SIMULATIONS:
+------------
+"""
+                    for sim_id, sim_data in simulations.items():
+                        params = sim_data['params']
+                        summary += f"\nSimulation {sim_id}:"
+                        summary += f"\n  Defect: {params['defect_type']}"
+                        summary += f"\n  Orientation: {params['orientation']}"
+                        summary += f"\n  ε*: {params['eps0']}"
+                        summary += f"\n  κ: {params['kappa']}"
+                        summary += f"\n  Frames: {len(sim_data['history'])}"
+                        summary += f"\n  Created: {sim_data['created_at']}\n"
+                    
+                    zf.writestr("EXPORT_SUMMARY.txt", summary)
+                
+                buffer.seek(0)
+                
+                # Determine file name
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"ag_np_analysis_export_{timestamp}.zip"
+                
+                st.sidebar.download_button(
+                    "📥 Download Export Package",
+                    buffer.getvalue(),
+                    filename,
+                    "application/zip"
+                )
+                st.sidebar.success("Export package ready!")
+
+# =============================================
+# FOOTER
+# =============================================
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; padding: 3rem; background: linear-gradient(135deg, #F8FAFC 0%, #E2E8F0 100%); border-radius: 20px; margin-top: 3rem;">
+    <p style="font-size: 1.3rem; font-weight: 700; color: #2D3748; margin-bottom: 1rem;">
+        🔬 Ag Nanoparticle Stress Analysis Platform Pro
+    </p>
+    <p style="color: #4A5568; margin-bottom: 1.5rem;">
+        Publication-quality stress visualization • Multi-orientation profiling • Enhanced post-processing
+    </p>
+    <div style="display: flex; justify-content: center; gap: 3rem; margin-top: 2rem;">
+        <div style="text-align: center;">
+            <div style="font-size: 1.5rem; color: #667eea; margin-bottom: 0.5rem;">📐</div>
+            <div style="font-weight: 600; color: #4A5568;">Hydrostatic Stress</div>
+            <div style="color: #718096; font-size: 0.9rem;">Diagonal probes (45°, 135°)</div>
+        </div>
+        <div style="text-align: center;">
+            <div style="font-size: 1.5rem; color: #764ba2; margin-bottom: 0.5rem;">📈</div>
+            <div style="font-weight: 600; color: #4A5568;">von Mises Stress</div>
+            <div style="color: #718096; font-size: 0.9rem;">HV probes (0°, 90°)</div>
+        </div>
+        <div style="text-align: center;">
+            <div style="font-size: 1.5rem; color: #f5576c; margin-bottom: 0.5rem;">🎯</div>
+            <div style="font-weight: 600; color: #4A5568;">Stress Magnitude</div>
+            <div style="color: #718096; font-size: 0.9rem;">Multi-orientation</div>
+        </div>
+        <div style="text-align: center;">
+            <div style="font-size: 1.5rem; color: #ffd166; margin-bottom: 0.5rem;">📊</div>
+            <div style="font-weight: 600; color: #4A5568;">Publication Ready</div>
+            <div style="color: #718096; font-size: 0.9rem;">600 DPI export</div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+</div>
+""", unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+st.caption("🔬 Advanced Multi-Defect Comparison • Publication-Quality Output • Journal Templates • 2025")
