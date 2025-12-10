@@ -2191,4 +2191,4 @@ def create_simple_comparison_plot(simulations, frames, config, style_params):
                label=f"{sim['params']['defect_type']}")
    
     ax.set_xlabel("Simulation", fontsize=style_params.get('label_font_size', 12))
-    ax.set_ylabel(f"Mean {
+    ax.set_ylabel(f"Mean {config['stress_component']} (GPa)", fontsize=style_params.get('label_font_size', 12))
