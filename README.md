@@ -126,3 +126,11 @@ Comparison codes
 [![continuummodelsintering2d](https://img.shields.io/badge/2dpfm2-streamlit-red)](https://sintering-2dphasefieldmodel2.streamlit.app/) (basic model1 )
 
 
+
+# Machine Learning and AI
+
+# Data generation
+
+[![continuummodelsintering2d](https://img.shields.io/badge/datageneration1-streamlit-red)](https://nanomaterials-data-generator1.streamlit.app/) (data_of_attributes1 )
+
+
