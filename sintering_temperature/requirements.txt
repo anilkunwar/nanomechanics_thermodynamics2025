@@ -11,3 +11,4 @@ imageio-ffmpeg
 seaborn
 torch
 h5py
+msgpack
