@@ -437,9 +437,6 @@ if simulations:
 else:
     st.info("No simulations available.")
 
-<--- YOUR FULL CODE ABOVE, UNCHANGED --->
-
-
 # =============================================
 # VISUALIZATION PANEL (ADDED)
 # =============================================
