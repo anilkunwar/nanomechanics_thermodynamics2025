@@ -1,67 +1,69 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import io
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 st.title("Sintering Temperature vs Hydrostatic Stress in Ag Nanoparticles")
 st.markdown("**Interactive calculator for twin/defect-induced sintering temperature reduction**")
 
 # Parameters sidebar
 st.sidebar.header("Parameters")
-Ts0 = st.sidebar.slider("Baseline Ts (K)", 500, 700, 623, help="No-stress sintering temp (350°C)")
+Ts0 = st.sidebar.slider("Baseline Ts (K)", 500, 700, 623)
 Qa_kJ = st.sidebar.slider("Qa (kJ/mol)", 70.0, 120.0, 90.0, step=5.0)
-R = 8.314 / 1000  # kJ/mol·K
 Omega_m3 = st.sidebar.slider("Ω (×10⁻²⁹ m³)", 8.0, 12.0, 10.0) * 1e-29
-sigma_range = st.sidebar.slider("σ_h range (GPa)", 0.0, 10.0, (0.0, 5.0), step=0.5)
-sigma_h = np.linspace(sigma_range[0], sigma_range[1], 100) * 1e9  # Pa
+sigma_max_GPa = st.sidebar.slider("Max |σ_h| (GPa)", 1.0, 10.0, 5.0)
 
-# Calculate
+# Fixed log-spaced stresses for table (GPa)
+stresses_GPa = np.logspace(-1, np.log10(sigma_max_GPa), 6)  # 0.1 to max, 6 points
+stresses_Pa = stresses_GPa * 1e9
+
+# Calculate function - FIXED: always scalar input/output
 @st.cache_data
-def calculate_Ts(sigma_h, Ts0, Qa_kJ):
-    Qa = Qa_kJ / (6.022e23 * 1000)  # J/atom
-    kB = 1.381e-23  # J/K
-    delta_Q = Omega_m3 * sigma_h  # J/atom (magnitude, tensile)
-    Q_eff = Qa - delta_Q
-    Ts_eff = Ts0 * (Q_eff / Qa)  # Linear approximation T_s ∝ Q
-    return np.maximum(Ts_eff, 300)  # Floor at ~27°C
+def calculate_Ts(sigma_Pa, Ts0, Qa_kJ, Omega_m3):
+    """Scalar input/output for single stress value"""
+    Qa_J_atom = Qa_kJ * 1000 / 6.022e23  # Convert to J/atom
+    kB = 1.381e-23  # J/K (not needed for linear approx)
+    delta_Q = Omega_m3 * sigma_Pa  # J/atom (tensile effect)
+    Q_eff = Qa_J_atom - delta_Q
+    Ts_eff = Ts0 * (Q_eff / Qa_J_atom)  # Linear T_s ∝ Q
+    return max(Ts_eff, 300)  # Floor at 300K
 
-Ts_eff = calculate_Ts(sigma_h, Ts0, Qa_kJ)
+# Main plot - log scale x-axis
+sigma_plot = np.logspace(0, np.log10(sigma_max_GPa*2), 100) * 1e9  # Pa
+Ts_plot = np.array([calculate_Ts(s, Ts0, Qa_kJ, Omega_m3) for s in sigma_plot])
 
-# Plot
 fig, ax = plt.subplots(figsize=(10, 6))
-ax.plot(sigma_h/1e9, Ts_eff, 'b-', linewidth=2, label='T_s(|σ_h|)')
+ax.semilogx(sigma_plot/1e9, Ts_plot, 'b-', linewidth=2, label='T_s(|σ_h|)')
 ax.axhline(Ts0, color='r', linestyle='--', label=f'T_s(0) = {Ts0} K')
-ax.set_xlabel('Hydrostatic stress magnitude |σ_h| (GPa)')
+ax.set_xlabel('|σ_h| (GPa) - Log Scale')
 ax.set_ylabel('Sintering temperature T_s (K)')
 ax.set_title('Stress-Induced Reduction in Ag Nanoparticle Sintering Temperature')
 ax.grid(True, alpha=0.3)
 ax.legend()
 st.pyplot(fig)
 
-# Key predictions table
+# Metrics
 col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Baseline T_s", f"{Ts0} K")
-with col2:
-    delta_max = Ts0 - Ts_eff[-1]
-    st.metric("Max ΔT_s", f"{delta_max:.0f} K", f"-{100*delta_max/Ts0:.0f}%")
-with col3:
-    sigma_GPa = sigma_h[-1]/1e9
-    st.metric("At σ_h", f"{sigma_GPa:.1f} GPa")
+delta_max = Ts0 - Ts_plot[-1]
+st.metric("Baseline T_s", f"{Ts0} K", None, col1)
+st.metric("Max ΔT_s", f"{delta_max:.0f} K", f"-{100*delta_max/Ts0:.0f}%", col2)
+st.metric("At max σ_h", f"{sigma_max_GPa:.1f} GPa", None, col3)
 
-# Values table
-st.subheader("Predictions at key stress levels")
-stresses_GPa = [0, 1, 2, 5]
-data = {"|σ_h| (GPa)": stresses_GPa,
-        "T_s (K)": [calculate_Ts(s*1e9, Ts0, Qa_kJ)[0] if s==0 else 
-                   calculate_Ts(np.array([s*1e9]), Ts0, Qa_kJ)[0] for s in stresses_GPa],
-        "ΔT_s (K)": [0,]+[Ts0 - calculate_Ts(np.array([s*1e9]), Ts0, Qa_kJ)[0] for s in stresses_GPa[1:]],
-        "% Reduction": [0,]+[f"{100*(Ts0 - calculate_Ts(np.array([s*1e9]), Ts0, Qa_kJ)[0])/Ts0:.0f}%" for s in stresses_GPa[1:]]}
-st.table(data)
+# FIXED Predictions table - scalar calls only
+st.subheader("Predictions at key stress levels (log scale)")
+Ts_values = [calculate_Ts(s, Ts0, Qa_kJ, Omega_m3) for s in stresses_Pa]
+delta_Ts = [Ts0 - t for t in Ts_values]
+pct_red = [100*(Ts0 - t)/Ts0 for t in Ts_values]
+
+table_data = {
+    "|σ_h| (GPa)": [f"{s:.2f}" for s in stresses_GPa],
+    "T_s (K)": [f"{t:.0f}" for t in Ts_values],
+    "ΔT_s (K)": [f"{d:.0f}" for d in delta_Ts],
+    "% Reduction": [f"{p:.0f}%" for p in pct_red]
+}
+st.table(table_data)
 
 st.markdown("""
-**Physics basis**: $T_s(|σ_h|) ≈ T_s(0) × (1 - Ω|σ_h|/Q_a)$  
-**Twin effect**: Coherent twin boundaries → tensile |σ_h| ~1-5 GPa → 10-30% T_s reduction  
-**Validation**: Matches MD-observed low-T sintering (473-573 K) with defects [web:20][web:21]
+**Physics**: $T_s(|σ_h|) ≈ T_s(0) × (1 - Ω|σ_h|/Q_a)$  
+**Log scale**: Captures full range from low twin stress to high defect stress  
+**Twins**: ~1-5 GPa → 10-30% T_s reduction (60-190 K drop)
 """)
