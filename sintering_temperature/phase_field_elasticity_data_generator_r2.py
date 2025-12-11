@@ -30,169 +30,6 @@ X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
                    np.linspace(extent[2], extent[3], N))
 
 # =============================================
-# SIMULATION DATABASE SYSTEM (Session State)
-# =============================================
-class SimulationDB:
-    """In-memory simulation database for storing and retrieving simulations"""
-   
-    @staticmethod
-    def generate_id(sim_params):
-        """Generate unique ID for simulation"""
-        param_str = json.dumps(sim_params, sort_keys=True)
-        return hashlib.md5(param_str.encode()).hexdigest()[:8]
-   
-    @staticmethod
-    def save_simulation(sim_params, history, metadata):
-        """Save simulation to database"""
-        if 'simulations' not in st.session_state:
-            st.session_state.simulations = {}
-       
-        sim_id = SimulationDB.generate_id(sim_params)
-       
-        # Store simulation data
-        st.session_state.simulations[sim_id] = {
-            'id': sim_id,
-            'params': sim_params,
-            'history': history,
-            'metadata': metadata,
-            'created_at': datetime.now().isoformat()
-        }
-       
-        return sim_id
-   
-    @staticmethod
-    def get_simulation(sim_id):
-        """Retrieve simulation by ID"""
-        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
-            return st.session_state.simulations[sim_id]
-        return None
-   
-    @staticmethod
-    def get_all_simulations():
-        """Get all stored simulations"""
-        if 'simulations' in st.session_state:
-            return st.session_state.simulations
-        return {}
-   
-    @staticmethod
-    def delete_simulation(sim_id):
-        """Delete simulation from database"""
-        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
-            del st.session_state.simulations[sim_id]
-            return True
-        return False
-   
-    @staticmethod
-    def get_simulation_list():
-        """Get list of simulations for dropdown"""
-        if 'simulations' not in st.session_state:
-            return []
-       
-        simulations = []
-        for sim_id, sim_data in st.session_state.simulations.items():
-            params = sim_data['params']
-            name = f"{params['defect_type']} - {params['orientation']} (ε*={params['eps0']:.2f}, κ={params['kappa']:.2f})"
-            simulations.append({
-                'id': sim_id,
-                'name': name,
-                'params': params
-            })
-       
-        return simulations
-
-# =============================================
-# SIDEBAR - Global Settings
-# =============================================
-st.sidebar.header("🎛️ Simulation Setup")
-
-defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
-
-# Physical eigenstrain values
-if defect_type == "ISF":
-    default_eps = 0.707
-    default_kappa = 0.6
-    init_amplitude = 0.70
-elif defect_type == "ESF":
-    default_eps = 1.414
-    default_kappa = 0.7
-    init_amplitude = 0.75
-else: # Twin
-    default_eps = 2.121
-    default_kappa = 0.3
-    init_amplitude = 0.90
-
-shape = st.sidebar.selectbox("Initial Seed Shape",
-    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
-
-eps0 = st.sidebar.slider(
-    "Eigenstrain magnitude ε*",
-    0.3, 3.0,
-    value=default_eps,
-    step=0.01
-)
-
-kappa = st.sidebar.slider(
-    "Interface energy coeff κ",
-    0.1, 2.0,
-    value=default_kappa,
-    step=0.05
-)
-
-steps = st.sidebar.slider("Evolution steps", 20, 200, 100, 10)
-save_every = st.sidebar.slider("Save frame every", 10, 50, 20)
-
-# Crystal Orientation
-st.sidebar.subheader("Crystal Orientation")
-orientation = st.sidebar.selectbox(
-    "Habit Plane Orientation",
-    ["Horizontal {111} (0°)",
-     "Tilted 30° (1¯10 projection)",
-     "Tilted 60°",
-     "Vertical {111} (90°)",
-     "Custom Angle"],
-    index=0
-)
-
-if orientation == "Custom Angle":
-    angle_deg = st.sidebar.slider("Custom tilt angle (°)", -180, 180, 0, 5)
-    theta = np.deg2rad(angle_deg)
-else:
-    angle_map = {
-        "Horizontal {111} (0°)": 0,
-        "Tilted 30° (1¯10 projection)": 30,
-        "Tilted 60°": 60,
-        "Vertical {111} (90°)": 90,
-    }
-    theta = np.deg2rad(angle_map[orientation])
-
-# Run button
-if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
-    sim_params = {
-        'defect_type': defect_type,
-        'shape': shape,
-        'eps0': eps0,
-        'kappa': kappa,
-        'orientation': orientation,
-        'theta': theta,
-        'steps': steps,
-        'save_every': save_every
-    }
-    with st.spinner(f"Running {defect_type} simulation..."):
-        history = run_simulation(sim_params)
-        metadata = {
-            'run_time': time.time() - time.time(),  # Placeholder, add actual timing
-            'frames': len(history),
-            'grid_size': N,
-            'dx': dx
-        }
-        sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
-        
-        # Save to formats
-        save_to_formats(sim_id, sim_params, history, metadata)
-        
-        st.success(f"Simulation saved with ID: {sim_id}")
-
-# =============================================
 # SIMULATION ENGINE
 # =============================================
 def create_initial_eta(shape, defect_type):
@@ -342,6 +179,170 @@ def run_simulation(sim_params):
             history.append((eta.copy(), stress_fields))
    
     return history
+
+# =============================================
+# SIMULATION DATABASE SYSTEM (Session State)
+# =============================================
+class SimulationDB:
+    """In-memory simulation database for storing and retrieving simulations"""
+   
+    @staticmethod
+    def generate_id(sim_params):
+        """Generate unique ID for simulation"""
+        param_str = json.dumps(sim_params, sort_keys=True)
+        return hashlib.md5(param_str.encode()).hexdigest()[:8]
+   
+    @staticmethod
+    def save_simulation(sim_params, history, metadata):
+        """Save simulation to database"""
+        if 'simulations' not in st.session_state:
+            st.session_state.simulations = {}
+       
+        sim_id = SimulationDB.generate_id(sim_params)
+       
+        # Store simulation data
+        st.session_state.simulations[sim_id] = {
+            'id': sim_id,
+            'params': sim_params,
+            'history': history,
+            'metadata': metadata,
+            'created_at': datetime.now().isoformat()
+        }
+       
+        return sim_id
+   
+    @staticmethod
+    def get_simulation(sim_id):
+        """Retrieve simulation by ID"""
+        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
+            return st.session_state.simulations[sim_id]
+        return None
+   
+    @staticmethod
+    def get_all_simulations():
+        """Get all stored simulations"""
+        if 'simulations' in st.session_state:
+            return st.session_state.simulations
+        return {}
+   
+    @staticmethod
+    def delete_simulation(sim_id):
+        """Delete simulation from database"""
+        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
+            del st.session_state.simulations[sim_id]
+            return True
+        return False
+   
+    @staticmethod
+    def get_simulation_list():
+        """Get list of simulations for dropdown"""
+        if 'simulations' not in st.session_state:
+            return []
+       
+        simulations = []
+        for sim_id, sim_data in st.session_state.simulations.items():
+            params = sim_data['params']
+            name = f"{params['defect_type']} - {params['orientation']} (ε*={params['eps0']:.2f}, κ={params['kappa']:.2f})"
+            simulations.append({
+                'id': sim_id,
+                'name': name,
+                'params': params
+            })
+       
+        return simulations
+
+# =============================================
+# SIDEBAR - Global Settings
+# =============================================
+st.sidebar.header("🎛️ Simulation Setup")
+
+defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
+
+# Physical eigenstrain values
+if defect_type == "ISF":
+    default_eps = 0.707
+    default_kappa = 0.6
+    init_amplitude = 0.70
+elif defect_type == "ESF":
+    default_eps = 1.414
+    default_kappa = 0.7
+    init_amplitude = 0.75
+else: # Twin
+    default_eps = 2.121
+    default_kappa = 0.3
+    init_amplitude = 0.90
+
+shape = st.sidebar.selectbox("Initial Seed Shape",
+    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
+
+eps0 = st.sidebar.slider(
+    "Eigenstrain magnitude ε*",
+    0.3, 3.0,
+    value=default_eps,
+    step=0.01
+)
+
+kappa = st.sidebar.slider(
+    "Interface energy coeff κ",
+    0.1, 2.0,
+    value=default_kappa,
+    step=0.05
+)
+
+steps = st.sidebar.slider("Evolution steps", 20, 200, 100, 10)
+save_every = st.sidebar.slider("Save frame every", 10, 50, 20)
+
+# Crystal Orientation
+st.sidebar.subheader("Crystal Orientation")
+orientation = st.sidebar.selectbox(
+    "Habit Plane Orientation",
+    ["Horizontal {111} (0°)",
+     "Tilted 30° (1¯10 projection)",
+     "Tilted 60°",
+     "Vertical {111} (90°)",
+     "Custom Angle"],
+    index=0
+)
+
+if orientation == "Custom Angle":
+    angle_deg = st.sidebar.slider("Custom tilt angle (°)", -180, 180, 0, 5)
+    theta = np.deg2rad(angle_deg)
+else:
+    angle_map = {
+        "Horizontal {111} (0°)": 0,
+        "Tilted 30° (1¯10 projection)": 30,
+        "Tilted 60°": 60,
+        "Vertical {111} (90°)": 90,
+    }
+    theta = np.deg2rad(angle_map[orientation])
+
+# Run button
+if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
+    sim_params = {
+        'defect_type': defect_type,
+        'shape': shape,
+        'eps0': eps0,
+        'kappa': kappa,
+        'orientation': orientation,
+        'theta': theta,
+        'steps': steps,
+        'save_every': save_every
+    }
+    with st.spinner(f"Running {defect_type} simulation..."):
+        start_time = time.time()
+        history = run_simulation(sim_params)
+        metadata = {
+            'run_time': time.time() - start_time,
+            'frames': len(history),
+            'grid_size': N,
+            'dx': dx
+        }
+        sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
+        
+        # Save to formats
+        save_to_formats(sim_id, sim_params, history, metadata)
+        
+        st.success(f"Simulation saved with ID: {sim_id}")
 
 # =============================================
 # SAVE TO FORMATS
