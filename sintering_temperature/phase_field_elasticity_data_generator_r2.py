@@ -11,6 +11,7 @@ import sqlite3
 import pandas as pd
 from io import BytesIO, StringIO
 import zipfile
+import matplotlib.pyplot as plt
 
 # ----------------------------
 # Helper formatting / naming
@@ -435,3 +436,64 @@ if simulations:
 
 else:
     st.info("No simulations available.")
+
+<--- YOUR FULL CODE ABOVE, UNCHANGED --->
+
+
+# =============================================
+# VISUALIZATION PANEL (ADDED)
+# =============================================
+
+
+st.header("📊 Simulation Viewer")
+
+simulations = st.session_state.get("simulations", {})
+
+if simulations:
+    view_sim_id = st.selectbox("Select Simulation to Visualize", list(simulations.keys()), key="viewer_select")
+
+    if view_sim_id:
+        sim_data = simulations[view_sim_id]
+        history = sim_data["history"]
+
+        num_frames = len(history)
+        frame_idx = st.slider("Frame", 0, num_frames - 1, num_frames - 1)
+
+        eta, stress = history[frame_idx]
+
+        # -----------------------------
+        # η FIELD HEATMAP
+        # -----------------------------
+        st.subheader("🟣 Phase Field η")
+
+        fig_eta, ax_eta = plt.subplots(figsize=(5, 5))
+        im = ax_eta.imshow(eta, extent=extent, cmap="magma", origin="lower")
+        ax_eta.set_title(f"η Field (Frame {frame_idx})")
+        plt.colorbar(im, ax=ax_eta, shrink=0.7)
+        st.pyplot(fig_eta)
+
+        # -----------------------------
+        # STRESS FIELD HEATMAPS
+        # -----------------------------
+        st.subheader("💥 Stress Fields")
+
+        fig_s, axs = plt.subplots(2, 3, figsize=(18, 10))
+
+        fields = [
+            ("σxx", stress["sxx"], "coolwarm"),
+            ("σyy", stress["syy"], "coolwarm"),
+            ("σxy", stress["sxy"], "coolwarm"),
+            ("Hydrostatic (σ_h)", stress["sigma_hydro"], "viridis"),
+            ("Von Mises", stress["von_mises"], "plasma"),
+            ("Magnitude", stress["sigma_mag"], "inferno"),
+        ]
+
+        for ax, (title, field, cmap) in zip(axs.flatten(), fields):
+            im = ax.imshow(field, extent=extent, cmap=cmap, origin="lower")
+            ax.set_title(title)
+            plt.colorbar(im, ax=ax, shrink=0.7)
+
+        st.pyplot(fig_s)
+else:
+    st.info("No simulations available to visualize.")
+
