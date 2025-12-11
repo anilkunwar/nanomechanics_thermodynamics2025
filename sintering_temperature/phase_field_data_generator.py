@@ -181,6 +181,79 @@ def run_simulation(sim_params):
     return history
 
 # =============================================
+# SAVE TO FORMATS
+# =============================================
+def save_to_formats(sim_id, sim_params, history, metadata):
+    data = {'params': sim_params, 'history': [], 'metadata': metadata}
+    for eta, stress_fields in history:
+        data['history'].append({
+            'eta': eta,
+            'stresses': stress_fields
+        })
+
+    # Save .pkl
+    with open(f'sim_{sim_id}.pkl', 'wb') as f:
+        pickle.dump(data, f)
+
+    # Save .pt (convert to tensors)
+    tensor_data = data.copy()
+    for frame in tensor_data['history']:
+        frame['eta'] = torch.from_numpy(frame['eta'])
+        for k, v in frame['stresses'].items():
+            frame['stresses'][k] = torch.from_numpy(v)
+    torch.save(tensor_data, f'sim_{sim_id}.pt')
+
+    # Save .db
+    conn = sqlite3.connect('simulations.db')
+    c = conn.cursor()
+    # Create tables if not exist
+    c.execute('''CREATE TABLE IF NOT EXISTS simulations (
+                 id TEXT PRIMARY KEY,
+                 defect_type TEXT,
+                 shape TEXT,
+                 orientation TEXT,
+                 theta REAL,
+                 eps0 REAL,
+                 kappa REAL,
+                 steps INTEGER,
+                 created_at TEXT,
+                 grid_size INTEGER,
+                 dx REAL
+                 )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS frames (
+                 sim_id TEXT,
+                 frame_idx INTEGER,
+                 eta BLOB,
+                 sxx BLOB,
+                 syy BLOB,
+                 sxy BLOB,
+                 szz BLOB,
+                 sigma_mag BLOB,
+                 sigma_hydro BLOB,
+                 von_mises BLOB,
+                 FOREIGN KEY (sim_id) REFERENCES simulations(id)
+                 )''')
+    # Insert params/metadata
+    c.execute("INSERT OR REPLACE INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              (sim_id, sim_params['defect_type'], sim_params['shape'], sim_params['orientation'],
+               sim_params['theta'], sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
+               metadata['created_at'], metadata['grid_size'], metadata['dx']))
+    # Insert frames
+    for idx, frame in enumerate(data['history']):
+        c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (sim_id, idx,
+                   pickle.dumps(frame['eta']),
+                   pickle.dumps(frame['stresses']['sxx']),
+                   pickle.dumps(frame['stresses']['syy']),
+                   pickle.dumps(frame['stresses']['sxy']),
+                   pickle.dumps(frame['stresses']['szz']),
+                   pickle.dumps(frame['stresses']['sigma_mag']),
+                   pickle.dumps(frame['stresses']['sigma_hydro']),
+                   pickle.dumps(frame['stresses']['von_mises'])))
+    conn.commit()
+    conn.close()
+
+# =============================================
 # SIMULATION DATABASE SYSTEM (Session State)
 # =============================================
 class SimulationDB:
@@ -343,79 +416,6 @@ if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
         save_to_formats(sim_id, sim_params, history, metadata)
         
         st.success(f"Simulation saved with ID: {sim_id}")
-
-# =============================================
-# SAVE TO FORMATS
-# =============================================
-def save_to_formats(sim_id, sim_params, history, metadata):
-    data = {'params': sim_params, 'history': [], 'metadata': metadata}
-    for eta, stress_fields in history:
-        data['history'].append({
-            'eta': eta,
-            'stresses': stress_fields
-        })
-
-    # Save .pkl
-    with open(f'sim_{sim_id}.pkl', 'wb') as f:
-        pickle.dump(data, f)
-
-    # Save .pt (convert to tensors)
-    tensor_data = data.copy()
-    for frame in tensor_data['history']:
-        frame['eta'] = torch.from_numpy(frame['eta'])
-        for k, v in frame['stresses'].items():
-            frame['stresses'][k] = torch.from_numpy(v)
-    torch.save(tensor_data, f'sim_{sim_id}.pt')
-
-    # Save .db
-    conn = sqlite3.connect('simulations.db')
-    c = conn.cursor()
-    # Create tables if not exist
-    c.execute('''CREATE TABLE IF NOT EXISTS simulations (
-                 id TEXT PRIMARY KEY,
-                 defect_type TEXT,
-                 shape TEXT,
-                 orientation TEXT,
-                 theta REAL,
-                 eps0 REAL,
-                 kappa REAL,
-                 steps INTEGER,
-                 created_at TEXT,
-                 grid_size INTEGER,
-                 dx REAL
-                 )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS frames (
-                 sim_id TEXT,
-                 frame_idx INTEGER,
-                 eta BLOB,
-                 sxx BLOB,
-                 syy BLOB,
-                 sxy BLOB,
-                 szz BLOB,
-                 sigma_mag BLOB,
-                 sigma_hydro BLOB,
-                 von_mises BLOB,
-                 FOREIGN KEY (sim_id) REFERENCES simulations(id)
-                 )''')
-    # Insert params/metadata
-    c.execute("INSERT OR REPLACE INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              (sim_id, sim_params['defect_type'], sim_params['shape'], sim_params['orientation'],
-               sim_params['theta'], sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
-               metadata['created_at'], metadata['grid_size'], metadata['dx']))
-    # Insert frames
-    for idx, frame in enumerate(data['history']):
-        c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                  (sim_id, idx,
-                   pickle.dumps(frame['eta']),
-                   pickle.dumps(frame['stresses']['sxx']),
-                   pickle.dumps(frame['stresses']['syy']),
-                   pickle.dumps(frame['stresses']['sxy']),
-                   pickle.dumps(frame['stresses']['szz']),
-                   pickle.dumps(frame['stresses']['sigma_mag']),
-                   pickle.dumps(frame['stresses']['sigma_hydro']),
-                   pickle.dumps(frame['stresses']['von_mises'])))
-    conn.commit()
-    conn.close()
 
 # =============================================
 # MAIN CONTENT - VISUALIZATION (STRESS HEATMAPS ONLY)
