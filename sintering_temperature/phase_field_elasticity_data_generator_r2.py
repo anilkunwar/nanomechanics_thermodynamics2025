@@ -1,8 +1,5 @@
-import streamlit as st
 import numpy as np
 from numba import jit, prange
-import matplotlib.pyplot as plt
-import pandas as pd
 import time
 import hashlib
 import json
@@ -10,6 +7,8 @@ from datetime import datetime
 import pickle
 import torch
 import sqlite3
+import pandas as pd
+import streamlit as st
 
 # Configure page
 st.set_page_config(page_title="Ag NP Multi-Defect Analyzer", layout="wide")
@@ -69,7 +68,6 @@ def evolve_phase_field(eta, kappa, dt, dx, N):
     eta_new[:,0] = eta_new[:,-2]; eta_new[:,-1] = eta_new[:,1]
     return eta_new
 
-@st.cache_data
 def compute_stress_fields(eta, eps0, theta):
     # Plane-strain reduced constants (Pa)
     C11_p = (C11 - C12**2 / C11) * 1e9
@@ -181,78 +179,7 @@ def run_simulation(sim_params):
     return history
 
 # =============================================
-# SIMULATION DATABASE SYSTEM (Session State)
-# =============================================
-class SimulationDB:
-    """In-memory simulation database for storing and retrieving simulations"""
-   
-    @staticmethod
-    def generate_id(sim_params):
-        """Generate unique ID for simulation"""
-        param_str = json.dumps(sim_params, sort_keys=True)
-        return hashlib.md5(param_str.encode()).hexdigest()[:8]
-   
-    @staticmethod
-    def save_simulation(sim_params, history, metadata):
-        """Save simulation to database"""
-        if 'simulations' not in st.session_state:
-            st.session_state.simulations = {}
-       
-        sim_id = SimulationDB.generate_id(sim_params)
-       
-        # Store simulation data
-        st.session_state.simulations[sim_id] = {
-            'id': sim_id,
-            'params': sim_params,
-            'history': history,
-            'metadata': metadata,
-            'created_at': datetime.now().isoformat()
-        }
-       
-        return sim_id
-   
-    @staticmethod
-    def get_simulation(sim_id):
-        """Retrieve simulation by ID"""
-        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
-            return st.session_state.simulations[sim_id]
-        return None
-   
-    @staticmethod
-    def get_all_simulations():
-        """Get all stored simulations"""
-        if 'simulations' in st.session_state:
-            return st.session_state.simulations
-        return {}
-   
-    @staticmethod
-    def delete_simulation(sim_id):
-        """Delete simulation from database"""
-        if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
-            del st.session_state.simulations[sim_id]
-            return True
-        return False
-   
-    @staticmethod
-    def get_simulation_list():
-        """Get list of simulations for dropdown"""
-        if 'simulations' not in st.session_state:
-            return []
-       
-        simulations = []
-        for sim_id, sim_data in st.session_state.simulations.items():
-            params = sim_data['params']
-            name = f"{params['defect_type']} - {params['orientation']} (ε*={params['eps0']:.2f}, κ={params['kappa']:.2f})"
-            simulations.append({
-                'id': sim_id,
-                'name': name,
-                'params': params
-            })
-       
-        return simulations
-
-# =============================================
-# SIDEBAR - Global Settings
+# SIDEBAR - Simulation Setup
 # =============================================
 st.sidebar.header("🎛️ Simulation Setup")
 
@@ -262,15 +189,12 @@ defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
 if defect_type == "ISF":
     default_eps = 0.707
     default_kappa = 0.6
-    init_amplitude = 0.70
 elif defect_type == "ESF":
     default_eps = 1.414
     default_kappa = 0.7
-    init_amplitude = 0.75
 else: # Twin
     default_eps = 2.121
     default_kappa = 0.3
-    init_amplitude = 0.90
 
 shape = st.sidebar.selectbox("Initial Seed Shape",
     ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
@@ -317,7 +241,7 @@ else:
     theta = np.deg2rad(angle_map[orientation])
 
 # Run button
-if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
+if st.sidebar.button("🚀 Run Simulation", type="primary"):
     sim_params = {
         'defect_type': defect_type,
         'shape': shape,
@@ -337,113 +261,95 @@ if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
             'grid_size': N,
             'dx': dx
         }
-        sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
+        
+        # Generate sim_id
+        param_str = json.dumps(sim_params, sort_keys=True)
+        sim_id = hashlib.md5(param_str.encode()).hexdigest()[:8]
         
         # Save to formats
-        save_to_formats(sim_id, sim_params, history, metadata)
-        
-        st.success(f"Simulation saved with ID: {sim_id}")
+        data = {'params': sim_params, 'history': [], 'metadata': metadata}
+        for eta, stress_fields in history:
+            data['history'].append({
+                'eta': eta,
+                'stresses': stress_fields
+            })
 
-# =============================================
-# SAVE TO FORMATS
-# =============================================
-def save_to_formats(sim_id, sim_params, history, metadata):
-    data = {'params': sim_params, 'history': [], 'metadata': metadata}
-    for eta, stress_fields in history:
-        data['history'].append({
-            'eta': eta,
-            'stresses': stress_fields
-        })
+        # Save .pkl
+        with open(f'sim_{sim_id}.pkl', 'wb') as f:
+            pickle.dump(data, f)
 
-    # Save .pkl
-    with open(f'sim_{sim_id}.pkl', 'wb') as f:
-        pickle.dump(data, f)
+        # Save .pt (convert to tensors)
+        tensor_data = data.copy()
+        for frame in tensor_data['history']:
+            frame['eta'] = torch.from_numpy(frame['eta'])
+            for k, v in frame['stresses'].items():
+                frame['stresses'][k] = torch.from_numpy(v)
+        torch.save(tensor_data, f'sim_{sim_id}.pt')
 
-    # Save .pt (convert to tensors)
-    tensor_data = data.copy()
-    for frame in tensor_data['history']:
-        frame['eta'] = torch.from_numpy(frame['eta'])
-        for k, v in frame['stresses'].items():
-            frame['stresses'][k] = torch.from_numpy(v)
-    torch.save(tensor_data, f'sim_{sim_id}.pt')
+        # Save .db
+        conn = sqlite3.connect('simulations.db')
+        c = conn.cursor()
+        # Create tables if not exist
+        c.execute('''CREATE TABLE IF NOT EXISTS simulations (
+                     id TEXT PRIMARY KEY,
+                     defect_type TEXT,
+                     shape TEXT,
+                     orientation TEXT,
+                     theta REAL,
+                     eps0 REAL,
+                     kappa REAL,
+                     steps INTEGER,
+                     created_at TEXT,
+                     grid_size INTEGER,
+                     dx REAL
+                     )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS frames (
+                     sim_id TEXT,
+                     frame_idx INTEGER,
+                     eta BLOB,
+                     sxx BLOB,
+                     syy BLOB,
+                     sxy BLOB,
+                     szz BLOB,
+                     sigma_mag BLOB,
+                     sigma_hydro BLOB,
+                     von_mises BLOB,
+                     FOREIGN KEY (sim_id) REFERENCES simulations(id)
+                     )''')
+        # Insert params/metadata
+        c.execute("INSERT OR REPLACE INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (sim_id, sim_params['defect_type'], sim_params['shape'], sim_params['orientation'],
+                   sim_params['theta'], sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
+                   datetime.now().isoformat(), metadata['grid_size'], metadata['dx']))
+        # Insert frames
+        for idx, frame in enumerate(data['history']):
+            c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      (sim_id, idx,
+                       pickle.dumps(frame['eta']),
+                       pickle.dumps(frame['stresses']['sxx']),
+                       pickle.dumps(frame['stresses']['syy']),
+                       pickle.dumps(frame['stresses']['sxy']),
+                       pickle.dumps(frame['stresses']['szz']),
+                       pickle.dumps(frame['stresses']['sigma_mag']),
+                       pickle.dumps(frame['stresses']['sigma_hydro']),
+                       pickle.dumps(frame['stresses']['von_mises'])))
+        conn.commit()
+        conn.close()
 
-    # Save .db
-    conn = sqlite3.connect('simulations.db')
-    c = conn.cursor()
-    # Create tables if not exist
-    c.execute('''CREATE TABLE IF NOT EXISTS simulations (
-                 id TEXT PRIMARY KEY,
-                 defect_type TEXT,
-                 shape TEXT,
-                 orientation TEXT,
-                 theta REAL,
-                 eps0 REAL,
-                 kappa REAL,
-                 steps INTEGER,
-                 created_at TEXT,
-                 grid_size INTEGER,
-                 dx REAL
-                 )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS frames (
-                 sim_id TEXT,
-                 frame_idx INTEGER,
-                 eta BLOB,
-                 sxx BLOB,
-                 syy BLOB,
-                 sxy BLOB,
-                 szz BLOB,
-                 sigma_mag BLOB,
-                 sigma_hydro BLOB,
-                 von_mises BLOB,
-                 FOREIGN KEY (sim_id) REFERENCES simulations(id)
-                 )''')
-    # Insert params/metadata
-    c.execute("INSERT OR REPLACE INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-              (sim_id, sim_params['defect_type'], sim_params['shape'], sim_params['orientation'],
-               sim_params['theta'], sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
-               metadata['created_at'], metadata['grid_size'], metadata['dx']))
-    # Insert frames
-    for idx, frame in enumerate(data['history']):
-        c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                  (sim_id, idx,
-                   pickle.dumps(frame['eta']),
-                   pickle.dumps(frame['stresses']['sxx']),
-                   pickle.dumps(frame['stresses']['syy']),
-                   pickle.dumps(frame['stresses']['sxy']),
-                   pickle.dumps(frame['stresses']['szz']),
-                   pickle.dumps(frame['stresses']['sigma_mag']),
-                   pickle.dumps(frame['stresses']['sigma_hydro']),
-                   pickle.dumps(frame['stresses']['von_mises'])))
-    conn.commit()
-    conn.close()
+        # Save csv
+        for idx, (eta, stress_fields) in enumerate(history):
+            df = pd.DataFrame({
+                'x': X.flatten(),
+                'y': Y.flatten(),
+                'eta': eta.flatten(),
+                'sxx': stress_fields['sxx'].flatten(),
+                'syy': stress_fields['syy'].flatten(),
+                'sxy': stress_fields['sxy'].flatten(),
+                'szz': stress_fields['szz'].flatten(),
+                'sigma_mag': stress_fields['sigma_mag'].flatten(),
+                'sigma_hydro': stress_fields['sigma_hydro'].flatten(),
+                'von_mises': stress_fields['von_mises'].flatten()
+            })
+            df.to_csv(f'sim_{sim_id}_frame_{idx}.csv', index=False)
 
-# =============================================
-# MAIN CONTENT - VISUALIZATION (STRESS HEATMAPS ONLY)
-# =============================================
-st.header("📊 Simulation Results")
-
-simulations = SimulationDB.get_simulation_list()
-
-if simulations:
-    selected_sim = st.selectbox("Select Simulation", [sim['name'] for sim in simulations])
-    sim_id = [sim['id'] for sim in simulations if sim['name'] == selected_sim][0]
-    sim_data = SimulationDB.get_simulation(sim_id)
-    
-    if sim_data:
-        # Display final stress heatmaps
-        final_eta, final_stress = sim_data['history'][-1]
-        
-        fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-        
-        axs[0].imshow(final_stress['sigma_mag'], extent=extent, cmap='viridis', origin='lower', aspect='equal')
-        axs[0].set_title('Stress Magnitude')
-        
-        axs[1].imshow(final_stress['sigma_hydro'], extent=extent, cmap='coolwarm', origin='lower', aspect='equal')
-        axs[1].set_title('Hydrostatic Stress')
-        
-        axs[2].imshow(final_stress['von_mises'], extent=extent, cmap='plasma', origin='lower', aspect='equal')
-        axs[2].set_title('Von Mises Stress')
-        
-        st.pyplot(fig)
-else:
-    st.info("No simulations run yet.")
+        st.success(f"Simulation Complete! Saved as sim_{sim_id}.(pkl/pt/db/csv)")
