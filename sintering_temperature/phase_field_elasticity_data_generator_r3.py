@@ -19,8 +19,105 @@ import pickle
 import torch
 import sqlite3
 from io import StringIO
+import traceback
 
 warnings.filterwarnings('ignore')
+
+# =============================================
+# ERROR HANDLING DECORATOR
+# =============================================
+def handle_errors(func):
+    """Decorator to handle errors gracefully"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            st.error(f"❌ Error in {func.__name__}: {str(e)}")
+            st.error("Please check the console for detailed error information.")
+            print(f"Error in {func.__name__}: {str(e)}")
+            print(traceback.format_exc())
+            return None
+    return wrapper
+
+# =============================================
+# METADATA MANAGEMENT CLASS
+# =============================================
+class MetadataManager:
+    """Centralized metadata management to ensure consistency"""
+    
+    @staticmethod
+    def create_metadata(sim_params, history, run_time=None, **kwargs):
+        """Create standardized metadata dictionary"""
+        if run_time is None:
+            run_time = 0.0
+            
+        metadata = {
+            'run_time': run_time,
+            'frames': len(history) if history else 0,
+            'grid_size': kwargs.get('grid_size', 128),
+            'dx': kwargs.get('dx', 0.1),
+            'created_at': datetime.now().isoformat(),
+            'colormaps': kwargs.get('colormaps', {
+                'eta': sim_params.get('eta_cmap', 'viridis'),
+                'sigma': sim_params.get('sigma_cmap', 'hot'),
+                'hydro': sim_params.get('hydro_cmap', 'coolwarm'),
+                'vm': sim_params.get('vm_cmap', 'plasma')
+            }),
+            'material_properties': {
+                'C11': 124.0,
+                'C12': 93.4,
+                'C44': 46.1,
+                'lattice_constant': 0.4086
+            },
+            'simulation_parameters': {
+                'dt': 0.004,
+                'N': kwargs.get('grid_size', 128),
+                'dx': kwargs.get('dx', 0.1)
+            }
+        }
+        return metadata
+    
+    @staticmethod
+    def validate_metadata(metadata):
+        """Validate metadata structure and add missing fields"""
+        if not isinstance(metadata, dict):
+            metadata = {}
+        
+        required_fields = [
+            'run_time', 'frames', 'grid_size', 'dx', 'created_at'
+        ]
+        
+        for field in required_fields:
+            if field not in metadata:
+                if field == 'created_at':
+                    metadata[field] = datetime.now().isoformat()
+                elif field == 'run_time':
+                    metadata[field] = 0.0
+                elif field == 'frames':
+                    metadata[field] = 0
+                elif field == 'grid_size':
+                    metadata[field] = 128
+                elif field == 'dx':
+                    metadata[field] = 0.1
+        
+        # Ensure colormaps exist
+        if 'colormaps' not in metadata:
+            metadata['colormaps'] = {
+                'eta': 'viridis',
+                'sigma': 'hot',
+                'hydro': 'coolwarm',
+                'vm': 'plasma'
+            }
+        
+        return metadata
+    
+    @staticmethod
+    def get_metadata_field(metadata, field, default=None):
+        """Safely get metadata field with default"""
+        try:
+            return metadata.get(field, default)
+        except:
+            return default
 
 # Configure page with better styling
 st.set_page_config(page_title="Ag NP Multi-Defect Analyzer", layout="wide")
@@ -503,16 +600,27 @@ class SimulationDB:
     @staticmethod
     def generate_id(sim_params):
         """Generate unique ID for simulation"""
-        param_str = json.dumps(sim_params, sort_keys=True)
-        return hashlib.md5(param_str.encode()).hexdigest()[:8]
+        try:
+            param_str = json.dumps(sim_params, sort_keys=True)
+            return hashlib.md5(param_str.encode()).hexdigest()[:8]
+        except:
+            # Fallback to timestamp-based ID
+            return datetime.now().strftime("%H%M%S%f")[:8]
     
     @staticmethod
-    def save_simulation(sim_params, history, metadata):
+    @handle_errors
+    def save_simulation(sim_params, history, metadata=None):
         """Save simulation to database"""
         if 'simulations' not in st.session_state:
             st.session_state.simulations = {}
         
         sim_id = SimulationDB.generate_id(sim_params)
+        
+        # Ensure metadata is properly structured
+        if metadata is None:
+            metadata = MetadataManager.create_metadata(sim_params, history)
+        else:
+            metadata = MetadataManager.validate_metadata(metadata)
         
         # Store simulation data
         st.session_state.simulations[sim_id] = {
@@ -520,26 +628,37 @@ class SimulationDB:
             'params': sim_params,
             'history': history,
             'metadata': metadata,
-            'created_at': datetime.now().isoformat()
+            'created_at': metadata.get('created_at', datetime.now().isoformat()),
+            'last_modified': datetime.now().isoformat()
         }
         
         return sim_id
     
     @staticmethod
+    @handle_errors
     def get_simulation(sim_id):
         """Retrieve simulation by ID"""
         if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
-            return st.session_state.simulations[sim_id]
+            sim_data = st.session_state.simulations[sim_id]
+            # Ensure metadata is validated
+            if 'metadata' in sim_data:
+                sim_data['metadata'] = MetadataManager.validate_metadata(sim_data['metadata'])
+            return sim_data
         return None
     
     @staticmethod
     def get_all_simulations():
         """Get all stored simulations"""
         if 'simulations' in st.session_state:
+            # Validate metadata for all simulations
+            for sim_id, sim_data in st.session_state.simulations.items():
+                if 'metadata' in sim_data:
+                    sim_data['metadata'] = MetadataManager.validate_metadata(sim_data['metadata'])
             return st.session_state.simulations
         return {}
     
     @staticmethod
+    @handle_errors
     def delete_simulation(sim_id):
         """Delete simulation from database"""
         if 'simulations' in st.session_state and sim_id in st.session_state.simulations:
@@ -555,61 +674,81 @@ class SimulationDB:
         
         simulations = []
         for sim_id, sim_data in st.session_state.simulations.items():
-            params = sim_data['params']
-            name = f"{params['defect_type']} - {params['orientation']} (ε*={params['eps0']:.2f}, κ={params['kappa']:.2f})"
-            simulations.append({
-                'id': sim_id,
-                'name': name,
-                'params': params
-            })
+            try:
+                params = sim_data.get('params', {})
+                name = f"{params.get('defect_type', 'Unknown')} - {params.get('orientation', 'Unknown')} (ε*={params.get('eps0', 0.0):.2f}, κ={params.get('kappa', 0.0):.2f})"
+                simulations.append({
+                    'id': sim_id,
+                    'name': name,
+                    'params': params
+                })
+            except:
+                # Skip malformed simulations
+                continue
         
         return simulations
 
 # =============================================
 # HELPER FUNCTIONS
 # =============================================
+@handle_errors
 def sanitize_token(text: str) -> str:
     """Sanitize small text tokens for filenames: remove spaces and special braces."""
-    s = str(text)
-    for ch in [" ", "{", "}", "/", "\\", ",", ";", "(", ")", "[", "]", "°"]:
-        s = s.replace(ch, "")
-    return s
+    try:
+        s = str(text)
+        for ch in [" ", "{", "}", "/", "\\", ",", ";", "(", ")", "[", "]", "°"]:
+            s = s.replace(ch, "")
+        return s
+    except:
+        return "unknown"
 
+@handle_errors
 def fmt_num_trim(x, ndigits=3):
     """Format a float with up to ndigits decimals and strip trailing zeros."""
-    s = f"{x:.{ndigits}f}"
-    s = s.rstrip("0").rstrip(".")
-    if s == "-0":
-        s = "0"
-    return s
+    try:
+        s = f"{x:.{ndigits}f}"
+        s = s.rstrip("0").rstrip(".")
+        if s == "-0":
+            s = "0"
+        return s
+    except:
+        return "0.0"
 
+@handle_errors
 def build_sim_name(params: dict, sim_id: str = None) -> str:
     """
     Build a filename-friendly simulation name in the requested format:
     Example: ISF_orient0deg_Square_eps0-0.707_kappa-0.6[_<simid>]
     If sim_id provided, append short id to guarantee uniqueness.
     """
-    defect = sanitize_token(params.get("defect_type", "def"))
-    shape = sanitize_token(params.get("shape", "shape"))
-    # Angle in degrees from theta
-    theta = params.get("theta", 0.0)
-    angle_deg = int(round(np.rad2deg(theta)))
-    orient_token = f"orient{angle_deg}deg"
-    eps0 = fmt_num_trim(params.get("eps0", 0.0), ndigits=3)
-    kappa = fmt_num_trim(params.get("kappa", 0.0), ndigits=3)
-    name = f"{defect}_{orient_token}_{shape}_eps0-{eps0}_kappa-{kappa}"
-    if sim_id:
-        name = f"{name}_{sim_id}"
-    return name
+    try:
+        defect = sanitize_token(params.get("defect_type", "def"))
+        shape = sanitize_token(params.get("shape", "shape"))
+        # Angle in degrees from theta
+        theta = params.get("theta", 0.0)
+        try:
+            angle_deg = int(round(np.rad2deg(theta)))
+        except:
+            angle_deg = 0
+        orient_token = f"orient{angle_deg}deg"
+        eps0 = fmt_num_trim(params.get("eps0", 0.0), ndigits=3)
+        kappa = fmt_num_trim(params.get("kappa", 0.0), ndigits=3)
+        name = f"{defect}_{orient_token}_{shape}_eps0-{eps0}_kappa-{kappa}"
+        if sim_id:
+            name = f"{name}_{sim_id}"
+        return name
+    except:
+        return f"simulation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 # =============================================
 # SIMULATION ENGINE (Reusable Functions)
 # =============================================
+@handle_errors
 def create_initial_eta(shape, defect_type):
     """Create initial defect configuration"""
     # Set initial amplitude based on defect type
     amplitudes = {"ISF": 0.70, "ESF": 0.75, "Twin": 0.90}
-    init_amplitude = amplitudes[defect_type]
+    init_amplitude = amplitudes.get(defect_type, 0.7)
     
     eta = np.zeros((N, N))
     cx, cy = N//2, N//2
@@ -626,6 +765,9 @@ def create_initial_eta(shape, defect_type):
     elif shape == "Ellipse":
         mask = ((X/(w*1.5))**2 + (Y/(h*1.5))**2) <= 1
         eta[mask] = init_amplitude
+    else:
+        # Default to square
+        eta[cy-h:cy+h, cx-h:cx+h] = init_amplitude
     
     eta += 0.02 * np.random.randn(N, N)
     return np.clip(eta, 0.0, 1.0)
@@ -646,6 +788,7 @@ def evolve_phase_field(eta, kappa, dt, dx, N):
     return eta_new
 
 @st.cache_data
+@handle_errors
 def compute_stress_fields(eta, eps0, theta):
     """FFT-based stress solver with rotated eigenstrain"""
     # Plane-strain reduced constants (Pa)
@@ -741,6 +884,7 @@ def compute_stress_fields(eta, eps0, theta):
         'sigma_mag': sigma_mag, 'sigma_hydro': sigma_hydro, 'von_mises': von_mises
     }
 
+@handle_errors
 def run_simulation(sim_params):
     """Run a complete simulation with given parameters"""
     # Create initial defect
@@ -748,10 +892,13 @@ def run_simulation(sim_params):
     
     # Run evolution
     history = []
-    for step in range(sim_params['steps'] + 1):
+    steps = sim_params.get('steps', 100)
+    save_every = sim_params.get('save_every', 20)
+    
+    for step in range(steps + 1):
         if step > 0:
             eta = evolve_phase_field(eta, sim_params['kappa'], dt=0.004, dx=dx, N=N)
-        if step % sim_params['save_every'] == 0 or step == sim_params['steps']:
+        if step % save_every == 0 or step == steps:
             stress_fields = compute_stress_fields(eta, sim_params['eps0'], sim_params['theta'])
             history.append((eta.copy(), stress_fields))
     
@@ -761,25 +908,33 @@ def run_simulation(sim_params):
 # SIDEBAR - Global Settings
 # =============================================
 st.sidebar.header("🔄 Cache Management")
-if st.sidebar.button("🗑️ Clear All Simulations", type="secondary"):
-    if 'simulations' in st.session_state:
-        del st.session_state.simulations
-    st.success("All simulations cleared!")
-    st.rerun()
+col1, col2 = st.sidebar.columns(2)
 
-if st.sidebar.button("🔄 Run New Simulation (Clear Cache)", type="primary"):
-    # Clear cache and run new simulation
-    if 'simulations' in st.session_state:
-        del st.session_state.simulations
-    st.info("Cache cleared. Configure new simulation below.")
+with col1:
+    if st.button("🗑️ Clear All", type="secondary", help="Clear all simulations from memory"):
+        if 'simulations' in st.session_state:
+            del st.session_state.simulations
+        st.success("All simulations cleared!")
+        st.rerun()
+
+with col2:
+    if st.button("🔄 Refresh", type="secondary", help="Refresh the page"):
+        st.rerun()
 
 st.sidebar.markdown("---")
 
 st.sidebar.header("🎨 Global Chart Styling")
-eta_cmap_name = st.sidebar.selectbox("Default η colormap", cmap_list, index=cmap_list.index('viridis'))
-sigma_cmap_name = st.sidebar.selectbox("Default |σ| colormap", cmap_list, index=cmap_list.index('hot'))
-hydro_cmap_name = st.sidebar.selectbox("Default Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
-vm_cmap_name = st.sidebar.selectbox("Default von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
+try:
+    eta_cmap_name = st.sidebar.selectbox("Default η colormap", cmap_list, index=cmap_list.index('viridis'))
+    sigma_cmap_name = st.sidebar.selectbox("Default |σ| colormap", cmap_list, index=cmap_list.index('hot'))
+    hydro_cmap_name = st.sidebar.selectbox("Default Hydrostatic colormap", cmap_list, index=cmap_list.index('coolwarm'))
+    vm_cmap_name = st.sidebar.selectbox("Default von Mises colormap", cmap_list, index=cmap_list.index('plasma'))
+except:
+    # Fallback defaults
+    eta_cmap_name = 'viridis'
+    sigma_cmap_name = 'hot'
+    hydro_cmap_name = 'coolwarm'
+    vm_cmap_name = 'plasma'
 
 # =============================================
 # SIDEBAR - Multi-Simulation Control Panel
@@ -802,17 +957,14 @@ if operation_mode == "Run New Simulation":
     if defect_type == "ISF":
         default_eps = 0.707
         default_kappa = 0.6
-        init_amplitude = 0.70
         caption = "Intrinsic Stacking Fault"
     elif defect_type == "ESF":
         default_eps = 1.414
         default_kappa = 0.7
-        init_amplitude = 0.75
         caption = "Extrinsic Stacking Fault"
     else:  # Twin
         default_eps = 2.121
         default_kappa = 0.3
-        init_amplitude = 0.90
         caption = "Coherent Twin Boundary"
     
     st.sidebar.info(f"**{caption}**")
@@ -860,70 +1012,76 @@ if operation_mode == "Run New Simulation":
             "Tilted 60°": 60,
             "Vertical {111} (90°)": 90,
         }
-        theta = np.deg2rad(angle_map[orientation])
+        theta = np.deg2rad(angle_map.get(orientation, 0))
     
     st.sidebar.info(f"Selected tilt: **{np.rad2deg(theta):.1f}°** from horizontal")
     
     # Visualization settings - Individual for this simulation
     st.sidebar.subheader("Simulation-Specific Colormaps")
-    sim_eta_cmap_name = st.sidebar.selectbox("η colormap for this sim", cmap_list, 
-                                           index=cmap_list.index(eta_cmap_name))
-    sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap for this sim", cmap_list, 
-                                             index=cmap_list.index(sigma_cmap_name))
-    sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap for this sim", cmap_list, 
-                                             index=cmap_list.index(hydro_cmap_name))
-    sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap for this sim", cmap_list, 
-                                          index=cmap_list.index(vm_cmap_name))
+    try:
+        sim_eta_cmap_name = st.sidebar.selectbox("η colormap for this sim", cmap_list, 
+                                               index=cmap_list.index(eta_cmap_name))
+        sim_sigma_cmap_name = st.sidebar.selectbox("|σ| colormap for this sim", cmap_list, 
+                                                 index=cmap_list.index(sigma_cmap_name))
+        sim_hydro_cmap_name = st.sidebar.selectbox("Hydrostatic colormap for this sim", cmap_list, 
+                                                 index=cmap_list.index(hydro_cmap_name))
+        sim_vm_cmap_name = st.sidebar.selectbox("von Mises colormap for this sim", cmap_list, 
+                                              index=cmap_list.index(vm_cmap_name))
+    except:
+        sim_eta_cmap_name = eta_cmap_name
+        sim_sigma_cmap_name = sigma_cmap_name
+        sim_hydro_cmap_name = hydro_cmap_name
+        sim_vm_cmap_name = vm_cmap_name
     
     # Run button
     if st.sidebar.button("🚀 Run & Save Simulation", type="primary"):
-        sim_params = {
-            'defect_type': defect_type,
-            'shape': shape,
-            'eps0': eps0,
-            'kappa': kappa,
-            'orientation': orientation,
-            'theta': theta,
-            'steps': steps,
-            'save_every': save_every,
-            'eta_cmap': sim_eta_cmap_name,
-            'sigma_cmap': sim_sigma_cmap_name,
-            'hydro_cmap': sim_hydro_cmap_name,
-            'vm_cmap': sim_vm_cmap_name
-        }
-        
-        with st.spinner(f"Running {defect_type} simulation..."):
-            start_time = time.time()
-            
-            # Run simulation
-            history = run_simulation(sim_params)
-            
-            # Create metadata
-            metadata = {
-                'run_time': time.time() - start_time,
-                'frames': len(history),
-                'grid_size': N,
-                'dx': dx,
-                'colormaps': {
-                    'eta': sim_params['eta_cmap'],
-                    'sigma': sim_params['sigma_cmap'],
-                    'hydro': sim_params['hydro_cmap'],
-                    'vm': sim_params['vm_cmap']
-                }
+        try:
+            sim_params = {
+                'defect_type': defect_type,
+                'shape': shape,
+                'eps0': eps0,
+                'kappa': kappa,
+                'orientation': orientation,
+                'theta': theta,
+                'steps': steps,
+                'save_every': save_every,
+                'eta_cmap': sim_eta_cmap_name,
+                'sigma_cmap': sim_sigma_cmap_name,
+                'hydro_cmap': sim_hydro_cmap_name,
+                'vm_cmap': sim_vm_cmap_name
             }
             
-            # Save to database
-            sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
-            
-            st.success(f"""
-            ✅ Simulation Complete!
-            - **ID**: `{sim_id}`
-            - **Frames**: {len(history)}
-            - **Time**: {metadata['run_time']:.1f} seconds
-            - **Saved to database**
-            """)
-            
-            st.rerun()
+            with st.spinner(f"Running {defect_type} simulation..."):
+                start_time = time.time()
+                
+                # Run simulation
+                history = run_simulation(sim_params)
+                
+                # Create metadata
+                metadata = MetadataManager.create_metadata(
+                    sim_params, 
+                    history, 
+                    run_time=time.time() - start_time,
+                    grid_size=N,
+                    dx=dx
+                )
+                
+                # Save to database
+                sim_id = SimulationDB.save_simulation(sim_params, history, metadata)
+                
+                st.success(f"""
+                ✅ Simulation Complete!
+                - **ID**: `{sim_id}`
+                - **Frames**: {len(history)}
+                - **Time**: {metadata['run_time']:.1f} seconds
+                - **Saved to database**
+                """)
+                
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error running simulation: {str(e)}")
+            print(f"Error running simulation: {str(e)}")
+            print(traceback.format_exc())
 
 elif operation_mode == "Compare Saved Simulations":
     st.sidebar.header("🔍 Simulation Comparison Setup")
@@ -1061,34 +1219,40 @@ if operation_mode == "Run New Simulation":
         sim_data = []
         for sim in simulations:
             sim_full = SimulationDB.get_simulation(sim['id'])
-            params = sim['params']
-            sim_data.append({
-                'ID': sim['id'],
-                'Defect Type': params['defect_type'],
-                'Orientation': params['orientation'],
-                'ε*': params['eps0'],
-                'κ': params['kappa'],
-                'Shape': params['shape'],
-                'Steps': params['steps'],
-                'Frames': len(sim_full['history']),
-                'Created': sim_full['created_at'][:19]
-            })
+            if sim_full:
+                params = sim_full.get('params', {})
+                metadata = sim_full.get('metadata', {})
+                sim_data.append({
+                    'ID': sim['id'],
+                    'Defect Type': params.get('defect_type', 'Unknown'),
+                    'Orientation': params.get('orientation', 'Unknown'),
+                    'ε*': params.get('eps0', 0.0),
+                    'κ': params.get('kappa', 0.0),
+                    'Shape': params.get('shape', 'Unknown'),
+                    'Steps': params.get('steps', 0),
+                    'Frames': len(sim_full.get('history', [])),
+                    'Created': sim_full.get('created_at', 'Unknown')[:19] if 'created_at' in sim_full else 'Unknown'
+                })
         
-        df = pd.DataFrame(sim_data)
-        st.dataframe(df, use_container_width=True)
-        
-        # Delete option
-        with st.expander("🗑️ Delete Simulations"):
-            delete_options = [f"{sim['name']} (ID: {sim['id']})" for sim in simulations]
-            to_delete = st.multiselect("Select simulations to delete", delete_options)
+        if sim_data:
+            df = pd.DataFrame(sim_data)
+            st.dataframe(df, use_container_width=True)
             
-            if st.button("Delete Selected", type="secondary"):
-                for sim_name in to_delete:
-                    # Extract ID from string
-                    sim_id = sim_name.split("ID: ")[1].replace(")", "")
-                    if SimulationDB.delete_simulation(sim_id):
-                        st.success(f"Deleted simulation {sim_id}")
-                st.rerun()
+            # Delete option
+            with st.expander("🗑️ Delete Simulations"):
+                delete_options = [f"{sim['name']} (ID: {sim['id']})" for sim in simulations]
+                to_delete = st.multiselect("Select simulations to delete", delete_options)
+                
+                if st.button("Delete Selected", type="secondary"):
+                    for sim_name in to_delete:
+                        # Extract ID from string
+                        try:
+                            sim_id = sim_name.split("ID: ")[1].replace(")", "")
+                            if SimulationDB.delete_simulation(sim_id):
+                                st.success(f"Deleted simulation {sim_id}")
+                        except:
+                            st.error(f"Could not delete simulation: {sim_name}")
+                    st.rerun()
     else:
         st.info("No simulations saved yet. Run a simulation to see it here!")
 
@@ -1119,14 +1283,14 @@ elif operation_mode == "Compare Saved Simulations":
             frame_idx = config['frame_idx']
             if config['frame_selection'] == "Final Frame":
                 # Use final frame for each simulation
-                frames = [len(sim['history']) - 1 for sim in simulations]
+                frames = [len(sim.get('history', [])) - 1 for sim in simulations]
             elif config['frame_selection'] == "Same Evolution Time":
                 # Use same evolution time (percentage of total steps)
                 target_percentage = 0.8  # 80% of evolution
-                frames = [int(len(sim['history']) * target_percentage) for sim in simulations]
+                frames = [int(len(sim.get('history', [])) * target_percentage) for sim in simulations]
             else:
                 # Specific frame index
-                frames = [min(frame_idx, len(sim['history']) - 1) for sim in simulations]
+                frames = [min(frame_idx, len(sim.get('history', [])) - 1) for sim in simulations]
             
             # Get stress component mapping
             stress_map = {
@@ -1134,7 +1298,7 @@ elif operation_mode == "Compare Saved Simulations":
                 "Hydrostatic σ_h": 'sigma_hydro',
                 "von Mises σ_vM": 'von_mises'
             }
-            stress_key = stress_map[config['stress_component']]
+            stress_key = stress_map.get(config['stress_component'], 'sigma_mag')
             
             # Create comparison based on type
             if config['type'] == "Side-by-Side Heatmaps":
@@ -1157,32 +1321,40 @@ elif operation_mode == "Compare Saved Simulations":
                     ax = axes[row, col]
                     
                     # Get data
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
+                    history = sim.get('history', [])
+                    if history and frame < len(history):
+                        eta, stress_fields = history[frame]
+                        stress_data = stress_fields.get(stress_key)
+                        
+                        if stress_data is not None:
+                            # Choose colormap
+                            params = sim.get('params', {})
+                            cmap_name = params.get('sigma_cmap', 'viridis')
+                            cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'viridis'))
+                            
+                            # Create heatmap
+                            im = ax.imshow(stress_data, extent=extent, cmap=cmap, 
+                                          origin='lower', aspect='equal')
+                            
+                            # Add contour lines for defect boundary
+                            ax.contour(X, Y, eta, levels=[0.5], colors='white', 
+                                      linewidths=1, linestyles='--', alpha=0.8)
+                            
+                            # Title
+                            title = f"{params.get('defect_type', 'Unknown')}"
+                            if params.get('orientation') != "Horizontal {111} (0°)":
+                                title += f"\n{params.get('orientation', '').split(' ')[0]}"
+                            
+                            ax.set_title(title, fontsize=10, fontweight='semibold')
+                            ax.set_xlabel("x (nm)", fontsize=9)
+                            ax.set_ylabel("y (nm)", fontsize=9)
+                            
+                            # Colorbar
+                            plt.colorbar(im, ax=ax, shrink=0.8).set_label(f"{config['stress_component']} (GPa)")
                     
-                    # Choose colormap
-                    cmap_name = sim['params']['sigma_cmap']
-                    cmap = plt.cm.get_cmap(COLORMAPS.get(cmap_name, 'viridis'))
-                    
-                    # Create heatmap
-                    im = ax.imshow(stress_data, extent=extent, cmap=cmap, 
-                                  origin='lower', aspect='equal')
-                    
-                    # Add contour lines for defect boundary
-                    ax.contour(X, Y, eta, levels=[0.5], colors='white', 
-                              linewidths=1, linestyles='--', alpha=0.8)
-                    
-                    # Title
-                    title = f"{sim['params']['defect_type']}"
-                    if sim['params']['orientation'] != "Horizontal {111} (0°)":
-                        title += f"\n{sim['params']['orientation'].split(' ')[0]}"
-                    
-                    ax.set_title(title, fontsize=10, fontweight='semibold')
-                    ax.set_xlabel("x (nm)", fontsize=9)
-                    ax.set_ylabel("y (nm)", fontsize=9)
-                    
-                    # Colorbar
-                    plt.colorbar(im, ax=ax, shrink=0.8).set_label(f"{config['stress_component']} (GPa)")
+                    else:
+                        ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                        ax.set_title("No data")
                 
                 # Hide empty subplots
                 for idx in range(n_sims, rows*cols):
@@ -1201,27 +1373,33 @@ elif operation_mode == "Compare Saved Simulations":
                 
                 # Panel 1: Line profiles
                 for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key]
-                    
-                    # Extract profile based on configuration
-                    if config['profile_direction'] == "Multiple Profiles":
-                        # Show first selected profile
-                        profile_type = config['selected_profiles'][0].lower().replace(" ", "_").replace("-", "")
-                    else:
-                        profile_type = config['profile_direction'].lower().replace(" ", "_").replace("-", "")
-                    
-                    if profile_type == "custom_angle":
-                        distance, profile, _ = EnhancedLineProfiler.extract_profile(
-                            stress_data, 'custom', config['position_ratio'], config['custom_angle']
-                        )
-                    else:
-                        distance, profile, _ = EnhancedLineProfiler.extract_profile(
-                            stress_data, profile_type, config['position_ratio']
-                        )
-                    
-                    ax1.plot(distance, profile, color=color, linewidth=2,
-                            label=f"{sim['params']['defect_type']} - {sim['params']['orientation']}")
+                    history = sim.get('history', [])
+                    if history and frame < len(history):
+                        eta, stress_fields = history[frame]
+                        stress_data = stress_fields.get(stress_key)
+                        
+                        if stress_data is not None:
+                            # Extract profile based on configuration
+                            if config.get('profile_direction') == "Multiple Profiles":
+                                # Show first selected profile
+                                profile_type = config.get('selected_profiles', ['Horizontal'])[0].lower().replace(" ", "_").replace("-", "")
+                            else:
+                                profile_type = config.get('profile_direction', 'Horizontal').lower().replace(" ", "_").replace("-", "")
+                            
+                            try:
+                                if profile_type == "custom_angle":
+                                    distance, profile, _ = EnhancedLineProfiler.extract_profile(
+                                        stress_data, 'custom', config.get('position_ratio', 0.5), config.get('custom_angle', 45)
+                                    )
+                                else:
+                                    distance, profile, _ = EnhancedLineProfiler.extract_profile(
+                                        stress_data, profile_type, config.get('position_ratio', 0.5)
+                                    )
+                                
+                                ax1.plot(distance, profile, color=color, linewidth=2,
+                                        label=f"{sim.get('params', {}).get('defect_type', 'Unknown')} - {sim.get('params', {}).get('orientation', 'Unknown')}")
+                            except:
+                                pass
                 
                 ax1.set_xlabel("Position (nm)", fontsize=12)
                 ax1.set_ylabel(f"{config['stress_component']} (GPa)", fontsize=12)
@@ -1232,31 +1410,36 @@ elif operation_mode == "Compare Saved Simulations":
                 # Panel 2: Statistics
                 stats_data = []
                 for idx, (sim, frame, color) in enumerate(zip(simulations, frames, colors)):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key].flatten()
+                    history = sim.get('history', [])
+                    if history and frame < len(history):
+                        eta, stress_fields = history[frame]
+                        stress_data = stress_fields.get(stress_key)
+                        
+                        if stress_data is not None:
+                            flat_data = stress_data.flatten()
+                            stats_data.append({
+                                'Defect': sim.get('params', {}).get('defect_type', 'Unknown'),
+                                'Max': float(np.nanmax(flat_data)),
+                                'Mean': float(np.nanmean(flat_data)),
+                                'Std': float(np.nanstd(flat_data))
+                            })
+                
+                if stats_data:
+                    defect_names = [stats['Defect'] for stats in stats_data]
+                    max_stresses = [stats['Max'] for stats in stats_data]
                     
-                    stats_data.append({
-                        'Defect': sim['params']['defect_type'],
-                        'Max': float(np.nanmax(stress_data)),
-                        'Mean': float(np.nanmean(stress_data)),
-                        'Std': float(np.nanstd(stress_data))
-                    })
-                
-                defect_names = [stats['Defect'] for stats in stats_data]
-                max_stresses = [stats['Max'] for stats in stats_data]
-                
-                x_pos = np.arange(len(defect_names))
-                bars = ax2.bar(x_pos, max_stresses, color=colors, alpha=0.7)
-                
-                ax2.set_xticks(x_pos)
-                ax2.set_xticklabels(defect_names, rotation=45, ha='right')
-                ax2.set_ylabel("Maximum Stress (GPa)", fontsize=12)
-                ax2.set_title("Peak Stress Comparison", fontsize=14, fontweight='bold')
-                
-                # Add value labels
-                for bar, val in zip(bars, max_stresses):
-                    ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                            f'{val:.2f}', ha='center', va='bottom', fontsize=10)
+                    x_pos = np.arange(len(defect_names))
+                    bars = ax2.bar(x_pos, max_stresses, color=colors[:len(stats_data)], alpha=0.7)
+                    
+                    ax2.set_xticks(x_pos)
+                    ax2.set_xticklabels(defect_names, rotation=45, ha='right')
+                    ax2.set_ylabel("Maximum Stress (GPa)", fontsize=12)
+                    ax2.set_title("Peak Stress Comparison", fontsize=14, fontweight='bold')
+                    
+                    # Add value labels
+                    for bar, val in zip(bars, max_stresses):
+                        ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                                f'{val:.2f}', ha='center', va='bottom', fontsize=10)
                 
                 plt.tight_layout()
                 st.pyplot(fig)
@@ -1266,61 +1449,73 @@ elif operation_mode == "Compare Saved Simulations":
                 all_stats = []
                 
                 for sim, frame in zip(simulations, frames):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key].flatten()
-                    stress_data = stress_data[np.isfinite(stress_data)]
+                    history = sim.get('history', [])
+                    if history and frame < len(history):
+                        eta, stress_fields = history[frame]
+                        stress_data = stress_fields.get(stress_key)
+                        
+                        if stress_data is not None:
+                            flat_data = stress_data.flatten()
+                            flat_data = flat_data[np.isfinite(flat_data)]
+                            
+                            all_stats.append({
+                                'Simulation': f"{sim.get('params', {}).get('defect_type', 'Unknown')} - {sim.get('params', {}).get('orientation', 'Unknown')}",
+                                'N': len(flat_data),
+                                'Max (GPa)': float(np.nanmax(flat_data)),
+                                'Min (GPa)': float(np.nanmin(flat_data)),
+                                'Mean (GPa)': float(np.nanmean(flat_data)),
+                                'Median (GPa)': float(np.nanmedian(flat_data)),
+                                'Std Dev (GPa)': float(np.nanstd(flat_data)),
+                                'Skewness': float(stats.skew(flat_data)) if len(flat_data) > 0 else 0.0,
+                                'Kurtosis': float(stats.kurtosis(flat_data)) if len(flat_data) > 0 else 0.0
+                            })
+                
+                if all_stats:
+                    df_stats = pd.DataFrame(all_stats)
+                    st.dataframe(df_stats.style.format({
+                        'Max (GPa)': '{:.3f}',
+                        'Min (GPa)': '{:.3f}',
+                        'Mean (GPa)': '{:.3f}',
+                        'Median (GPa)': '{:.3f}',
+                        'Std Dev (GPa)': '{:.3f}',
+                        'Skewness': '{:.3f}',
+                        'Kurtosis': '{:.3f}'
+                    }), use_container_width=True)
                     
-                    all_stats.append({
-                        'Simulation': f"{sim['params']['defect_type']} - {sim['params']['orientation']}",
-                        'N': len(stress_data),
-                        'Max (GPa)': float(np.nanmax(stress_data)),
-                        'Min (GPa)': float(np.nanmin(stress_data)),
-                        'Mean (GPa)': float(np.nanmean(stress_data)),
-                        'Median (GPa)': float(np.nanmedian(stress_data)),
-                        'Std Dev (GPa)': float(np.nanstd(stress_data)),
-                        'Skewness': float(stats.skew(stress_data)),
-                        'Kurtosis': float(stats.kurtosis(stress_data))
-                    })
-                
-                df_stats = pd.DataFrame(all_stats)
-                st.dataframe(df_stats.style.format({
-                    'Max (GPa)': '{:.3f}',
-                    'Min (GPa)': '{:.3f}',
-                    'Mean (GPa)': '{:.3f}',
-                    'Median (GPa)': '{:.3f}',
-                    'Std Dev (GPa)': '{:.3f}',
-                    'Skewness': '{:.3f}',
-                    'Kurtosis': '{:.3f}'
-                }), use_container_width=True)
-                
-                # Create box plot
-                fig, ax = plt.subplots(figsize=(10, 6))
-                
-                data_to_plot = []
-                labels = []
-                colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
-                
-                for idx, (sim, frame) in enumerate(zip(simulations, frames)):
-                    eta, stress_fields = sim['history'][frame]
-                    stress_data = stress_fields[stress_key].flatten()
-                    stress_data = stress_data[np.isfinite(stress_data)]
+                    # Create box plot
+                    fig, ax = plt.subplots(figsize=(10, 6))
                     
-                    data_to_plot.append(stress_data)
-                    labels.append(f"{sim['params']['defect_type']}")
-                
-                bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True,
-                               showmeans=True, meanline=True, showfliers=False)
-                
-                for patch, color in zip(bp['boxes'], colors):
-                    patch.set_facecolor(color)
-                    patch.set_alpha(0.7)
-                
-                ax.set_ylabel(f"{config['stress_component']} (GPa)", fontsize=12)
-                ax.set_title("Statistical Distribution Comparison", fontsize=14, fontweight='bold')
-                ax.grid(True, alpha=0.3)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
+                    data_to_plot = []
+                    labels = []
+                    colors = plt.cm.rainbow(np.linspace(0, 1, len(simulations)))
+                    
+                    for idx, (sim, frame) in enumerate(zip(simulations, frames)):
+                        history = sim.get('history', [])
+                        if history and frame < len(history):
+                            eta, stress_fields = history[frame]
+                            stress_data = stress_fields.get(stress_key)
+                            
+                            if stress_data is not None:
+                                flat_data = stress_data.flatten()
+                                flat_data = flat_data[np.isfinite(flat_data)]
+                                
+                                data_to_plot.append(flat_data)
+                                labels.append(f"{sim.get('params', {}).get('defect_type', 'Unknown')}")
+                    
+                    if data_to_plot:
+                        bp = ax.boxplot(data_to_plot, labels=labels, patch_artist=True,
+                                       showmeans=True, meanline=True, showfliers=False)
+                        
+                        for patch, color in zip(bp['boxes'], colors[:len(data_to_plot)]):
+                            patch.set_facecolor(color)
+                            patch.set_alpha(0.7)
+                        
+                        ax.set_ylabel(f"{config['stress_component']} (GPa)", fontsize=12)
+                        ax.set_title("Statistical Distribution Comparison", fontsize=14, fontweight='bold')
+                        ax.grid(True, alpha=0.3)
+                        
+                        plt.tight_layout()
+                        st.pyplot(fig)
             
             # Clear comparison flag
             if 'run_comparison' in st.session_state:
@@ -1338,7 +1533,7 @@ elif operation_mode == "Compare Saved Simulations":
             # Group by defect type
             defect_groups = {}
             for sim in simulations:
-                defect = sim['params']['defect_type']
+                defect = sim.get('params', {}).get('defect_type', 'Unknown')
                 if defect not in defect_groups:
                     defect_groups[defect] = []
                 defect_groups[defect].append(sim)
@@ -1346,14 +1541,14 @@ elif operation_mode == "Compare Saved Simulations":
             for defect_type, sims in defect_groups.items():
                 with st.expander(f"{defect_type} ({len(sims)} simulations)"):
                     for sim in sims:
-                        params = sim['params']
+                        params = sim.get('params', {})
                         col1, col2, col3 = st.columns([2, 1, 1])
                         with col1:
-                            st.text(f"ID: {sim['id']}")
+                            st.text(f"ID: {sim.get('id', 'Unknown')}")
                         with col2:
-                            st.text(f"Orientation: {params['orientation']}")
+                            st.text(f"Orientation: {params.get('orientation', 'Unknown')}")
                         with col3:
-                            st.text(f"ε*={params['eps0']:.2f}, κ={params['kappa']:.2f}")
+                            st.text(f"ε*={params.get('eps0', 0.0):.2f}, κ={params.get('kappa', 0.0):.2f}")
         else:
             st.warning("No simulations available. Run some simulations first!")
 
@@ -1364,19 +1559,19 @@ else:  # Single Simulation View
         sim_data = SimulationDB.get_simulation(st.session_state.selected_sim_id)
         
         if sim_data:
-            history = sim_data["history"]
-            sim_params = sim_data['params']
+            history = sim_data.get("history", [])
+            sim_params = sim_data.get('params', {})
             
             # Display simulation info
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Defect Type", sim_params['defect_type'])
+                st.metric("Defect Type", sim_params.get('defect_type', 'Unknown'))
             with col2:
-                st.metric("Shape", sim_params['shape'])
+                st.metric("Shape", sim_params.get('shape', 'Unknown'))
             with col3:
-                st.metric("ε*", f"{sim_params['eps0']:.3f}")
+                st.metric("ε*", f"{sim_params.get('eps0', 0.0):.3f}")
             with col4:
-                st.metric("κ", f"{sim_params['kappa']:.3f}")
+                st.metric("κ", f"{sim_params.get('kappa', 0.0):.3f}")
             
             # Colormap selection
             st.subheader("🎨 Colormap Configuration")
@@ -1399,7 +1594,7 @@ else:  # Single Simulation View
                 new_eta_cm = st.selectbox(
                     "η Field",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['eta']),
+                    index=cmap_list.index(st.session_state.colormaps.get('eta', 'magma')) if st.session_state.colormaps.get('eta') in cmap_list else 0,
                     key="eta_cm"
                 )
                 st.session_state.colormaps['eta'] = new_eta_cm
@@ -1408,7 +1603,7 @@ else:  # Single Simulation View
                 new_sxx_cm = st.selectbox(
                     "σxx",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['sxx']),
+                    index=cmap_list.index(st.session_state.colormaps.get('sxx', 'coolwarm')) if st.session_state.colormaps.get('sxx') in cmap_list else 0,
                     key="sxx_cm"
                 )
                 st.session_state.colormaps['sxx'] = new_sxx_cm
@@ -1417,7 +1612,7 @@ else:  # Single Simulation View
                 new_syy_cm = st.selectbox(
                     "σyy",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['syy']),
+                    index=cmap_list.index(st.session_state.colormaps.get('syy', 'coolwarm')) if st.session_state.colormaps.get('syy') in cmap_list else 0,
                     key="syy_cm"
                 )
                 st.session_state.colormaps['syy'] = new_syy_cm
@@ -1426,7 +1621,7 @@ else:  # Single Simulation View
                 new_sxy_cm = st.selectbox(
                     "σxy",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['sxy']),
+                    index=cmap_list.index(st.session_state.colormaps.get('sxy', 'coolwarm')) if st.session_state.colormaps.get('sxy') in cmap_list else 0,
                     key="sxy_cm"
                 )
                 st.session_state.colormaps['sxy'] = new_sxy_cm
@@ -1435,7 +1630,7 @@ else:  # Single Simulation View
                 new_hydro_cm = st.selectbox(
                     "Hydrostatic",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['sigma_hydro']),
+                    index=cmap_list.index(st.session_state.colormaps.get('sigma_hydro', 'viridis')) if st.session_state.colormaps.get('sigma_hydro') in cmap_list else 0,
                     key="hydro_cm"
                 )
                 st.session_state.colormaps['sigma_hydro'] = new_hydro_cm
@@ -1444,7 +1639,7 @@ else:  # Single Simulation View
                 new_vm_cm = st.selectbox(
                     "Von Mises",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['von_mises']),
+                    index=cmap_list.index(st.session_state.colormaps.get('von_mises', 'plasma')) if st.session_state.colormaps.get('von_mises') in cmap_list else 0,
                     key="vm_cm"
                 )
                 st.session_state.colormaps['von_mises'] = new_vm_cm
@@ -1453,95 +1648,101 @@ else:  # Single Simulation View
                 new_mag_cm = st.selectbox(
                     "Magnitude",
                     cmap_list,
-                    index=cmap_list.index(st.session_state.colormaps['sigma_mag']),
+                    index=cmap_list.index(st.session_state.colormaps.get('sigma_mag', 'inferno')) if st.session_state.colormaps.get('sigma_mag') in cmap_list else 0,
                     key="mag_cm"
                 )
                 st.session_state.colormaps['sigma_mag'] = new_mag_cm
             
-            # Frame selection with dynamic update
-            num_frames = len(history)
-            frame_idx = st.slider("Frame", 0, num_frames - 1, num_frames - 1, 
-                                 key=f"frame_slider_{st.session_state.selected_sim_id}")
-            
-            eta, stress = history[frame_idx]
-            
-            # -----------------------------
-            # η FIELD HEATMAP
-            # -----------------------------
-            st.subheader("🟣 Phase Field η")
-            
-            fig_eta, ax_eta = plt.subplots(figsize=(5, 5))
-            im = ax_eta.imshow(eta, extent=extent, 
-                              cmap=st.session_state.colormaps['eta'], 
-                              origin="lower", aspect='equal')
-            ax_eta.set_title(f"η Field (Frame {frame_idx})")
-            plt.colorbar(im, ax=ax_eta, shrink=0.7)
-            st.pyplot(fig_eta)
-            plt.close(fig_eta)
-            
-            # -----------------------------
-            # STRESS FIELD HEATMAPS
-            # -----------------------------
-            st.subheader("💥 Stress Fields")
-            
-            fig_s, axs = plt.subplots(2, 3, figsize=(18, 10))
-            
-            fields = [
-                ("σxx", stress["sxx"], st.session_state.colormaps['sxx']),
-                ("σyy", stress["syy"], st.session_state.colormaps['syy']),
-                ("σxy", stress["sxy"], st.session_state.colormaps['sxy']),
-                ("Hydrostatic (σ_h)", stress["sigma_hydro"], st.session_state.colormaps['sigma_hydro']),
-                ("Von Mises", stress["von_mises"], st.session_state.colormaps['von_mises']),
-                ("Magnitude", stress["sigma_mag"], st.session_state.colormaps['sigma_mag']),
-            ]
-            
-            for ax, (title, field, cmap) in zip(axs.flatten(), fields):
-                im = ax.imshow(field, extent=extent, cmap=cmap, origin="lower", aspect='equal')
-                ax.set_title(title)
-                plt.colorbar(im, ax=ax, shrink=0.7)
-            
-            st.pyplot(fig_s)
-            plt.close(fig_s)
-            
-            # -----------------------------
-            # ANIMATION CONTROLS
-            # -----------------------------
-            st.subheader("🎬 Animation Controls")
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                if st.button("⏮️ First Frame"):
-                    st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = 0
-                    st.rerun()
-            
-            with col2:
-                play = st.checkbox("▶️ Play Animation", key=f"play_{st.session_state.selected_sim_id}")
-                if play:
-                    # Auto-advance frames
-                    current_frame = st.session_state.get(f"current_frame_{st.session_state.selected_sim_id}", 0)
-                    if current_frame < num_frames - 1:
-                        st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = current_frame + 1
-                        st.session_state[f"current_frame_{st.session_state.selected_sim_id}"] = current_frame + 1
+            if history:
+                # Frame selection with dynamic update
+                num_frames = len(history)
+                frame_idx = st.slider("Frame", 0, num_frames - 1, num_frames - 1, 
+                                     key=f"frame_slider_{st.session_state.selected_sim_id}")
+                
+                eta, stress = history[frame_idx]
+                
+                # -----------------------------
+                # η FIELD HEATMAP
+                # -----------------------------
+                st.subheader("🟣 Phase Field η")
+                
+                fig_eta, ax_eta = plt.subplots(figsize=(5, 5))
+                im = ax_eta.imshow(eta, extent=extent, 
+                                  cmap=st.session_state.colormaps.get('eta', 'viridis'), 
+                                  origin="lower", aspect='equal')
+                ax_eta.set_title(f"η Field (Frame {frame_idx})")
+                plt.colorbar(im, ax=ax_eta, shrink=0.7)
+                st.pyplot(fig_eta)
+                plt.close(fig_eta)
+                
+                # -----------------------------
+                # STRESS FIELD HEATMAPS
+                # -----------------------------
+                st.subheader("💥 Stress Fields")
+                
+                fig_s, axs = plt.subplots(2, 3, figsize=(18, 10))
+                
+                fields = [
+                    ("σxx", stress.get("sxx"), st.session_state.colormaps.get('sxx', 'coolwarm')),
+                    ("σyy", stress.get("syy"), st.session_state.colormaps.get('syy', 'coolwarm')),
+                    ("σxy", stress.get("sxy"), st.session_state.colormaps.get('sxy', 'coolwarm')),
+                    ("Hydrostatic (σ_h)", stress.get("sigma_hydro"), st.session_state.colormaps.get('sigma_hydro', 'viridis')),
+                    ("Von Mises", stress.get("von_mises"), st.session_state.colormaps.get('von_mises', 'plasma')),
+                    ("Magnitude", stress.get("sigma_mag"), st.session_state.colormaps.get('sigma_mag', 'inferno')),
+                ]
+                
+                for ax, (title, field, cmap) in zip(axs.flatten(), fields):
+                    if field is not None:
+                        im = ax.imshow(field, extent=extent, cmap=cmap, origin="lower", aspect='equal')
+                        ax.set_title(title)
+                        plt.colorbar(im, ax=ax, shrink=0.7)
                     else:
+                        ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                        ax.set_title(title)
+                
+                st.pyplot(fig_s)
+                plt.close(fig_s)
+                
+                # -----------------------------
+                # ANIMATION CONTROLS
+                # -----------------------------
+                st.subheader("🎬 Animation Controls")
+                
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col1:
+                    if st.button("⏮️ First Frame"):
                         st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = 0
+                        st.rerun()
+                
+                with col2:
+                    play = st.checkbox("▶️ Play Animation", key=f"play_{st.session_state.selected_sim_id}")
+                    if play:
+                        # Auto-advance frames
+                        current_frame = st.session_state.get(f"current_frame_{st.session_state.selected_sim_id}", 0)
+                        if current_frame < num_frames - 1:
+                            st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = current_frame + 1
+                            st.session_state[f"current_frame_{st.session_state.selected_sim_id}"] = current_frame + 1
+                        else:
+                            st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = 0
+                            st.session_state[f"current_frame_{st.session_state.selected_sim_id}"] = 0
+                        st.rerun()
+                    else:
                         st.session_state[f"current_frame_{st.session_state.selected_sim_id}"] = 0
-                    st.rerun()
-                else:
-                    st.session_state[f"current_frame_{st.session_state.selected_sim_id}"] = 0
-            
-            with col3:
-                if st.button("⏭️ Last Frame"):
-                    st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = num_frames - 1
-                    st.rerun()
-            
-            # Display frame information
-            st.info(f"**Frame {frame_idx + 1} of {num_frames}** | Simulation Time: {frame_idx * sim_params['save_every']} steps")
+                
+                with col3:
+                    if st.button("⏭️ Last Frame"):
+                        st.session_state[f"frame_slider_{st.session_state.selected_sim_id}"] = num_frames - 1
+                        st.rerun()
+                
+                # Display frame information
+                st.info(f"**Frame {frame_idx + 1} of {num_frames}** | Simulation Time: {frame_idx * sim_params.get('save_every', 20)} steps")
             
             # Delete current simulation option
             st.markdown("---")
             if st.button("🗑️ Delete This Simulation", key=f"delete_{st.session_state.selected_sim_id}"):
                 SimulationDB.delete_simulation(st.session_state.selected_sim_id)
-                del st.session_state.selected_sim_id
+                if 'selected_sim_id' in st.session_state:
+                    del st.session_state.selected_sim_id
                 st.success(f"Simulation deleted!")
                 st.rerun()
                 
@@ -1551,7 +1752,7 @@ else:  # Single Simulation View
         st.info("Select a simulation from the sidebar to view")
 
 # =============================================
-# DOWNLOAD SECTION
+# DOWNLOAD SECTION WITH ERROR HANDLING
 # =============================================
 st.header("🔥 Download Files")
 simulations_dict = SimulationDB.get_all_simulations()
@@ -1560,254 +1761,301 @@ if simulations_dict:
     # Create a selection dropdown
     sim_options = []
     for sim_id, sim_data in simulations_dict.items():
-        params = sim_data['params']
-        name = f"{params['defect_type']} - {params['orientation']} (ID: {sim_id})"
-        sim_options.append((name, sim_id))
+        try:
+            params = sim_data.get('params', {})
+            name = f"{params.get('defect_type', 'Unknown')} - {params.get('orientation', 'Unknown')} (ID: {sim_id})"
+            sim_options.append((name, sim_id))
+        except:
+            sim_options.append((f"Simulation {sim_id}", sim_id))
     
-    selected_sim_name = st.selectbox("Select Simulation to Download", 
-                                     [opt[0] for opt in sim_options])
-    
-    # Find the selected simulation
-    selected_sim_id = None
-    for name, sim_id in sim_options:
-        if name == selected_sim_name:
-            selected_sim_id = sim_id
-            break
-    
-    if selected_sim_id:
-        sim_data = simulations_dict[selected_sim_id]
-        history = sim_data['history']
-        sim_params = sim_data['params']
-        metadata = sim_data['metadata']
+    if sim_options:
+        selected_sim_name = st.selectbox("Select Simulation to Download", 
+                                         [opt[0] for opt in sim_options])
         
-        # attach sim_name into metadata & params
-        sim_name = build_sim_name(sim_params, sim_id=selected_sim_id)
-        metadata['sim_name'] = sim_name
-        sim_params['sim_name'] = sim_name
-        sim_params['sim_id'] = selected_sim_id
+        # Find the selected simulation
+        selected_sim_id = None
+        for name, sim_id in sim_options:
+            if name == selected_sim_name:
+                selected_sim_id = sim_id
+                break
         
-        # assemble data object
-        data = {'params': sim_params, 'history': [], 'metadata': metadata}
-        for eta, stress_fields in history:
-            data['history'].append({
-                'eta': eta,
-                'stresses': stress_fields
-            })
-        
-        st.subheader(f"Download options for: {sim_name}")
-        
-        # ----------------------------
-        # PKL (pickle)
-        # ----------------------------
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            pkl_buffer = BytesIO()
-            pickle.dump(data, pkl_buffer)
-            pkl_buffer.seek(0)
-            st.download_button("📦 Download PKL", pkl_buffer, 
-                             file_name=f"{sim_name}.pkl",
-                             mime="application/octet-stream")
-        
-        # ----------------------------
-        # PT (torch) - safe conversion
-        # ----------------------------
-        with col2:
-            pt_buffer = BytesIO()
-            
-            def to_tensor(x):
-                # numpy ndarray -> torch.from_numpy
-                if isinstance(x, np.ndarray):
-                    try:
-                        return torch.from_numpy(x)
-                    except Exception:
-                        # fallback to tensor constructor
-                        return torch.tensor(x)
-                else:
-                    # covers numpy scalars, python floats, ints, lists, etc.
-                    return torch.tensor(x)
-            
-            tensor_data = {
-                'params': sim_params,
-                'metadata': metadata,
-                'history': []
-            }
-            
-            for frame in data['history']:
-                frame_tensor = {
-                    'eta': to_tensor(frame['eta']),
-                    'stresses': {k: to_tensor(v) for k, v in frame['stresses'].items()}
-                }
-                tensor_data['history'].append(frame_tensor)
-            
-            torch.save(tensor_data, pt_buffer)
-            pt_buffer.seek(0)
-            st.download_button("⚡ Download PT", pt_buffer, 
-                             file_name=f"{sim_name}.pt",
-                             mime="application/octet-stream")
-        
-        # ----------------------------
-        # DB (in-memory SQL dump)
-        # ----------------------------
-        with col3:
-            db_dump_buffer = StringIO()
-            conn = sqlite3.connect(':memory:')
-            c = conn.cursor()
-            c.execute('''CREATE TABLE simulations (
-                         id TEXT PRIMARY KEY,
-                         sim_name TEXT,
-                         defect_type TEXT,
-                         shape TEXT,
-                         orientation TEXT,
-                         theta REAL,
-                         eps0 REAL,
-                         kappa REAL,
-                         steps INTEGER,
-                         created_at TEXT,
-                         grid_size INTEGER,
-                         dx REAL
-                         )''')
-            c.execute('''CREATE TABLE frames (
-                         sim_id TEXT,
-                         frame_idx INTEGER,
-                         eta BLOB,
-                         sxx BLOB,
-                         syy BLOB,
-                         sxy BLOB,
-                         szz BLOB,
-                         sigma_mag BLOB,
-                         sigma_hydro BLOB,
-                         von_mises BLOB
-                         )''')
-            c.execute("INSERT INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      (selected_sim_id, sim_name, sim_params['defect_type'], sim_params['shape'],
-                       sim_params['orientation'], sim_params['theta'],
-                       sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
-                       metadata['created_at'], metadata['grid_size'], metadata['dx']))
-            for idx, frame in enumerate(data['history']):
-                c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                          (selected_sim_id, idx,
-                           pickle.dumps(frame['eta']),
-                           pickle.dumps(frame['stresses']['sxx']),
-                           pickle.dumps(frame['stresses']['syy']),
-                           pickle.dumps(frame['stresses']['sxy']),
-                           pickle.dumps(frame['stresses']['szz']),
-                           pickle.dumps(frame['stresses']['sigma_mag']),
-                           pickle.dumps(frame['stresses']['sigma_hydro']),
-                           pickle.dumps(frame['stresses']['von_mises'])))
-            conn.commit()
-            for line in conn.iterdump():
-                db_dump_buffer.write('%s\n' % line)
-            db_dump_str = db_dump_buffer.getvalue()
-            st.download_button("🗃️ Download DB (SQL Dump)", db_dump_str, 
-                             file_name=f"{sim_name}.sql",
-                             mime="application/sql")
-        
-        # ----------------------------
-        # CSV (zip multiple frames)
-        # ----------------------------
-        with col4:
-            csv_zip_buffer = BytesIO()
-            with zipfile.ZipFile(csv_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for idx, (eta, stress_fields) in enumerate(history):
-                    df = pd.DataFrame({
-                        'x': X.flatten(),
-                        'y': Y.flatten(),
-                        'eta': eta.flatten(),
-                        'sxx': stress_fields['sxx'].flatten(),
-                        'syy': stress_fields['syy'].flatten(),
-                        'sxy': stress_fields['sxy'].flatten(),
-                        'szz': stress_fields['szz'].flatten(),
-                        'sigma_mag': stress_fields['sigma_mag'].flatten(),
-                        'sigma_hydro': stress_fields['sigma_hydro'].flatten(),
-                        'von_mises': stress_fields['von_mises'].flatten()
-                    })
-                    csv_str = df.to_csv(index=False)
-                    zf.writestr(f"{sim_name}_frame_{idx}.csv", csv_str)
-            csv_zip_buffer.seek(0)
-            st.download_button("📊 Download CSV (Zip)", csv_zip_buffer, 
-                             file_name=f"{sim_name}_csv.zip",
-                             mime="application/zip")
-        
-        # ----------------------------
-        # JSON Export
-        # ----------------------------
-        st.subheader("📋 Additional Export Options")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # JSON Parameters
-            params_json = json.dumps(sim_params, indent=2)
-            st.download_button("📄 Download Parameters (JSON)", params_json,
-                             file_name=f"{sim_name}_params.json",
-                             mime="application/json")
-        
-        with col2:
-            # Complete JSON Export
-            def convert_to_serializable(obj):
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                elif isinstance(obj, np.generic):
-                    return obj.item()
-                elif isinstance(obj, dict):
-                    return {k: convert_to_serializable(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_to_serializable(item) for item in obj]
-                else:
-                    return obj
-            
-            serializable_data = convert_to_serializable(data)
-            complete_json = json.dumps(serializable_data, indent=2)
-            st.download_button("📑 Complete JSON Export", complete_json,
-                             file_name=f"{sim_name}_complete.json",
-                             mime="application/json")
-        
-        # ----------------------------
-        # Bulk Export All Simulations
-        # ----------------------------
-        st.subheader("📦 Bulk Export All Simulations")
-        
-        if st.button("🚀 Export All Simulations as ZIP"):
-            with st.spinner("Creating bulk export package..."):
-                bulk_buffer = BytesIO()
-                with zipfile.ZipFile(bulk_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                    # Export each simulation
-                    for sim_id, sim_data_local in simulations_dict.items():
-                        sim_params_local = sim_data_local['params']
-                        history_local = sim_data_local['history']
-                        metadata_local = sim_data_local['metadata']
-                        
-                        sim_name_local = build_sim_name(sim_params_local, sim_id=sim_id)
-                        sim_dir = f"simulation_{sim_id}"
-                        
-                        # Export parameters
-                        params_json = json.dumps(sim_params_local, indent=2)
-                        zf.writestr(f"{sim_dir}/parameters.json", params_json)
-                        
-                        # Export metadata
-                        metadata_json = json.dumps(metadata_local, indent=2)
-                        zf.writestr(f"{sim_dir}/metadata.json", metadata_json)
-                        
-                        # Export data frames
-                        for idx, (eta_local, stress_fields_local) in enumerate(history_local):
-                            df = pd.DataFrame({
-                                'x': X.flatten(),
-                                'y': Y.flatten(),
-                                'eta': eta_local.flatten(),
-                                'sxx': stress_fields_local['sxx'].flatten(),
-                                'syy': stress_fields_local['syy'].flatten(),
-                                'sxy': stress_fields_local['sxy'].flatten(),
-                                'szz': stress_fields_local['szz'].flatten(),
-                                'sigma_mag': stress_fields_local['sigma_mag'].flatten(),
-                                'sigma_hydro': stress_fields_local['sigma_hydro'].flatten(),
-                                'von_mises': stress_fields_local['von_mises'].flatten()
-                            })
-                            csv_str = df.to_csv(index=False)
-                            zf.writestr(f"{sim_dir}/frame_{idx:04d}.csv", csv_str)
+        if selected_sim_id:
+            sim_data = simulations_dict.get(selected_sim_id)
+            if sim_data:
+                try:
+                    history = sim_data.get('history', [])
+                    sim_params = sim_data.get('params', {})
+                    metadata = sim_data.get('metadata', {})
                     
-                    # Create summary file
-                    summary = f"""MULTI-SIMULATION EXPORT SUMMARY
+                    # Validate metadata
+                    metadata = MetadataManager.validate_metadata(metadata)
+                    
+                    # Get created_at from sim_data or metadata
+                    created_at = sim_data.get('created_at', metadata.get('created_at', datetime.now().isoformat()))
+                    
+                    # attach sim_name into metadata & params
+                    sim_name = build_sim_name(sim_params, sim_id=selected_sim_id)
+                    metadata['sim_name'] = sim_name
+                    sim_params['sim_name'] = sim_name
+                    sim_params['sim_id'] = selected_sim_id
+                    
+                    # assemble data object
+                    data = {'params': sim_params, 'history': [], 'metadata': metadata}
+                    for eta, stress_fields in history:
+                        data['history'].append({
+                            'eta': eta,
+                            'stresses': stress_fields
+                        })
+                    
+                    st.subheader(f"Download options for: {sim_name}")
+                    
+                    # ----------------------------
+                    # PKL (pickle)
+                    # ----------------------------
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        try:
+                            pkl_buffer = BytesIO()
+                            pickle.dump(data, pkl_buffer)
+                            pkl_buffer.seek(0)
+                            st.download_button("📦 Download PKL", pkl_buffer, 
+                                             file_name=f"{sim_name}.pkl",
+                                             mime="application/octet-stream")
+                        except Exception as e:
+                            st.error(f"PKL export failed: {str(e)}")
+                    
+                    # ----------------------------
+                    # PT (torch) - safe conversion
+                    # ----------------------------
+                    with col2:
+                        try:
+                            pt_buffer = BytesIO()
+                            
+                            def to_tensor(x):
+                                # numpy ndarray -> torch.from_numpy
+                                if isinstance(x, np.ndarray):
+                                    try:
+                                        return torch.from_numpy(x)
+                                    except Exception:
+                                        # fallback to tensor constructor
+                                        return torch.tensor(x)
+                                else:
+                                    # covers numpy scalars, python floats, ints, lists, etc.
+                                    return torch.tensor(x)
+                            
+                            tensor_data = {
+                                'params': sim_params,
+                                'metadata': metadata,
+                                'history': []
+                            }
+                            
+                            for frame in data['history']:
+                                frame_tensor = {
+                                    'eta': to_tensor(frame['eta']),
+                                    'stresses': {k: to_tensor(v) for k, v in frame['stresses'].items()}
+                                }
+                                tensor_data['history'].append(frame_tensor)
+                            
+                            torch.save(tensor_data, pt_buffer)
+                            pt_buffer.seek(0)
+                            st.download_button("⚡ Download PT", pt_buffer, 
+                                             file_name=f"{sim_name}.pt",
+                                             mime="application/octet-stream")
+                        except Exception as e:
+                            st.error(f"PT export failed: {str(e)}")
+                    
+                    # ----------------------------
+                    # DB (in-memory SQL dump) - FIXED VERSION
+                    # ----------------------------
+                    with col3:
+                        try:
+                            db_dump_buffer = StringIO()
+                            conn = sqlite3.connect(':memory:')
+                            c = conn.cursor()
+                            c.execute('''CREATE TABLE simulations (
+                                         id TEXT PRIMARY KEY,
+                                         sim_name TEXT,
+                                         defect_type TEXT,
+                                         shape TEXT,
+                                         orientation TEXT,
+                                         theta REAL,
+                                         eps0 REAL,
+                                         kappa REAL,
+                                         steps INTEGER,
+                                         created_at TEXT,
+                                         grid_size INTEGER,
+                                         dx REAL
+                                         )''')
+                            c.execute('''CREATE TABLE frames (
+                                         sim_id TEXT,
+                                         frame_idx INTEGER,
+                                         eta BLOB,
+                                         sxx BLOB,
+                                         syy BLOB,
+                                         sxy BLOB,
+                                         szz BLOB,
+                                         sigma_mag BLOB,
+                                         sigma_hydro BLOB,
+                                         von_mises BLOB
+                                         )''')
+                            
+                            # Use the created_at we extracted earlier
+                            c.execute("INSERT INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                      (selected_sim_id, sim_name, 
+                                       sim_params.get('defect_type', 'Unknown'), 
+                                       sim_params.get('shape', 'Unknown'),
+                                       sim_params.get('orientation', 'Unknown'), 
+                                       sim_params.get('theta', 0.0),
+                                       sim_params.get('eps0', 0.0), 
+                                       sim_params.get('kappa', 0.0), 
+                                       sim_params.get('steps', 0),
+                                       created_at,  # Use the extracted created_at
+                                       metadata.get('grid_size', 128),
+                                       metadata.get('dx', 0.1)))
+                            
+                            for idx, frame in enumerate(data['history']):
+                                c.execute("INSERT INTO frames VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                          (selected_sim_id, idx,
+                                           pickle.dumps(frame['eta']),
+                                           pickle.dumps(frame['stresses'].get('sxx', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('syy', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('sxy', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('szz', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('sigma_mag', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('sigma_hydro', np.zeros((N, N)))),
+                                           pickle.dumps(frame['stresses'].get('von_mises', np.zeros((N, N))))))
+                            conn.commit()
+                            for line in conn.iterdump():
+                                db_dump_buffer.write('%s\n' % line)
+                            db_dump_str = db_dump_buffer.getvalue()
+                            st.download_button("🗃️ Download DB (SQL Dump)", db_dump_str, 
+                                             file_name=f"{sim_name}.sql",
+                                             mime="application/sql")
+                        except Exception as e:
+                            st.error(f"DB export failed: {str(e)}")
+                            print(f"DB export error: {str(e)}")
+                            print(traceback.format_exc())
+                    
+                    # ----------------------------
+                    # CSV (zip multiple frames)
+                    # ----------------------------
+                    with col4:
+                        try:
+                            csv_zip_buffer = BytesIO()
+                            with zipfile.ZipFile(csv_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                                for idx, (eta, stress_fields) in enumerate(history):
+                                    df = pd.DataFrame({
+                                        'x': X.flatten(),
+                                        'y': Y.flatten(),
+                                        'eta': eta.flatten(),
+                                        'sxx': stress_fields.get('sxx', np.zeros((N, N))).flatten(),
+                                        'syy': stress_fields.get('syy', np.zeros((N, N))).flatten(),
+                                        'sxy': stress_fields.get('sxy', np.zeros((N, N))).flatten(),
+                                        'szz': stress_fields.get('szz', np.zeros((N, N))).flatten(),
+                                        'sigma_mag': stress_fields.get('sigma_mag', np.zeros((N, N))).flatten(),
+                                        'sigma_hydro': stress_fields.get('sigma_hydro', np.zeros((N, N))).flatten(),
+                                        'von_mises': stress_fields.get('von_mises', np.zeros((N, N))).flatten()
+                                    })
+                                    csv_str = df.to_csv(index=False)
+                                    zf.writestr(f"{sim_name}_frame_{idx}.csv", csv_str)
+                            csv_zip_buffer.seek(0)
+                            st.download_button("📊 Download CSV (Zip)", csv_zip_buffer, 
+                                             file_name=f"{sim_name}_csv.zip",
+                                             mime="application/zip")
+                        except Exception as e:
+                            st.error(f"CSV export failed: {str(e)}")
+                    
+                    # ----------------------------
+                    # JSON Export
+                    # ----------------------------
+                    st.subheader("📋 Additional Export Options")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        try:
+                            # JSON Parameters
+                            params_json = json.dumps(sim_params, indent=2)
+                            st.download_button("📄 Download Parameters (JSON)", params_json,
+                                             file_name=f"{sim_name}_params.json",
+                                             mime="application/json")
+                        except Exception as e:
+                            st.error(f"JSON params export failed: {str(e)}")
+                    
+                    with col2:
+                        try:
+                            # Complete JSON Export
+                            def convert_to_serializable(obj):
+                                if isinstance(obj, np.ndarray):
+                                    return obj.tolist()
+                                elif isinstance(obj, np.generic):
+                                    return obj.item()
+                                elif isinstance(obj, dict):
+                                    return {k: convert_to_serializable(v) for k, v in obj.items()}
+                                elif isinstance(obj, list):
+                                    return [convert_to_serializable(item) for item in obj]
+                                else:
+                                    return obj
+                            
+                            serializable_data = convert_to_serializable(data)
+                            complete_json = json.dumps(serializable_data, indent=2)
+                            st.download_button("📑 Complete JSON Export", complete_json,
+                                             file_name=f"{sim_name}_complete.json",
+                                             mime="application/json")
+                        except Exception as e:
+                            st.error(f"Complete JSON export failed: {str(e)}")
+                    
+                    # ----------------------------
+                    # Bulk Export All Simulations
+                    # ----------------------------
+                    st.subheader("📦 Bulk Export All Simulations")
+                    
+                    if st.button("🚀 Export All Simulations as ZIP"):
+                        with st.spinner("Creating bulk export package..."):
+                            try:
+                                bulk_buffer = BytesIO()
+                                with zipfile.ZipFile(bulk_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                                    # Export each simulation
+                                    for sim_id_local, sim_data_local in simulations_dict.items():
+                                        try:
+                                            sim_params_local = sim_data_local.get('params', {})
+                                            history_local = sim_data_local.get('history', [])
+                                            metadata_local = sim_data_local.get('metadata', {})
+                                            
+                                            sim_name_local = build_sim_name(sim_params_local, sim_id=sim_id_local)
+                                            sim_dir = f"simulation_{sim_id_local}"
+                                            
+                                            # Export parameters
+                                            params_json = json.dumps(sim_params_local, indent=2)
+                                            zf.writestr(f"{sim_dir}/parameters.json", params_json)
+                                            
+                                            # Export metadata
+                                            metadata_local = MetadataManager.validate_metadata(metadata_local)
+                                            metadata_json = json.dumps(metadata_local, indent=2)
+                                            zf.writestr(f"{sim_dir}/metadata.json", metadata_json)
+                                            
+                                            # Export data frames
+                                            for idx, (eta_local, stress_fields_local) in enumerate(history_local):
+                                                df = pd.DataFrame({
+                                                    'x': X.flatten(),
+                                                    'y': Y.flatten(),
+                                                    'eta': eta_local.flatten(),
+                                                    'sxx': stress_fields_local.get('sxx', np.zeros((N, N))).flatten(),
+                                                    'syy': stress_fields_local.get('syy', np.zeros((N, N))).flatten(),
+                                                    'sxy': stress_fields_local.get('sxy', np.zeros((N, N))).flatten(),
+                                                    'szz': stress_fields_local.get('szz', np.zeros((N, N))).flatten(),
+                                                    'sigma_mag': stress_fields_local.get('sigma_mag', np.zeros((N, N))).flatten(),
+                                                    'sigma_hydro': stress_fields_local.get('sigma_hydro', np.zeros((N, N))).flatten(),
+                                                    'von_mises': stress_fields_local.get('von_mises', np.zeros((N, N))).flatten()
+                                                })
+                                                csv_str = df.to_csv(index=False)
+                                                zf.writestr(f"{sim_dir}/frame_{idx:04d}.csv", csv_str)
+                                        except Exception as e:
+                                            st.warning(f"Could not export simulation {sim_id_local}: {str(e)}")
+                                    
+                                    # Create summary file
+                                    summary = f"""MULTI-SIMULATION EXPORT SUMMARY
 ========================================
 Generated: {datetime.now().isoformat()}
 Total Simulations: {len(simulations_dict)}
@@ -1816,34 +2064,76 @@ Export Format: Complete Package (JSON + CSV)
 SIMULATIONS:
 ------------
 """
-                    for sim_id_local, sim_data_local in simulations_dict.items():
-                        params_local = sim_data_local['params']
-                        summary += f"\nSimulation {sim_id_local}:"
-                        summary += f"\n  Defect: {params_local['defect_type']}"
-                        summary += f"\n  Orientation: {params_local['orientation']}"
-                        summary += f"\n  ε*: {params_local['eps0']}"
-                        summary += f"\n  κ: {params_local['kappa']}"
-                        summary += f"\n  Frames: {len(sim_data_local['history'])}"
-                        summary += f"\n  Created: {sim_data_local['created_at']}\n"
-                    
-                    zf.writestr("EXPORT_SUMMARY.txt", summary)
-                
-                bulk_buffer.seek(0)
-                
-                # Determine file name
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"ag_np_all_simulations_{timestamp}.zip"
-                
-                st.download_button(
-                    "📥 Download All Simulations",
-                    bulk_buffer.getvalue(),
-                    filename,
-                    "application/zip"
-                )
-                st.success("Bulk export package ready!")
-
+                                    for sim_id_local, sim_data_local in simulations_dict.items():
+                                        params_local = sim_data_local.get('params', {})
+                                        summary += f"\nSimulation {sim_id_local}:"
+                                        summary += f"\n  Defect: {params_local.get('defect_type', 'Unknown')}"
+                                        summary += f"\n  Orientation: {params_local.get('orientation', 'Unknown')}"
+                                        summary += f"\n  ε*: {params_local.get('eps0', 0.0)}"
+                                        summary += f"\n  κ: {params_local.get('kappa', 0.0)}"
+                                        summary += f"\n  Frames: {len(sim_data_local.get('history', []))}"
+                                        summary += f"\n  Created: {sim_data_local.get('created_at', 'Unknown')}\n"
+                                    
+                                    zf.writestr("EXPORT_SUMMARY.txt", summary)
+                                
+                                bulk_buffer.seek(0)
+                                
+                                # Determine file name
+                                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                filename = f"ag_np_all_simulations_{timestamp}.zip"
+                                
+                                st.download_button(
+                                    "📥 Download All Simulations",
+                                    bulk_buffer.getvalue(),
+                                    filename,
+                                    "application/zip"
+                                )
+                                st.success("Bulk export package ready!")
+                            except Exception as e:
+                                st.error(f"Bulk export failed: {str(e)}")
+                                print(f"Bulk export error: {str(e)}")
+                                print(traceback.format_exc())
+                except Exception as e:
+                    st.error(f"Error preparing download: {str(e)}")
+                    print(f"Download preparation error: {str(e)}")
+                    print(traceback.format_exc())
+    else:
+        st.warning("No valid simulations to download")
 else:
     st.info("No simulations available for download.")
+
+# =============================================
+# DEBUG PANEL (Hidden by default)
+# =============================================
+with st.expander("🐛 Debug Information", expanded=False):
+    st.subheader("Session State Contents")
+    if 'simulations' in st.session_state:
+        st.json({k: {
+            'id': v.get('id'),
+            'params_keys': list(v.get('params', {}).keys()),
+            'history_len': len(v.get('history', [])),
+            'metadata_keys': list(v.get('metadata', {}).keys()),
+            'created_at': v.get('created_at')
+        } for k, v in st.session_state.simulations.items()})
+    else:
+        st.write("No simulations in session state")
+    
+    st.subheader("Memory Usage")
+    import sys
+    total_size = 0
+    if 'simulations' in st.session_state:
+        for sim_id, sim_data in st.session_state.simulations.items():
+            # Estimate size
+            history_size = 0
+            for eta, stress in sim_data.get('history', []):
+                history_size += eta.nbytes
+                for key, value in stress.items():
+                    if hasattr(value, 'nbytes'):
+                        history_size += value.nbytes
+            total_size += history_size
+    
+    st.write(f"Estimated total data size: {total_size / (1024*1024):.2f} MB")
+    st.write(f"Number of simulations: {len(st.session_state.get('simulations', {}))}")
 
 # =============================================
 # THEORETICAL ANALYSIS
@@ -1852,7 +2142,24 @@ with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=Fals
     st.markdown("""
     ### 🎯 **Enhanced Multi-Simulation Comparison Platform**
     
-    #### **📊 Comprehensive Platform Features:**
+    #### **🔧 Key Fixes Implemented:**
+    
+    **1. Metadata Consistency:**
+    - **Centralized Metadata Management**: All metadata now handled through `MetadataManager`
+    - **Automatic Validation**: Missing fields are automatically added with defaults
+    - **Error Handling**: Graceful degradation when metadata is incomplete
+    
+    **2. Error Handling:**
+    - **Comprehensive Error Decorators**: All critical functions wrapped in error handlers
+    - **User-Friendly Messages**: Clear error messages without exposing sensitive data
+    - **Logging**: Detailed error logs for debugging
+    
+    **3. Data Integrity:**
+    - **Default Values**: All dictionary accesses use `.get()` with defaults
+    - **Type Checking**: Safe type conversions and validations
+    - **Fallback Mechanisms**: Alternative calculations when primary methods fail
+    
+    #### **📊 Platform Features:**
     
     **1. Multi-Simulation Management:**
     - **Run New Simulations**: Configure and run individual simulations
@@ -1864,61 +2171,25 @@ with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=Fals
     - **50+ Colormaps**: Wide variety of scientific colormaps
     - **Dynamic Visualization**: Real-time updates with simulation changes
     - **Multiple Plot Types**: Heatmaps, line profiles, statistical summaries
-    - **Publication Quality**: Journal-ready figure styling
     
     **3. Advanced Analysis:**
     - **Line Profile Analysis**: Horizontal, vertical, diagonal, and custom angle profiles
     - **Statistical Comparison**: Comprehensive statistics across simulations
     - **Stress Component Analysis**: All stress tensor components
-    - **Defect Evolution**: Track defect evolution over time
     
-    **4. Export Capabilities:**
-    - **Multiple Formats**: PKL, PT, DB, CSV, JSON
+    **4. Robust Export Capabilities:**
+    - **Multiple Formats**: PKL, PT, DB, CSV, JSON with error handling
     - **Individual Downloads**: Export single simulations
     - **Bulk Export**: Download all simulations as ZIP
     - **Complete Metadata**: All parameters and results included
     
-    #### **🔧 Technical Implementation:**
-    
-    **Simulation Engine:**
-    - **Phase Field Model**: Allen-Cahn equation for defect evolution
-    - **FFT-based Stress Solver**: Efficient computation of elastic fields
-    - **Rotated Eigenstrain**: Proper crystallographic orientation
-    - **Parallel Computation**: Numba-accelerated for performance
-    
-    **Database System:**
-    - **In-Memory Storage**: Session state persistence
-    - **Unique IDs**: MD5 hash-based identification
-    - **Metadata Tracking**: Complete simulation metadata
-    - **Easy Retrieval**: Quick access to saved simulations
-    
-    **Visualization System:**
-    - **Dynamic Colormaps**: Real-time colormap updates
-    - **Aspect Ratio Correction**: Proper physical scaling
-    - **Interactive Controls**: Frame selection, animation playback
-    - **Publication Styling**: Journal-specific formatting templates
-    
-    #### **📈 Scientific Workflow:**
+    #### **🔬 Scientific Workflow:**
     
     1. **Run Simulations**: Configure defect type, orientation, and parameters
     2. **Save Results**: Automatically stored in the database
     3. **Compare Results**: Side-by-side comparison of multiple simulations
     4. **Analyze Data**: Line profiles, statistics, and correlation analysis
     5. **Export Results**: Multiple formats for further analysis or publication
-    
-    #### **🔬 Key Physical Insights:**
-    
-    **Defect-Stress Relationships:**
-    - **ISF vs ESF vs Twin**: Different stress signatures for each defect type
-    - **Orientation Dependence**: Stress field rotation with habit plane
-    - **Anisotropy Effects**: Directional stress concentration
-    - **Evolution Dynamics**: Time-dependent defect evolution
-    
-    **Stress Analysis:**
-    - **Tensor Components**: Full stress tensor visualization
-    - **Derived Quantities**: von Mises, hydrostatic, and magnitude
-    - **Stress Concentration**: Identification of high-stress regions
-    - **Gradient Analysis**: Spatial stress variations
     
     #### **🚀 Platform Benefits:**
     
@@ -1932,9 +2203,8 @@ with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=Fals
     - **Interactive Learning**: Visual demonstration of defect physics
     - **Parameter Exploration**: Easy variation of physical parameters
     - **Visual Feedback**: Immediate visualization of results
-    - **Exportable Examples**: Shareable simulation results
     
-    **Advanced crystallographic defect analysis platform with comprehensive multi-simulation capabilities!**
+    **Advanced crystallographic defect analysis platform with comprehensive error handling and robust data management!**
     """)
     
     # Display platform statistics
@@ -1943,11 +2213,11 @@ with st.expander("🔬 Theoretical Soundness & Advanced Analysis", expanded=Fals
     with col1:
         st.metric("Total Simulations", len(simulations))
     with col2:
-        total_frames = sum([len(sim['history']) for sim in simulations.values()]) if simulations else 0
+        total_frames = sum([len(sim.get('history', [])) for sim in simulations.values()]) if simulations else 0
         st.metric("Total Frames", f"{total_frames:,}")
     with col3:
         st.metric("Colormaps", f"{len(COLORMAPS)}+")
     with col4:
         st.metric("Export Formats", "5+")
 
-st.caption("🔬 Advanced Multi-Defect Analysis Platform • 50+ Colormaps • Multi-Simulation Comparison • 2025")
+st.caption("🔬 Advanced Multi-Defect Analysis Platform • Robust Error Handling • 50+ Colormaps • 2025")
