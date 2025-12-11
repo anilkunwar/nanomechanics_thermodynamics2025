@@ -12,6 +12,7 @@ import pandas as pd
 from io import BytesIO, StringIO
 import zipfile
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 
 # ----------------------------
 # Helper formatting / naming
@@ -49,6 +50,63 @@ def build_sim_name(params: dict, sim_id: str = None) -> str:
     if sim_id:
         name = f"{name}_{sim_id}"
     return name
+
+# ----------------------------
+# Colormap Configuration
+# ----------------------------
+def get_colormaps():
+    """Return a list of 50 colormaps with categories."""
+    # Sequential colormaps
+    sequential = [
+        'viridis', 'plasma', 'inferno', 'magma', 'cividis',
+        'Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
+        'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
+        'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
+        'binary', 'gist_yarg', 'gist_gray', 'gray', 'bone',
+        'pink', 'spring', 'summer', 'autumn', 'winter', 'cool',
+        'Wistia', 'hot', 'afmhot', 'gist_heat', 'copper'
+    ]
+    
+    # Diverging colormaps
+    diverging = [
+        'coolwarm', 'bwr', 'seismic', 'RdYlBu', 'RdYlGn',
+        'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdBu', 'Spectral'
+    ]
+    
+    # Qualitative colormaps
+    qualitative = [
+        'tab20c', 'tab20', 'Set3', 'Set2', 'Set1',
+        'tab10', 'Accent', 'Dark2', 'Paired', 'Pastel1',
+        'Pastel2', 'hsv', 'twilight', 'twilight_shifted'
+    ]
+    
+    # Perceptually uniform cyclic
+    cyclic = ['hsv', 'twilight', 'twilight_shifted', 'flag']
+    
+    # Combine all, ensuring we have exactly 50
+    all_maps = []
+    all_maps.extend(sequential[:30])  # Take first 30 sequential
+    all_maps.extend(diverging)        # All 11 diverging
+    all_maps.extend(qualitative[:9])  # Take first 9 qualitative
+    
+    # If we still don't have 50, add more sequential
+    if len(all_maps) < 50:
+        all_maps.extend(sequential[30:30 + (50 - len(all_maps))])
+    
+    return all_maps[:50]  # Ensure exactly 50
+
+COLORMAPS = get_colormaps()
+
+def get_colormap_display_name(cm_name):
+    """Convert colormap name to display name."""
+    if cm_name in ['coolwarm', 'bwr', 'seismic']:
+        return f"{cm_name} (Diverging)"
+    elif cm_name in ['viridis', 'plasma', 'inferno', 'magma']:
+        return f"{cm_name} (Perceptually Uniform)"
+    elif cm_name in ['hsv', 'twilight']:
+        return f"{cm_name} (Cyclic)"
+    else:
+        return cm_name
 
 # ----------------------------
 # Configure page
@@ -209,6 +267,23 @@ def run_simulation(sim_params):
 # SIDEBAR - Simulation Setup
 # =============================================
 st.sidebar.header("🎛️ Simulation Setup")
+
+# Cache management section
+st.sidebar.subheader("🔄 Cache Management")
+if st.sidebar.button("🗑️ Clear All Simulations", type="secondary"):
+    if 'simulations' in st.session_state:
+        del st.session_state.simulations
+        st.success("All simulations cleared!")
+        st.rerun()
+
+if st.sidebar.button("🔄 Run New Simulation (Clear Cache)", type="primary"):
+    # Clear cache and run new simulation
+    if 'simulations' in st.session_state:
+        del st.session_state.simulations
+    # Parameters will be collected below
+
+st.sidebar.markdown("---")
+
 defect_type = st.sidebar.selectbox("Defect Type", ["ISF", "ESF", "Twin"])
 if defect_type == "ISF":
     default_eps = 0.707
@@ -249,8 +324,10 @@ else:
     }
     theta = np.deg2rad(angle_map[orientation])
 
-# Run button
-if st.sidebar.button("🚀 Run Simulation", type="primary"):
+# Run button (always visible)
+run_button = st.sidebar.button("🚀 Run Simulation", type="primary")
+
+if run_button:
     sim_params = {
         'defect_type': defect_type,
         'shape': shape,
@@ -284,6 +361,244 @@ if st.sidebar.button("🚀 Run Simulation", type="primary"):
             'metadata': metadata
         }
         st.success(f"Simulation Complete! ID: {sim_id}")
+        st.rerun()
+
+# =============================================
+# VISUALIZATION PANEL
+# =============================================
+st.header("📊 Simulation Viewer")
+
+simulations = st.session_state.get("simulations", {})
+
+if simulations:
+    view_sim_id = st.selectbox("Select Simulation to Visualize", list(simulations.keys()), key="viewer_select")
+    
+    if view_sim_id:
+        sim_data = simulations[view_sim_id]
+        history = sim_data["history"]
+        sim_params = sim_data['params']
+        
+        # Display simulation info
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Defect Type", sim_params['defect_type'])
+        with col2:
+            st.metric("Shape", sim_params['shape'])
+        with col3:
+            st.metric("ε*", f"{sim_params['eps0']:.3f}")
+        with col4:
+            st.metric("κ", f"{sim_params['kappa']:.3f}")
+        
+        # Colormap selection
+        st.subheader("🎨 Colormap Configuration")
+        
+        # Initialize colormap session state
+        if 'colormaps' not in st.session_state:
+            # Default colormaps
+            st.session_state.colormaps = {
+                'eta': 'magma',
+                'sxx': 'coolwarm',
+                'syy': 'coolwarm',
+                'sxy': 'coolwarm',
+                'sigma_hydro': 'viridis',
+                'von_mises': 'plasma',
+                'sigma_mag': 'inferno'
+            }
+        
+        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+        
+        with col1:
+            new_eta_cm = st.selectbox(
+                "η Field",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['eta']),
+                format_func=get_colormap_display_name,
+                key="eta_cm"
+            )
+            st.session_state.colormaps['eta'] = new_eta_cm
+            
+        with col2:
+            new_sxx_cm = st.selectbox(
+                "σxx",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['sxx']),
+                format_func=get_colormap_display_name,
+                key="sxx_cm"
+            )
+            st.session_state.colormaps['sxx'] = new_sxx_cm
+            
+        with col3:
+            new_syy_cm = st.selectbox(
+                "σyy",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['syy']),
+                format_func=get_colormap_display_name,
+                key="syy_cm"
+            )
+            st.session_state.colormaps['syy'] = new_syy_cm
+            
+        with col4:
+            new_sxy_cm = st.selectbox(
+                "σxy",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['sxy']),
+                format_func=get_colormap_display_name,
+                key="sxy_cm"
+            )
+            st.session_state.colormaps['sxy'] = new_sxy_cm
+            
+        with col5:
+            new_hydro_cm = st.selectbox(
+                "Hydrostatic",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['sigma_hydro']),
+                format_func=get_colormap_display_name,
+                key="hydro_cm"
+            )
+            st.session_state.colormaps['sigma_hydro'] = new_hydro_cm
+            
+        with col6:
+            new_vm_cm = st.selectbox(
+                "Von Mises",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['von_mises']),
+                format_func=get_colormap_display_name,
+                key="vm_cm"
+            )
+            st.session_state.colormaps['von_mises'] = new_vm_cm
+            
+        with col7:
+            new_mag_cm = st.selectbox(
+                "Magnitude",
+                COLORMAPS,
+                index=COLORMAPS.index(st.session_state.colormaps['sigma_mag']),
+                format_func=get_colormap_display_name,
+                key="mag_cm"
+            )
+            st.session_state.colormaps['sigma_mag'] = new_mag_cm
+        
+        # Frame selection with dynamic update
+        num_frames = len(history)
+        frame_idx = st.slider("Frame", 0, num_frames - 1, num_frames - 1, 
+                             key=f"frame_slider_{view_sim_id}")
+        
+        eta, stress = history[frame_idx]
+        
+        # -----------------------------
+        # η FIELD HEATMAP
+        # -----------------------------
+        st.subheader("🟣 Phase Field η")
+        
+        fig_eta, ax_eta = plt.subplots(figsize=(5, 5))
+        im = ax_eta.imshow(eta, extent=extent, 
+                          cmap=st.session_state.colormaps['eta'], 
+                          origin="lower")
+        ax_eta.set_title(f"η Field (Frame {frame_idx})")
+        plt.colorbar(im, ax=ax_eta, shrink=0.7)
+        st.pyplot(fig_eta)
+        plt.close(fig_eta)
+        
+        # -----------------------------
+        # STRESS FIELD HEATMAPS
+        # -----------------------------
+        st.subheader("💥 Stress Fields")
+        
+        fig_s, axs = plt.subplots(2, 3, figsize=(18, 10))
+        
+        fields = [
+            ("σxx", stress["sxx"], st.session_state.colormaps['sxx']),
+            ("σyy", stress["syy"], st.session_state.colormaps['syy']),
+            ("σxy", stress["sxy"], st.session_state.colormaps['sxy']),
+            ("Hydrostatic (σ_h)", stress["sigma_hydro"], st.session_state.colormaps['sigma_hydro']),
+            ("Von Mises", stress["von_mises"], st.session_state.colormaps['von_mises']),
+            ("Magnitude", stress["sigma_mag"], st.session_state.colormaps['sigma_mag']),
+        ]
+        
+        for ax, (title, field, cmap) in zip(axs.flatten(), fields):
+            im = ax.imshow(field, extent=extent, cmap=cmap, origin="lower")
+            ax.set_title(title)
+            plt.colorbar(im, ax=ax, shrink=0.7)
+        
+        st.pyplot(fig_s)
+        plt.close(fig_s)
+        
+        # -----------------------------
+        # ANIMATION CONTROLS
+        # -----------------------------
+        st.subheader("🎬 Animation Controls")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("⏮️ First Frame"):
+                st.session_state[f"frame_slider_{view_sim_id}"] = 0
+                st.rerun()
+        
+        with col2:
+            play = st.checkbox("▶️ Play Animation", key=f"play_{view_sim_id}")
+            if play:
+                # Auto-advance frames
+                import time as sleep_time
+                current_frame = st.session_state.get(f"current_frame_{view_sim_id}", 0)
+                if current_frame < num_frames - 1:
+                    st.session_state[f"frame_slider_{view_sim_id}"] = current_frame + 1
+                    st.session_state[f"current_frame_{view_sim_id}"] = current_frame + 1
+                else:
+                    st.session_state[f"frame_slider_{view_sim_id}"] = 0
+                    st.session_state[f"current_frame_{view_sim_id}"] = 0
+                st.rerun()
+            else:
+                st.session_state[f"current_frame_{view_sim_id}"] = 0
+        
+        with col3:
+            if st.button("⏭️ Last Frame"):
+                st.session_state[f"frame_slider_{view_sim_id}"] = num_frames - 1
+                st.rerun()
+        
+        # Display frame information
+        st.info(f"**Frame {frame_idx + 1} of {num_frames}** | Simulation Time: {frame_idx * sim_params['save_every']} steps")
+        
+        # Quick navigation buttons
+        st.subheader("Quick Frame Navigation")
+        cols = st.columns(10)
+        for i in range(min(10, num_frames)):
+            with cols[i]:
+                if st.button(f"F{i}", key=f"nav_{view_sim_id}_{i}"):
+                    st.session_state[f"frame_slider_{view_sim_id}"] = i
+                    st.rerun()
+        
+        # Delete current simulation option
+        st.markdown("---")
+        if st.button("🗑️ Delete This Simulation", key=f"delete_{view_sim_id}"):
+            del st.session_state.simulations[view_sim_id]
+            st.success(f"Simulation {view_sim_id} deleted!")
+            st.rerun()
+            
+else:
+    st.info("No simulations available. Run a simulation from the sidebar to visualize results.")
+    
+    # Show example of colormaps
+    st.subheader("🎨 Available Colormaps (50 Total)")
+    
+    # Display colormap examples
+    num_examples = 12
+    example_colormaps = COLORMAPS[:num_examples]
+    
+    fig_ex, axs_ex = plt.subplots(3, 4, figsize=(15, 8))
+    axs_ex = axs_ex.flatten()
+    
+    gradient = np.linspace(0, 1, 256).reshape(1, -1)
+    
+    for ax, cmap_name in zip(axs_ex, example_colormaps):
+        ax.imshow(gradient, aspect='auto', cmap=cmap_name)
+        ax.set_title(get_colormap_display_name(cmap_name), fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    
+    plt.tight_layout()
+    st.pyplot(fig_ex)
+    plt.close(fig_ex)
+    
+    st.info(f"Total of {len(COLORMAPS)} colormaps available. Run a simulation to customize visualization.")
 
 # ----------------------------
 # Download section
@@ -291,7 +606,7 @@ if st.sidebar.button("🚀 Run Simulation", type="primary"):
 st.header("🔥 Download Files")
 simulations = st.session_state.get('simulations', {})
 if simulations:
-    selected_sim_id = st.selectbox("Select Simulation ID", list(simulations.keys()))
+    selected_sim_id = st.selectbox("Select Simulation ID for Download", list(simulations.keys()), key="download_select")
     if selected_sim_id:
         sim_data = simulations[selected_sim_id]
         history = sim_data['history']
@@ -350,8 +665,6 @@ if simulations:
             }
             tensor_data['history'].append(frame_tensor)
 
-        # torch.save to the BytesIO buffer
-        # torch.save accepts a file-like object (BytesIO), but ensure we reset pointer
         torch.save(tensor_data, pt_buffer)
         pt_buffer.seek(0)
         st.download_button("Download PT", pt_buffer, file_name=f"{sim_name}.pt")
@@ -429,68 +742,9 @@ if simulations:
                     'von_mises': stress_fields['von_mises'].flatten()
                 })
                 csv_str = df.to_csv(index=False)
-                # include frame index in the filename and sim_name prefix
                 zf.writestr(f"{sim_name}_frame_{idx}.csv", csv_str)
         csv_zip_buffer.seek(0)
         st.download_button("Download CSV (Zip)", csv_zip_buffer, file_name=f"{sim_name}_csv.zip")
 
 else:
-    st.info("No simulations available.")
-
-# =============================================
-# VISUALIZATION PANEL (ADDED)
-# =============================================
-
-
-st.header("📊 Simulation Viewer")
-
-simulations = st.session_state.get("simulations", {})
-
-if simulations:
-    view_sim_id = st.selectbox("Select Simulation to Visualize", list(simulations.keys()), key="viewer_select")
-
-    if view_sim_id:
-        sim_data = simulations[view_sim_id]
-        history = sim_data["history"]
-
-        num_frames = len(history)
-        frame_idx = st.slider("Frame", 0, num_frames - 1, num_frames - 1)
-
-        eta, stress = history[frame_idx]
-
-        # -----------------------------
-        # η FIELD HEATMAP
-        # -----------------------------
-        st.subheader("🟣 Phase Field η")
-
-        fig_eta, ax_eta = plt.subplots(figsize=(5, 5))
-        im = ax_eta.imshow(eta, extent=extent, cmap="magma", origin="lower")
-        ax_eta.set_title(f"η Field (Frame {frame_idx})")
-        plt.colorbar(im, ax=ax_eta, shrink=0.7)
-        st.pyplot(fig_eta)
-
-        # -----------------------------
-        # STRESS FIELD HEATMAPS
-        # -----------------------------
-        st.subheader("💥 Stress Fields")
-
-        fig_s, axs = plt.subplots(2, 3, figsize=(18, 10))
-
-        fields = [
-            ("σxx", stress["sxx"], "coolwarm"),
-            ("σyy", stress["syy"], "coolwarm"),
-            ("σxy", stress["sxy"], "coolwarm"),
-            ("Hydrostatic (σ_h)", stress["sigma_hydro"], "viridis"),
-            ("Von Mises", stress["von_mises"], "plasma"),
-            ("Magnitude", stress["sigma_mag"], "inferno"),
-        ]
-
-        for ax, (title, field, cmap) in zip(axs.flatten(), fields):
-            im = ax.imshow(field, extent=extent, cmap=cmap, origin="lower")
-            ax.set_title(title)
-            plt.colorbar(im, ax=ax, shrink=0.7)
-
-        st.pyplot(fig_s)
-else:
-    st.info("No simulations available to visualize.")
-
+    st.info("No simulations available for download.")
