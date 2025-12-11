@@ -12,11 +12,52 @@ import pandas as pd
 from io import BytesIO, StringIO
 import zipfile
 
+# ----------------------------
+# Helper formatting / naming
+# ----------------------------
+def sanitize_token(text: str) -> str:
+    """Sanitize small text tokens for filenames: remove spaces and special braces."""
+    s = str(text)
+    for ch in [" ", "{", "}", "/", "\\", ",", ";", "(", ")", "[", "]", "°"]:
+        s = s.replace(ch, "")
+    return s
+
+def fmt_num_trim(x, ndigits=3):
+    """Format a float with up to ndigits decimals and strip trailing zeros."""
+    s = f"{x:.{ndigits}f}"
+    s = s.rstrip("0").rstrip(".")
+    if s == "-0":
+        s = "0"
+    return s
+
+def build_sim_name(params: dict, sim_id: str = None) -> str:
+    """
+    Build a filename-friendly simulation name in the requested format:
+    Example: ISF_orient0deg_Square_eps0-0.707_kappa-0.6[_<simid>]
+    If sim_id provided, append short id to guarantee uniqueness.
+    """
+    defect = sanitize_token(params.get("defect_type", "def"))
+    shape = sanitize_token(params.get("shape", "shape"))
+    # Angle in degrees from theta
+    theta = params.get("theta", 0.0)
+    angle_deg = int(round(np.rad2deg(theta)))
+    orient_token = f"orient{angle_deg}deg"
+    eps0 = fmt_num_trim(params.get("eps0", 0.0), ndigits=3)
+    kappa = fmt_num_trim(params.get("kappa", 0.0), ndigits=3)
+    name = f"{defect}_{orient_token}_{shape}_eps0-{eps0}_kappa-{kappa}"
+    if sim_id:
+        name = f"{name}_{sim_id}"
+    return name
+
+# ----------------------------
 # Configure page
+# ----------------------------
 st.set_page_config(page_title="Ag NP Multi-Defect Analyzer", layout="wide")
 st.title("🔬 Ag Nanoparticle Multi-Defect Analyzer")
 
+# ----------------------------
 # Material & Grid
+# ----------------------------
 a = 0.4086
 b = a / np.sqrt(6)
 d111 = a / np.sqrt(3)
@@ -25,8 +66,8 @@ C11 = 124.0
 C12 = 93.4
 C44 = 46.1
 N = 128
-dx = 0.1 # nm
-extent = [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+dx = 0.1  # nm
+extent = [-N * dx / 2, N * dx / 2, -N * dx / 2, N * dx / 2]
 X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
                    np.linspace(extent[2], extent[3], N))
 
@@ -35,24 +76,24 @@ X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
 # =============================================
 def create_initial_eta(shape, defect_type):
     amplitudes = {"ISF": 0.70, "ESF": 0.75, "Twin": 0.90}
-    init_amplitude = amplitudes[defect_type]
-   
+    init_amplitude = amplitudes.get(defect_type, 0.7)
+
     eta = np.zeros((N, N))
-    cx, cy = N//2, N//2
+    cx, cy = N // 2, N // 2
     w, h = (24, 12) if shape in ["Rectangle", "Horizontal Fault"] else (16, 16)
-   
+
     if shape == "Square":
-        eta[cy-h:cy+h, cx-h:cx+h] = init_amplitude
+        eta[cy - h:cy + h, cx - h:cx + h] = init_amplitude
     elif shape == "Horizontal Fault":
-        eta[cy-4:cy+4, cx-w:cx+w] = init_amplitude
+        eta[cy - 4:cy + 4, cx - w:cx + w] = init_amplitude
     elif shape == "Vertical Fault":
-        eta[cy-w:cy+w, cx-4:cx+4] = init_amplitude
+        eta[cy - w:cy + w, cx - 4:cx + 4] = init_amplitude
     elif shape == "Rectangle":
-        eta[cy-h:cy+h, cx-w:cx+w] = init_amplitude
+        eta[cy - h:cy + h, cx - w:cx + w] = init_amplitude
     elif shape == "Ellipse":
-        mask = ((X/(w*1.5))**2 + (Y/(h*1.5))**2) <= 1
+        mask = ((X / (w * 1.5)) ** 2 + (Y / (h * 1.5)) ** 2) <= 1
         eta[mask] = init_amplitude
-   
+
     eta += 0.02 * np.random.randn(N, N)
     return np.clip(eta, 0.0, 1.0)
 
@@ -60,24 +101,25 @@ def create_initial_eta(shape, defect_type):
 def evolve_phase_field(eta, kappa, dt, dx, N):
     eta_new = eta.copy()
     dx2 = dx * dx
-    for i in prange(1, N-1):
-        for j in prange(1, N-1):
-            lap = (eta[i+1,j] + eta[i-1,j] + eta[i,j+1] + eta[i,j-1] - 4*eta[i,j]) / dx2
-            dF = 2*eta[i,j]*(1-eta[i,j])*(eta[i,j]-0.5)
-            eta_new[i,j] = eta[i,j] + dt * (-dF + kappa * lap)
-            eta_new[i,j] = np.maximum(0.0, np.minimum(1.0, eta_new[i,j]))
-    eta_new[0,:] = eta_new[-2,:]; eta_new[-1,:] = eta_new[1,:]
-    eta_new[:,0] = eta_new[:,-2]; eta_new[:,-1] = eta_new[:,1]
+    for i in prange(1, N - 1):
+        for j in prange(1, N - 1):
+            lap = (eta[i + 1, j] + eta[i - 1, j] + eta[i, j + 1] + eta[i, j - 1] - 4 * eta[i, j]) / dx2
+            dF = 2 * eta[i, j] * (1 - eta[i, j]) * (eta[i, j] - 0.5)
+            eta_new[i, j] = eta[i, j] + dt * (-dF + kappa * lap)
+            eta_new[i, j] = np.maximum(0.0, np.minimum(1.0, eta_new[i, j]))
+    eta_new[0, :] = eta_new[-2, :]; eta_new[-1, :] = eta_new[1, :]
+    eta_new[:, 0] = eta_new[:, -2]; eta_new[:, -1] = eta_new[:, 1]
     return eta_new
 
 def compute_stress_fields(eta, eps0, theta):
-    C11_p = (C11 - C12**2 / C11) * 1e9
-    C12_p = (C12 - C12**2 / C11) * 1e9
+    # convert GPa to Pa for elasticity calcs, then revert to GPa for returned stresses
+    C11_p = (C11 - C12 ** 2 / C11) * 1e9
+    C12_p = (C12 - C12 ** 2 / C11) * 1e9
     C44_p = C44 * 1e9
     kx = np.fft.fftfreq(N, d=dx)
     ky = np.fft.fftfreq(N, d=dx)
     KX, KY = np.meshgrid(2 * np.pi * kx, 2 * np.pi * ky)
-    K2 = KX**2 + KY**2
+    K2 = KX ** 2 + KY ** 2
     K2[0, 0] = 1e-12
     mask = K2 > 0
     n1 = np.zeros_like(KX)
@@ -87,16 +129,19 @@ def compute_stress_fields(eta, eps0, theta):
     A11 = np.zeros_like(KX)
     A22 = np.zeros_like(KX)
     A12 = np.zeros_like(KX)
-    A11[mask] = C11_p * n1[mask]**2 + C44_p * n2[mask]**2
-    A22[mask] = C11_p * n2[mask]**2 + C44_p * n1[mask]**2
+    A11[mask] = C11_p * n1[mask] ** 2 + C44_p * n2[mask] ** 2
+    A22[mask] = C11_p * n2[mask] ** 2 + C44_p * n1[mask] ** 2
     A12[mask] = (C12_p + C44_p) * n1[mask] * n2[mask]
-    det = A11 * A22 - A12**2
+    det = A11 * A22 - A12 ** 2
+    # avoid division by zero
     G11 = np.zeros_like(KX)
     G22 = np.zeros_like(KX)
     G12 = np.zeros_like(KX)
     G11[mask] = A22[mask] / det[mask]
     G22[mask] = A11[mask] / det[mask]
     G12[mask] = -A12[mask] / det[mask]
+
+    # eigenstrain construction
     gamma = eps0
     ct, st = np.cos(theta), np.sin(theta)
     n = np.array([ct, st])
@@ -105,35 +150,44 @@ def compute_stress_fields(eta, eps0, theta):
     eps_local = delta * np.outer(n, n) + gamma * (np.outer(n, s) + np.outer(s, n)) / 2
     R = np.array([[ct, -st], [st, ct]])
     eps_star = R @ eps_local @ R.T
-    eps_xx_star = eps_star[0,0] * eta
-    eps_yy_star = eps_star[1,1] * eta
-    eps_xy_star = eps_star[0,1] * eta
+    eps_xx_star = eps_star[0, 0] * eta
+    eps_yy_star = eps_star[1, 1] * eta
+    eps_xy_star = eps_star[0, 1] * eta
+
     tau_xx = C11_p * eps_xx_star + C12_p * eps_yy_star
     tau_yy = C12_p * eps_xx_star + C11_p * eps_yy_star
     tau_xy = 2 * C44_p * eps_xy_star
+
     tau_hat_xx = np.fft.fft2(tau_xx)
     tau_hat_yy = np.fft.fft2(tau_yy)
     tau_hat_xy = np.fft.fft2(tau_xy)
+
     S_hat_x = KX * tau_hat_xx + KY * tau_hat_xy
     S_hat_y = KX * tau_hat_xy + KY * tau_hat_yy
+
     u_hat_x = np.zeros_like(KX, dtype=complex)
     u_hat_y = np.zeros_like(KX, dtype=complex)
     u_hat_x[mask] = -1j * (G11[mask] * S_hat_x[mask] + G12[mask] * S_hat_y[mask])
     u_hat_y[mask] = -1j * (G12[mask] * S_hat_x[mask] + G22[mask] * S_hat_y[mask])
     u_hat_x[0, 0] = 0
     u_hat_y[0, 0] = 0
+
     ux = np.real(np.fft.ifft2(u_hat_x))
     uy = np.real(np.fft.ifft2(u_hat_y))
+
     exx = np.real(np.fft.ifft2(1j * KX * u_hat_x))
     eyy = np.real(np.fft.ifft2(1j * KY * u_hat_y))
     exy = 0.5 * np.real(np.fft.ifft2(1j * (KX * u_hat_y + KY * u_hat_x)))
+
+    # convert back to GPa for returned stresses
     sxx = (C11_p * (exx - eps_xx_star) + C12_p * (eyy - eps_yy_star)) / 1e9
     syy = (C12_p * (exx - eps_xx_star) + C11_p * (eyy - eps_yy_star)) / 1e9
     sxy = 2 * C44_p * (exy - eps_xy_star) / 1e9
     szz = (C12 / (C11 + C12)) * (sxx + syy)
-    sigma_mag = np.sqrt(sxx**2 + syy**2 + 2*sxy**2)
+    sigma_mag = np.sqrt(sxx ** 2 + syy ** 2 + 2 * sxy ** 2)
     sigma_hydro = (sxx + syy) / 2
-    von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 + 6*sxy**2))
+    von_mises = np.sqrt(0.5 * ((sxx - syy) ** 2 + (syy - szz) ** 2 + (szz - sxx) ** 2 + 6 * sxy ** 2))
+
     return {
         'sxx': sxx, 'syy': syy, 'sxy': sxy, 'szz': szz,
         'sigma_mag': sigma_mag, 'sigma_hydro': sigma_hydro, 'von_mises': von_mises
@@ -164,12 +218,14 @@ elif defect_type == "ESF":
 else:
     default_eps = 2.121
     default_kappa = 0.3
+
 shape = st.sidebar.selectbox("Initial Seed Shape",
-    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
+                             ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"])
 eps0 = st.sidebar.slider("Eigenstrain magnitude ε*", 0.3, 3.0, default_eps, 0.01)
 kappa = st.sidebar.slider("Interface energy coeff κ", 0.1, 2.0, default_kappa, 0.05)
 steps = st.sidebar.slider("Evolution steps", 20, 200, 100, 10)
 save_every = st.sidebar.slider("Save frame every", 10, 50, 20)
+
 st.sidebar.subheader("Crystal Orientation")
 orientation = st.sidebar.selectbox(
     "Habit Plane Orientation",
@@ -197,12 +253,12 @@ if st.sidebar.button("🚀 Run Simulation", type="primary"):
     sim_params = {
         'defect_type': defect_type,
         'shape': shape,
-        'eps0': eps0,
-        'kappa': kappa,
+        'eps0': float(eps0),
+        'kappa': float(kappa),
         'orientation': orientation,
-        'theta': theta,
-        'steps': steps,
-        'save_every': save_every
+        'theta': float(theta),
+        'steps': int(steps),
+        'save_every': int(save_every)
     }
     with st.spinner(f"Running {defect_type} simulation..."):
         start_time = time.time()
@@ -214,10 +270,10 @@ if st.sidebar.button("🚀 Run Simulation", type="primary"):
             'dx': dx,
             'created_at': datetime.now().isoformat()
         }
-        # Generate sim_id
+        # Generate sim_id (short hash)
         param_str = json.dumps(sim_params, sort_keys=True)
         sim_id = hashlib.md5(param_str.encode()).hexdigest()[:8]
-        
+
         # Save to session state
         if 'simulations' not in st.session_state:
             st.session_state.simulations = {}
@@ -226,10 +282,11 @@ if st.sidebar.button("🚀 Run Simulation", type="primary"):
             'history': history,
             'metadata': metadata
         }
-        
         st.success(f"Simulation Complete! ID: {sim_id}")
-        
+
+# ----------------------------
 # Download section
+# ----------------------------
 st.header("🔥 Download Files")
 simulations = st.session_state.get('simulations', {})
 if simulations:
@@ -239,37 +296,74 @@ if simulations:
         history = sim_data['history']
         sim_params = sim_data['params']
         metadata = sim_data['metadata']
-        
+
+        # attach sim_name into metadata & params
+        sim_name = build_sim_name(sim_params, sim_id=selected_sim_id)
+        metadata['sim_name'] = sim_name
+        sim_params['sim_name'] = sim_name
+        sim_params['sim_id'] = selected_sim_id
+
+        # assemble data object
         data = {'params': sim_params, 'history': [], 'metadata': metadata}
         for eta, stress_fields in history:
             data['history'].append({
                 'eta': eta,
                 'stresses': stress_fields
             })
-        
-        # PKL
+
+        # ----------------------------
+        # PKL (pickle)
+        # ----------------------------
         pkl_buffer = BytesIO()
         pickle.dump(data, pkl_buffer)
         pkl_buffer.seek(0)
-        st.download_button("Download PKL", pkl_buffer, f"sim_{selected_sim_id}.pkl")
-        
-        # PT
+        st.download_button("Download PKL", pkl_buffer, file_name=f"{sim_name}.pkl")
+
+        # ----------------------------
+        # PT (torch) - safe conversion
+        # ----------------------------
         pt_buffer = BytesIO()
-        tensor_data = data.copy()
-        for frame in tensor_data['history']:
-            frame['eta'] = torch.from_numpy(frame['eta'])
-            for k, v in frame['stresses'].items():
-                frame['stresses'][k] = torch.from_numpy(v)
+
+        def to_tensor(x):
+            # numpy ndarray -> torch.from_numpy
+            if isinstance(x, np.ndarray):
+                try:
+                    return torch.from_numpy(x)
+                except Exception:
+                    # fallback to tensor constructor
+                    return torch.tensor(x)
+            else:
+                # covers numpy scalars, python floats, ints, lists, etc.
+                return torch.tensor(x)
+
+        tensor_data = {
+            'params': sim_params,
+            'metadata': metadata,
+            'history': []
+        }
+
+        for frame in data['history']:
+            frame_tensor = {
+                'eta': to_tensor(frame['eta']),
+                'stresses': {k: to_tensor(v) for k, v in frame['stresses'].items()}
+            }
+            tensor_data['history'].append(frame_tensor)
+
+        # torch.save to the BytesIO buffer
+        # torch.save accepts a file-like object (BytesIO), but ensure we reset pointer
         torch.save(tensor_data, pt_buffer)
         pt_buffer.seek(0)
-        st.download_button("Download PT", pt_buffer, f"sim_{selected_sim_id}.pt")
-        
+        st.download_button("Download PT", pt_buffer, file_name=f"{sim_name}.pt")
+
+        # ----------------------------
         # DB (in-memory SQL dump)
+        # ----------------------------
         db_dump_buffer = StringIO()
         conn = sqlite3.connect(':memory:')
         c = conn.cursor()
         c.execute('''CREATE TABLE simulations (
                      id TEXT PRIMARY KEY,
+                     sim_name TEXT,
                      defect_type TEXT,
                      shape TEXT,
                      orientation TEXT,
@@ -293,8 +387,8 @@ if simulations:
                      sigma_hydro BLOB,
                      von_mises BLOB
                      )''')
-        c.execute("INSERT INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                  (selected_sim_id, sim_params['defect_type'], sim_params['shape'],
+        c.execute("INSERT INTO simulations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (selected_sim_id, sim_name, sim_params['defect_type'], sim_params['shape'],
                    sim_params['orientation'], sim_params['theta'],
                    sim_params['eps0'], sim_params['kappa'], sim_params['steps'],
                    metadata['created_at'], metadata['grid_size'], metadata['dx']))
@@ -313,11 +407,13 @@ if simulations:
         for line in conn.iterdump():
             db_dump_buffer.write('%s\n' % line)
         db_dump_str = db_dump_buffer.getvalue()
-        st.download_button("Download DB (SQL Dump)", db_dump_str, f"sim_{selected_sim_id}.sql")
-        
-        # CSV (zip multiple)
+        st.download_button("Download DB (SQL Dump)", db_dump_str, file_name=f"{sim_name}.sql")
+
+        # ----------------------------
+        # CSV (zip multiple frames)
+        # ----------------------------
         csv_zip_buffer = BytesIO()
-        with zipfile.ZipFile(csv_zip_buffer, "w") as zf:
+        with zipfile.ZipFile(csv_zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             for idx, (eta, stress_fields) in enumerate(history):
                 df = pd.DataFrame({
                     'x': X.flatten(),
@@ -332,8 +428,10 @@ if simulations:
                     'von_mises': stress_fields['von_mises'].flatten()
                 })
                 csv_str = df.to_csv(index=False)
-                zf.writestr(f"frame_{idx}.csv", csv_str)
+                # include frame index in the filename and sim_name prefix
+                zf.writestr(f"{sim_name}_frame_{idx}.csv", csv_str)
         csv_zip_buffer.seek(0)
-        st.download_button("Download CSV (Zip)", csv_zip_buffer, f"sim_{selected_sim_id}_csv.zip")
+        st.download_button("Download CSV (Zip)", csv_zip_buffer, file_name=f"{sim_name}_csv.zip")
+
 else:
     st.info("No simulations available.")
