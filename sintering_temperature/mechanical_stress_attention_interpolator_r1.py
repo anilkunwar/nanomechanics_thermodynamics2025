@@ -47,14 +47,15 @@ class NumericalSolutionsScanner:
         env_dir = os.getenv('SIM_DIR', 'numerical_solutions')
 
         # Choose base_dir → priority: provided > ENV > default
-        self.base_dir = Path(base_dir or env_dir)
-
+        self.base_dir = Path(base_dir or env_dir).resolve()  # Use resolve to get absolute path
+        
         # 🔥 Automatically create folder if missing
         if not self.base_dir.exists():
             try:
                 self.base_dir.mkdir(parents=True, exist_ok=True)
+                st.info(f"📁 Created directory: {self.base_dir}")
             except Exception as e:
-                raise RuntimeError(f"❌ Unable to create directory {self.base_dir}: {e}")
+                st.warning(f"⚠️ Unable to create directory {self.base_dir}: {e}")
 
         self.supported_formats = {
             '.pkl': self._read_pkl_file,
@@ -69,9 +70,10 @@ class NumericalSolutionsScanner:
         # Cache for loaded simulations
         self._cache = {}
         self._metadata_cache = {}
+        
+        # Debug flag
+        self.debug = os.getenv('SCANNER_DEBUG', 'False').lower() in ('true', '1', 't')
 
-
-    
     def scan_directory(self, recursive=True):
         """
         Scan the numerical_solutions directory for simulation files
@@ -85,20 +87,58 @@ class NumericalSolutionsScanner:
         files_by_format = {ext: [] for ext in self.supported_formats.keys()}
         files_by_format['all'] = []
         
+        if self.debug:
+            st.write(f"🔍 DEBUG: Scanning directory: {self.base_dir}")
+            st.write(f"🔍 DEBUG: Directory exists: {self.base_dir.exists()}")
+            st.write(f"🔍 DEBUG: Supported formats: {list(self.supported_formats.keys())}")
+        
         if not self.base_dir.exists():
+            if self.debug:
+                st.write(f"🔍 DEBUG: Directory does not exist: {self.base_dir}")
             return files_by_format
         
-        if recursive:
-            search_pattern = "**/*"
-        else:
-            search_pattern = "*"
+        try:
+            if recursive:
+                search_pattern = "**/*"
+            else:
+                search_pattern = "*"
+            
+            if self.debug:
+                st.write(f"🔍 DEBUG: Search pattern: {search_pattern}")
+            
+            all_items = list(self.base_dir.glob(search_pattern))
+            if self.debug:
+                st.write(f"🔍 DEBUG: Found {len(all_items)} total items")
+            
+            for item in all_items:
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Checking item: {item}")
+                
+                if item.is_file():
+                    ext = item.suffix.lower()
+                    if self.debug:
+                        st.write(f"🔍 DEBUG: File extension: {ext}")
+                    
+                    if ext in self.supported_formats:
+                        files_by_format[ext].append(str(item))
+                        files_by_format['all'].append(str(item))
+                        if self.debug:
+                            st.write(f"🔍 DEBUG: Added {item.name} as {ext}")
+                    elif self.debug:
+                        st.write(f"🔍 DEBUG: Skipped {item.name} - unsupported format")
+                elif self.debug and item.is_dir():
+                    st.write(f"🔍 DEBUG: Skipped directory: {item}")
         
-        for file_path in self.base_dir.glob(search_pattern):
-            if file_path.is_file():
-                ext = file_path.suffix.lower()
-                if ext in self.supported_formats:
-                    files_by_format[ext].append(str(file_path))
-                    files_by_format['all'].append(str(file_path))
+        except Exception as e:
+            st.error(f"❌ Error scanning directory: {str(e)}")
+            if self.debug:
+                st.write(f"🔍 DEBUG: Error details: {traceback.format_exc()}")
+        
+        if self.debug:
+            st.write(f"🔍 DEBUG: Found files by format:")
+            for ext, files in files_by_format.items():
+                if files:
+                    st.write(f"  {ext}: {len(files)} files")
         
         return files_by_format
     
@@ -113,20 +153,26 @@ class NumericalSolutionsScanner:
             name = path.name
             if path.is_dir():
                 children = {}
-                for child in sorted(path.iterdir()):
-                    child_name = build_tree(child, level + 1)
-                    if child_name:
-                        children[child.name] = child_name
-                return {"type": "directory", "children": children}
+                try:
+                    for child in sorted(path.iterdir()):
+                        child_name = build_tree(child, level + 1)
+                        if child_name:
+                            children[child.name] = child_name
+                    return {"type": "directory", "children": children}
+                except Exception as e:
+                    return {"type": "directory", "error": str(e)}
             else:
                 ext = path.suffix.lower()
                 if ext in self.supported_formats:
-                    return {
-                        "type": "file",
-                        "size": f"{path.stat().st_size / 1024:.1f} KB",
-                        "format": ext[1:].upper(),
-                        "modified": datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    }
+                    try:
+                        return {
+                            "type": "file",
+                            "size": f"{path.stat().st_size / 1024:.1f} KB",
+                            "format": ext[1:].upper(),
+                            "modified": datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                    except Exception as e:
+                        return {"type": "file", "error": str(e)}
                 return None
         
         if self.base_dir.exists():
@@ -147,10 +193,15 @@ class NumericalSolutionsScanner:
         """
         file_path = Path(file_path)
         
+        if self.debug:
+            st.write(f"🔍 DEBUG: Loading file: {file_path}")
+            st.write(f"🔍 DEBUG: File exists: {file_path.exists()}")
+        
         # Check cache
         cache_key = str(file_path.resolve())
         if use_cache and cache_key in self._cache:
-            st.info(f"📂 Using cached version of {file_path.name}")
+            if self.debug:
+                st.write(f"🔍 DEBUG: Using cached version")
             return self._cache[cache_key]
         
         if not file_path.exists():
@@ -161,8 +212,16 @@ class NumericalSolutionsScanner:
             raise ValueError(f"Unsupported file format: {ext}")
         
         try:
+            if self.debug:
+                st.write(f"🔍 DEBUG: Reading file with {ext} handler")
+            
             # Read file based on format
             raw_data = self.supported_formats[ext](file_path)
+            
+            if self.debug:
+                st.write(f"🔍 DEBUG: Raw data type: {type(raw_data)}")
+                if isinstance(raw_data, dict):
+                    st.write(f"🔍 DEBUG: Raw data keys: {list(raw_data.keys())}")
             
             # Standardize data
             standardized_data = self._standardize_data(raw_data, file_path)
@@ -180,10 +239,15 @@ class NumericalSolutionsScanner:
             if use_cache:
                 self._cache[cache_key] = standardized_data
             
+            if self.debug:
+                st.write(f"🔍 DEBUG: Successfully loaded and standardized")
+            
             return standardized_data
             
         except Exception as e:
             st.error(f"Error loading {file_path}: {str(e)}")
+            if self.debug:
+                st.write(f"🔍 DEBUG: Error details: {traceback.format_exc()}")
             raise
     
     def load_all_simulations(self, max_files=None, progress_callback=None):
@@ -200,16 +264,23 @@ class NumericalSolutionsScanner:
         files_by_format = self.scan_directory()
         all_files = files_by_format['all']
         
+        if self.debug:
+            st.write(f"🔍 DEBUG: Total files found: {len(all_files)}")
+        
         if max_files:
             all_files = all_files[:max_files]
         
         loaded_simulations = []
+        failed_files = []
         
         for i, file_path in enumerate(all_files):
             if progress_callback:
                 progress_callback(i, len(all_files), file_path)
             
             try:
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Loading {i+1}/{len(all_files)}: {Path(file_path).name}")
+                
                 sim_data = self.load_simulation(file_path)
                 loaded_simulations.append(sim_data)
                 
@@ -223,23 +294,51 @@ class NumericalSolutionsScanner:
                     'frames': len(sim_data.get('history', []))
                 }
                 
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Successfully loaded {Path(file_path).name}")
+                
             except Exception as e:
-                st.warning(f"Skipping {Path(file_path).name}: {str(e)}")
+                error_msg = f"Error loading {Path(file_path).name}: {str(e)}"
+                st.warning(error_msg)
+                failed_files.append((file_path, error_msg))
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Error: {error_msg}")
                 continue
+        
+        if failed_files and self.debug:
+            st.write(f"🔍 DEBUG: Failed to load {len(failed_files)} files:")
+            for file_path, error in failed_files:
+                st.write(f"  - {Path(file_path).name}: {error}")
         
         return loaded_simulations
     
     def _read_pkl_file(self, file_path):
         """Read pickle file"""
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading PKL file: {file_path}")
         with open(file_path, 'rb') as f:
-            return pickle.load(f)
+            data = pickle.load(f)
+            if self.debug:
+                st.write(f"🔍 DEBUG: PKL data type: {type(data)}")
+                if isinstance(data, dict):
+                    st.write(f"🔍 DEBUG: PKL data keys: {list(data.keys())}")
+            return data
     
     def _read_pt_file(self, file_path):
         """Read PyTorch file"""
-        return torch.load(file_path, map_location=torch.device('cpu'))
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading PT file: {file_path}")
+        data = torch.load(file_path, map_location=torch.device('cpu'))
+        if self.debug:
+            st.write(f"🔍 DEBUG: PT data type: {type(data)}")
+            if isinstance(data, dict):
+                st.write(f"🔍 DEBUG: PT data keys: {list(data.keys())}")
+        return data
     
     def _read_h5_file(self, file_path):
         """Read HDF5 file"""
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading H5 file: {file_path}")
         with h5py.File(file_path, 'r') as f:
             data = {}
             def read_h5_obj(name, obj):
@@ -248,20 +347,41 @@ class NumericalSolutionsScanner:
                 elif isinstance(obj, h5py.Group):
                     data[name] = {}
             f.visititems(read_h5_obj)
+            if self.debug:
+                st.write(f"🔍 DEBUG: H5 data keys: {list(data.keys())}")
         return data
     
     def _read_npz_file(self, file_path):
         """Read numpy compressed file"""
-        return dict(np.load(file_path, allow_pickle=True))
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading NPZ file: {file_path}")
+        data = dict(np.load(file_path, allow_pickle=True))
+        if self.debug:
+            st.write(f"🔍 DEBUG: NPZ data keys: {list(data.keys())}")
+        return data
     
     def _read_json_file(self, file_path):
         """Read JSON file"""
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading JSON file: {file_path}")
         with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            if self.debug:
+                st.write(f"🔍 DEBUG: JSON data type: {type(data)}")
+                if isinstance(data, dict):
+                    st.write(f"🔍 DEBUG: JSON data keys: {list(data.keys())}")
+        return data
     
     def _read_npy_file(self, file_path):
         """Read numpy array file"""
-        return np.load(file_path, allow_pickle=True).item()
+        if self.debug:
+            st.write(f"🔍 DEBUG: Reading NPY file: {file_path}")
+        data = np.load(file_path, allow_pickle=True)
+        if self.debug:
+            st.write(f"🔍 DEBUG: NPY data type: {type(data)}")
+            if isinstance(data, np.ndarray):
+                st.write(f"🔍 DEBUG: NPY data shape: {data.shape}")
+        return data
     
     def _standardize_data(self, raw_data, file_path):
         """
@@ -274,6 +394,9 @@ class NumericalSolutionsScanner:
         Returns:
             Standardized simulation data
         """
+        if self.debug:
+            st.write(f"🔍 DEBUG: Standardizing data from {file_path.name}")
+        
         standardized = {
             'params': {},
             'history': [],
@@ -284,13 +407,22 @@ class NumericalSolutionsScanner:
         
         # Try different format patterns
         if isinstance(raw_data, dict):
+            if self.debug:
+                st.write(f"🔍 DEBUG: Raw data is dict, trying different patterns")
+            
             # Pattern 1: Your original export format
             if 'params' in raw_data and 'history' in raw_data:
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Pattern 1 - Original export format")
                 standardized['params'] = raw_data.get('params', {})
                 standardized['metadata'] = raw_data.get('metadata', {})
                 
                 # Convert history
-                for frame in raw_data.get('history', []):
+                history_data = raw_data.get('history', [])
+                if self.debug:
+                    st.write(f"🔍 DEBUG: History length: {len(history_data)}")
+                
+                for frame in history_data:
                     if isinstance(frame, dict):
                         eta = frame.get('eta')
                         stresses = frame.get('stresses', {})
@@ -298,22 +430,30 @@ class NumericalSolutionsScanner:
             
             # Pattern 2: Alternative format with different structure
             elif 'simulation_parameters' in raw_data:
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Pattern 2 - simulation_parameters format")
                 standardized['params'] = raw_data.get('simulation_parameters', {})
                 standardized['metadata'] = raw_data.get('metadata', {})
                 standardized['history'] = raw_data.get('frames', [])
             
             # Pattern 3: Direct parameter storage
             else:
+                if self.debug:
+                    st.write(f"🔍 DEBUG: Pattern 3 - Direct parameter storage")
                 # Try to extract known parameter fields
                 known_params = ['defect_type', 'shape', 'eps0', 'kappa', 'theta', 'orientation']
                 for param in known_params:
                     if param in raw_data:
                         standardized['params'][param] = raw_data[param]
+                        if self.debug:
+                            st.write(f"🔍 DEBUG: Found param: {param} = {raw_data[param]}")
                 
                 # Try to find stress fields
                 stress_keys = ['sigma_hydro', 'sigma_mag', 'von_mises', 'eta_field']
                 for key in stress_keys:
                     if key in raw_data:
+                        if self.debug:
+                            st.write(f"🔍 DEBUG: Found stress key: {key}")
                         if not standardized['history']:
                             standardized['history'].append((raw_data.get('eta_field', np.zeros((128, 128))), 
                                                           {'sigma_hydro': raw_data.get('sigma_hydro'),
@@ -323,11 +463,15 @@ class NumericalSolutionsScanner:
         
         # Handle PyTorch tensors
         elif torch.is_tensor(raw_data):
+            if self.debug:
+                st.write(f"🔍 DEBUG: Pattern 4 - PyTorch tensor")
             standardized['params'] = {'data_type': 'torch_tensor'}
             standardized['metadata'] = {'tensor_shape': str(raw_data.shape)}
         
         # Handle numpy arrays
         elif isinstance(raw_data, np.ndarray):
+            if self.debug:
+                st.write(f"🔍 DEBUG: Pattern 5 - Numpy array")
             standardized['params'] = {'data_type': 'numpy_array'}
             standardized['metadata'] = {'array_shape': str(raw_data.shape)}
             
@@ -343,6 +487,10 @@ class NumericalSolutionsScanner:
                 'frames': len(standardized['history'])
             }
         
+        if self.debug:
+            st.write(f"🔍 DEBUG: Standardized params: {list(standardized['params'].keys())}")
+            st.write(f"🔍 DEBUG: Standardized history frames: {len(standardized['history'])}")
+        
         return standardized
     
     def get_quick_metadata(self, file_path):
@@ -352,7 +500,8 @@ class NumericalSolutionsScanner:
         
         try:
             # Try to load just the params
-            ext = Path(file_path).suffix.lower()
+            file_path_obj = Path(file_path)
+            ext = file_path_obj.suffix.lower()
             if ext == '.pkl':
                 with open(file_path, 'rb') as f:
                     data = pickle.load(f)
@@ -365,7 +514,9 @@ class NumericalSolutionsScanner:
                             'kappa': params.get('kappa', 'Unknown'),
                             'frames': len(data.get('history', [])) if 'history' in data else 0
                         }
-        except:
+        except Exception as e:
+            if self.debug:
+                st.write(f"🔍 DEBUG: Quick metadata failed for {file_path}: {e}")
             pass
         
         return {
@@ -380,6 +531,8 @@ class NumericalSolutionsScanner:
         """Clear the file cache"""
         self._cache.clear()
         self._metadata_cache.clear()
+        if self.debug:
+            st.write("🔍 DEBUG: Cache cleared")
     
     def export_to_zip(self, simulations, output_path="exported_simulations.zip"):
         """
@@ -420,6 +573,25 @@ class NumericalSolutionsScanner:
                 zipf.writestr(filename, json.dumps(export_data_serializable, indent=2))
         
         return output_path
+    
+    def list_files_detailed(self):
+        """List all files in directory with detailed info (for debugging)"""
+        if not self.base_dir.exists():
+            return []
+        
+        files_info = []
+        for item in self.base_dir.rglob("*"):
+            if item.is_file():
+                ext = item.suffix.lower()
+                files_info.append({
+                    'path': str(item),
+                    'name': item.name,
+                    'ext': ext,
+                    'size_kb': item.stat().st_size / 1024,
+                    'is_supported': ext in self.supported_formats
+                })
+        
+        return files_info
 
 # =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
@@ -1159,6 +1331,14 @@ def create_attention_interface():
         dir_status = "✅ Exists" if dir_exists else "❌ Not found"
         st.text(f"Status: {dir_status}")
         
+        # Enable debug mode
+        enable_debug = st.checkbox("Enable debug mode", False)
+        if enable_debug:
+            scanner.debug = True
+            st.info("Debug mode enabled - detailed logs will be shown")
+        else:
+            scanner.debug = False
+        
         if not dir_exists:
             st.warning("Directory not found! Please create it or set SIM_DIR environment variable.")
             with st.expander("💡 How to set up"):
@@ -1241,12 +1421,18 @@ def create_attention_interface():
         current_dir = str(scanner.base_dir.resolve())
         dir_exists = scanner.base_dir.exists()
         
-        col_info1, col_info2 = st.columns(2)
+        col_info1, col_info2, col_info3 = st.columns(3)
         with col_info1:
             st.metric("📁 Current Directory", scanner.base_dir.name)
         with col_info2:
             status_color = "🟢" if dir_exists else "🔴"
             st.metric("Status", f"{status_color} {'Found' if dir_exists else 'Not Found'}")
+        with col_info3:
+            # Force rescan button
+            if st.button("🔍 Force Rescan", type="secondary"):
+                scanner.clear_cache()
+                st.success("Cache cleared! Directory will be rescanned.")
+                st.rerun()
         
         if not dir_exists:
             st.error(f"⚠️ Directory not found: {current_dir}")
@@ -1275,7 +1461,7 @@ def create_attention_interface():
         if dir_exists:
             data_source = st.radio(
                 "Select data source:",
-                ["📁 Load from directory", "📤 Upload files manually", "🔍 Scan directory structure"],
+                ["📁 Load from directory", "📤 Upload files manually", "🔍 Scan directory structure", "🔧 Debug Scanner"],
                 horizontal=True
             )
         else:
@@ -1293,10 +1479,44 @@ def create_attention_interface():
                 
                 if total_files == 0:
                     st.warning("No simulation files found in the directory!")
+                    
+                    # Debug info
+                    with st.expander("🔧 Debug Information", expanded=False):
+                        st.write("### Directory Debug Info")
+                        st.write(f"**Directory path:** {current_dir}")
+                        st.write(f"**Directory exists:** {scanner.base_dir.exists()}")
+                        
+                        # List all files in directory
+                        st.write("### All files in directory:")
+                        try:
+                            all_items = list(scanner.base_dir.rglob("*"))
+                            if all_items:
+                                file_info = []
+                                for item in all_items:
+                                    file_info.append({
+                                        'Name': item.name,
+                                        'Type': 'File' if item.is_file() else 'Directory',
+                                        'Size': f"{item.stat().st_size / 1024:.1f} KB" if item.is_file() else '-',
+                                        'Extension': item.suffix.lower() if item.is_file() else '-',
+                                        'Supported': '✅' if item.suffix.lower() in scanner.supported_formats else '❌'
+                                    })
+                                df_files = pd.DataFrame(file_info)
+                                st.dataframe(df_files, use_container_width=True)
+                            else:
+                                st.write("No files or directories found!")
+                        except Exception as e:
+                            st.write(f"Error listing directory: {e}")
+                        
+                        # Check environment
+                        st.write("### Environment Info:")
+                        st.write(f"**Current working directory:** {os.getcwd()}")
+                        st.write(f"**SIM_DIR environment variable:** {os.getenv('SIM_DIR', 'Not set')}")
+                        st.write(f"**Python version:** {sys.version}")
+                    
                     st.info("""
                     **Supported formats:** .pkl, .pt, .h5/.hdf5, .npz, .json, .npy
                     
-                    **Example file structure:**
+                    **Example file structure (PKL format):**
                     ```python
                     {
                         'params': {
@@ -1317,6 +1537,38 @@ def create_attention_interface():
                     }
                     ```
                     """)
+                    
+                    # Test with a sample file
+                    if st.button("🧪 Create test file"):
+                        try:
+                            test_data = {
+                                'params': {
+                                    'defect_type': 'ISF',
+                                    'shape': 'Square',
+                                    'eps0': 1.414,
+                                    'kappa': 0.7,
+                                    'orientation': 'Horizontal {111} (0°)'
+                                },
+                                'history': [
+                                    (np.zeros((128, 128)), {
+                                        'sigma_hydro': np.zeros((128, 128)),
+                                        'sigma_mag': np.zeros((128, 128)),
+                                        'von_mises': np.zeros((128, 128))
+                                    })
+                                ],
+                                'metadata': {
+                                    'run_time': 0.0,
+                                    'frames': 1,
+                                    'grid_size': 128
+                                }
+                            }
+                            test_file = scanner.base_dir / "test_simulation.pkl"
+                            with open(test_file, 'wb') as f:
+                                pickle.dump(test_data, f)
+                            st.success(f"✅ Created test file: {test_file}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to create test file: {e}")
                 else:
                     st.success(f"Found {total_files} simulation files in {scanner.base_dir}")
                     
@@ -1488,6 +1740,51 @@ def create_attention_interface():
                             )
                             st.session_state.source_simulations.extend(loaded_sims)
                             st.success(f"Loaded {len(loaded_sims)} simulations!")
+        
+        elif data_source == "🔧 Debug Scanner":
+            st.markdown("### Scanner Debug Information")
+            
+            scanner = st.session_state.interpolator.directory_scanner
+            scanner.debug = True
+            
+            st.write("#### Directory Information")
+            st.write(f"**Base directory:** {scanner.base_dir}")
+            st.write(f"**Directory exists:** {scanner.base_dir.exists()}")
+            st.write(f"**Absolute path:** {scanner.base_dir.resolve()}")
+            
+            if scanner.base_dir.exists():
+                st.write("#### File Listing")
+                files_info = scanner.list_files_detailed()
+                if files_info:
+                    df_files = pd.DataFrame(files_info)
+                    st.dataframe(df_files, use_container_width=True)
+                    
+                    # Count files
+                    total_files = len(files_info)
+                    supported_files = sum(1 for f in files_info if f['is_supported'])
+                    st.write(f"**Total files:** {total_files}")
+                    st.write(f"**Supported files:** {supported_files}")
+                    st.write(f"**Unsupported files:** {total_files - supported_files}")
+                    
+                    # Show unsupported files
+                    unsupported = [f for f in files_info if not f['is_supported']]
+                    if unsupported:
+                        st.write("#### Unsupported files:")
+                        for f in unsupported[:10]:  # Show first 10
+                            st.write(f"- {f['name']} (extension: {f['ext']})")
+                else:
+                    st.write("No files found in directory!")
+            else:
+                st.error(f"Directory does not exist: {scanner.base_dir}")
+            
+            # Test scan
+            if st.button("Run test scan"):
+                st.write("#### Scanning directory...")
+                files_by_format = scanner.scan_directory()
+                st.write(f"**Files found:** {len(files_by_format['all'])}")
+                for ext, files in files_by_format.items():
+                    if ext != 'all' and files:
+                        st.write(f"- {ext}: {len(files)} files")
         
         # Display loaded simulations (common for all sources)
         if st.session_state.source_simulations:
@@ -2208,4 +2505,4 @@ with st.expander("🔬 Theoretical Analysis: Spatial-Attention Interpolation", e
 if __name__ == "__main__":
     main()
 
-st.caption("🔬 Spatial-Attention Stress Interpolation • Multi-format Support • Environment Variable Configuration • 2025")
+st.caption("🔬 Spatial-Attention Stress Interpolation • Multi-format Support • Enhanced Directory Scanner • 2025")
