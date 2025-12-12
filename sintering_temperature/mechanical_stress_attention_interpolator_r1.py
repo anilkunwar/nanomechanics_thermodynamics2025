@@ -27,23 +27,8 @@ import joblib
 from pathlib import Path
 import tempfile
 import base64
-import os
-import glob
-import shutil
 
 warnings.filterwarnings('ignore')
-
-# =============================================
-# CONFIGURATION PATHS
-# =============================================
-# Get the directory where this script is located
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SOLUTION_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
-
-# Create solution directory if it doesn't exist
-if not os.path.exists(SOLUTION_DIR):
-    os.makedirs(SOLUTION_DIR, exist_ok=True)
-    st.info(f"📁 Created numerical solutions directory: {SOLUTION_DIR}")
 
 # =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
@@ -81,10 +66,7 @@ class SpatialLocalityAttentionInterpolator:
             'h5': self._read_h5,
             'npz': self._read_npz,
             'sql': self._read_sql,
-            'json': self._read_json,
-            'npy': self._read_npy,
-            'mat': self._read_mat,
-            'csv': self._read_csv
+            'json': self._read_json
         }
     
     def _build_model(self):
@@ -172,41 +154,22 @@ class SpatialLocalityAttentionInterpolator:
         """Read JSON format"""
         return json.loads(file_content.decode('utf-8'))
     
-    def _read_npy(self, file_content):
-        """Read numpy array format"""
-        buffer = BytesIO(file_content)
-        return np.load(buffer, allow_pickle=True)
-    
-    def _read_mat(self, file_content):
-        """Read MATLAB format"""
-        buffer = BytesIO(file_content)
-        from scipy.io import loadmat
-        return loadmat(buffer)
-    
-    def _read_csv(self, file_content):
-        """Read CSV format"""
-        buffer = StringIO(file_content.decode('utf-8'))
-        return pd.read_csv(buffer)
-    
-    def read_simulation_file(self, file_path, format_type='auto'):
+    def read_simulation_file(self, uploaded_file, format_type='auto'):
         """
-        Read simulation file from path in various formats
+        Read simulation file in various formats
         
         Args:
-            file_path: Path to simulation file
+            uploaded_file: Streamlit uploaded file object
             format_type: 'auto' or specific format ('pkl', 'pt', etc.)
             
         Returns:
             Dictionary with simulation data
         """
-        # Read file content
-        with open(file_path, 'rb') as f:
-            file_content = f.read()
-        
-        filename = os.path.basename(file_path).lower()
+        file_content = uploaded_file.getvalue()
         
         # Auto-detect format
         if format_type == 'auto':
+            filename = uploaded_file.name.lower()
             if filename.endswith('.pkl'):
                 format_type = 'pkl'
             elif filename.endswith('.pt'):
@@ -219,12 +182,6 @@ class SpatialLocalityAttentionInterpolator:
                 format_type = 'sql'
             elif filename.endswith('.json'):
                 format_type = 'json'
-            elif filename.endswith('.npy'):
-                format_type = 'npy'
-            elif filename.endswith('.mat'):
-                format_type = 'mat'
-            elif filename.endswith('.csv'):
-                format_type = 'csv'
             else:
                 raise ValueError(f"Unrecognized file format: {filename}")
         
@@ -233,19 +190,17 @@ class SpatialLocalityAttentionInterpolator:
             data = self.readers[format_type](file_content)
             
             # Convert to standardized format
-            return self._standardize_data(data, format_type, file_path)
+            return self._standardize_data(data, format_type)
         else:
             raise ValueError(f"Unsupported format: {format_type}")
     
-    def _standardize_data(self, data, format_type, file_path):
+    def _standardize_data(self, data, format_type):
         """Convert different formats to standardized structure"""
         standardized = {
             'params': {},
             'history': [],
             'metadata': {},
-            'format': format_type,
-            'file_path': file_path,
-            'filename': os.path.basename(file_path)
+            'format': format_type
         }
         
         if format_type == 'pkl':
@@ -294,37 +249,6 @@ class SpatialLocalityAttentionInterpolator:
                 standardized['metadata'] = data['metadata']
             if 'history' in data:
                 standardized['history'] = data['history']
-        
-        elif format_type == 'csv':
-            # CSV format - assuming it's a flattened simulation
-            try:
-                # Try to extract metadata from filename
-                filename = os.path.basename(file_path)
-                if 'ISF' in filename:
-                    standardized['params']['defect_type'] = 'ISF'
-                elif 'ESF' in filename:
-                    standardized['params']['defect_type'] = 'ESF'
-                elif 'Twin' in filename:
-                    standardized['params']['defect_type'] = 'Twin'
-                
-                # Extract orientation from filename
-                if 'orient0deg' in filename:
-                    standardized['params']['orientation'] = 'Horizontal {111} (0°)'
-                elif 'orient30deg' in filename:
-                    standardized['params']['orientation'] = 'Tilted 30° (1¯10 projection)'
-                elif 'orient60deg' in filename:
-                    standardized['params']['orientation'] = 'Tilted 60°'
-                elif 'orient90deg' in filename:
-                    standardized['params']['orientation'] = 'Vertical {111} (90°)'
-                
-                # Store the CSV data
-                standardized['csv_data'] = data
-        
-        # Add timestamp if missing
-        if 'created_at' not in standardized['metadata']:
-            standardized['metadata']['created_at'] = datetime.fromtimestamp(
-                os.path.getmtime(file_path)
-            ).isoformat()
         
         return standardized
     
@@ -518,6 +442,9 @@ class SpatialLocalityAttentionInterpolator:
             optimizer.step()
             
             losses.append(loss.item())
+            
+            if (epoch + 1) % 10 == 0:
+                st.write(f"Epoch {epoch+1}/{epochs}, Loss: {loss.item():.6f}")
         
         return losses
     
@@ -767,7 +694,7 @@ st.set_page_config(page_title="Ag NP Multi-Defect Analyzer with Attention", layo
 st.title("🔬 Ag Nanoparticle Multi-Defect Analyzer with Spatial-Attention Interpolation")
 st.markdown("""
 **Run simulations • Upload existing data • Predict stress fields using spatial-attention interpolation**
-**Support for PKL, PT, H5, NPZ, SQL, JSON formats • Access to numerical_solutions directory**
+**Support for PKL, PT, H5, NPZ, SQL, JSON formats • Advanced spatial regularization**
 """)
 
 # =============================================
@@ -789,10 +716,10 @@ X, Y = np.meshgrid(np.linspace(extent[0], extent[1], N),
                    np.linspace(extent[2], extent[3], N))
 
 # =============================================
-# ATTENTION INTERPOLATOR INTERFACE WITH NUMERICAL SOLUTIONS
+# ATTENTION INTERPOLATOR INTERFACE
 # =============================================
 def create_attention_interface():
-    """Create the attention interpolation interface with numerical solutions directory"""
+    """Create the attention interpolation interface"""
     
     st.header("🤖 Spatial-Attention Stress Interpolation")
     
@@ -805,7 +732,6 @@ def create_attention_interface():
         )
         st.session_state.source_simulations = []
         st.session_state.uploaded_files = {}
-        st.session_state.local_files_cache = {}
     
     # Sidebar configuration
     st.sidebar.header("🔮 Attention Interpolator Settings")
@@ -826,9 +752,8 @@ def create_attention_interface():
             st.success("Model parameters updated!")
     
     # Main interface tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📤 Upload Source Data", 
-        "📁 Numerical Solutions",
         "🎯 Configure Target", 
         "🚀 Train & Predict", 
         "📊 Results & Export"
@@ -843,7 +768,7 @@ def create_attention_interface():
         with col1:
             uploaded_files = st.file_uploader(
                 "Upload simulation files (PKL, PT, H5, NPZ, SQL, JSON)",
-                type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json', 'csv', 'npy', 'mat'],
+                type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json'],
                 accept_multiple_files=True,
                 help="Upload precomputed simulation files for interpolation basis"
             )
@@ -851,7 +776,7 @@ def create_attention_interface():
         with col2:
             format_type = st.selectbox(
                 "File Format",
-                ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON", "CSV", "NPY", "MAT"],
+                ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON"],
                 index=0
             )
             
@@ -862,13 +787,8 @@ def create_attention_interface():
                         for uploaded_file in uploaded_files:
                             try:
                                 # Read file
-                                file_content = uploaded_file.getvalue()
-                                temp_path = os.path.join(tempfile.gettempdir(), uploaded_file.name)
-                                with open(temp_path, 'wb') as f:
-                                    f.write(file_content)
-                                
                                 sim_data = st.session_state.interpolator.read_simulation_file(
-                                    temp_path, 
+                                    uploaded_file, 
                                     format_type.lower() if format_type != "Auto Detect" else "auto"
                                 )
                                 
@@ -883,9 +803,6 @@ def create_attention_interface():
                                 # Add to source simulations
                                 st.session_state.source_simulations.append(sim_data)
                                 loaded_sims.append(uploaded_file.name)
-                                
-                                # Clean up temp file
-                                os.remove(temp_path)
                                 
                             except Exception as e:
                                 st.error(f"Error loading {uploaded_file.name}: {str(e)}")
@@ -974,170 +891,6 @@ def create_attention_interface():
                 st.rerun()
     
     with tab2:
-        st.subheader("📁 Numerical Solutions Directory")
-        st.info(f"**Directory:** `{SOLUTION_DIR}`")
-        
-        # Check if directory exists
-        if not os.path.exists(SOLUTION_DIR):
-            st.warning(f"Directory not found: {SOLUTION_DIR}")
-            if st.button("Create Directory"):
-                os.makedirs(SOLUTION_DIR, exist_ok=True)
-                st.success(f"Created directory: {SOLUTION_DIR}")
-                st.rerun()
-        else:
-            # List files in directory
-            file_patterns = ['*.pkl', '*.pt', '*.h5', '*.hdf5', '*.npz', '*.sql', '*.db', '*.json', '*.csv', '*.npy', '*.mat']
-            all_files = []
-            for pattern in file_patterns:
-                all_files.extend(glob.glob(os.path.join(SOLUTION_DIR, pattern)))
-            
-            all_files = sorted(all_files, key=lambda x: os.path.getmtime(x), reverse=True)
-            
-            if all_files:
-                st.success(f"Found {len(all_files)} simulation files")
-                
-                # File selection
-                file_options = {os.path.basename(f): f for f in all_files}
-                
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    selected_files = st.multiselect(
-                        "Select files from numerical_solutions directory",
-                        options=list(file_options.keys()),
-                        help="Hold Ctrl/Cmd to select multiple files"
-                    )
-                
-                with col2:
-                    st.write("")  # Spacing
-                    st.write("")  # Spacing
-                    load_numerical = st.button("📂 Load Selected Files", type="primary")
-                
-                if selected_files and load_numerical:
-                    with st.spinner(f"Loading {len(selected_files)} files..."):
-                        loaded_count = 0
-                        for filename in selected_files:
-                            try:
-                                file_path = file_options[filename]
-                                
-                                # Check if already loaded
-                                file_key = f"numerical_{file_path}"
-                                if file_key in st.session_state.local_files_cache:
-                                    sim_data = st.session_state.local_files_cache[file_key]
-                                else:
-                                    # Read file
-                                    sim_data = st.session_state.interpolator.read_simulation_file(
-                                        file_path, 
-                                        "auto"
-                                    )
-                                    st.session_state.local_files_cache[file_key] = sim_data
-                                
-                                # Add to source simulations
-                                st.session_state.source_simulations.append(sim_data)
-                                loaded_count += 1
-                                
-                            except Exception as e:
-                                st.error(f"Error loading {filename}: {str(e)}")
-                        
-                        if loaded_count > 0:
-                            st.success(f"Successfully loaded {loaded_count} files from numerical_solutions!")
-                            st.rerun()
-                
-                # File management section
-                st.subheader("🗃️ File Management")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if st.button("🔄 Refresh File List"):
-                        st.rerun()
-                
-                with col2:
-                    # Upload to numerical_solutions
-                    st.write("Upload to directory:")
-                    upload_file = st.file_uploader(
-                        "Upload file to numerical_solutions",
-                        type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json', 'csv', 'npy', 'mat'],
-                        key="upload_to_numerical"
-                    )
-                    
-                    if upload_file and st.button("💾 Save to Directory"):
-                        save_path = os.path.join(SOLUTION_DIR, upload_file.name)
-                        with open(save_path, 'wb') as f:
-                            f.write(upload_file.getvalue())
-                        st.success(f"Saved {upload_file.name} to numerical_solutions!")
-                        st.rerun()
-                
-                with col3:
-                    # Create sample files if directory is empty
-                    if len(all_files) == 0:
-                        st.info("Directory is empty")
-                        if st.button("📝 Create Sample Files"):
-                            create_sample_simulations()
-                            st.success("Created sample simulation files!")
-                            st.rerun()
-                
-                # Display file details
-                st.subheader("📋 File Details")
-                
-                file_details = []
-                for file_path in all_files[:20]:  # Show first 20 files
-                    stat = os.stat(file_path)
-                    file_details.append({
-                        'Filename': os.path.basename(file_path),
-                        'Size (KB)': f"{stat.st_size / 1024:.1f}",
-                        'Modified': datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M'),
-                        'Type': os.path.splitext(file_path)[1][1:].upper()
-                    })
-                
-                if file_details:
-                    df_files = pd.DataFrame(file_details)
-                    st.dataframe(df_files, use_container_width=True)
-                
-                # Quick load by file type
-                st.subheader("⚡ Quick Load by File Type")
-                
-                file_types = {}
-                for file_path in all_files:
-                    ext = os.path.splitext(file_path)[1].lower()
-                    if ext not in file_types:
-                        file_types[ext] = []
-                    file_types[ext].append(file_path)
-                
-                if file_types:
-                    col1, col2, col3 = st.columns(3)
-                    type_cols = [col1, col2, col3]
-                    
-                    for i, (ext, files) in enumerate(list(file_types.items())[:3]):
-                        with type_cols[i]:
-                            if st.button(f"📚 Load all {ext.upper()} files ({len(files)})"):
-                                with st.spinner(f"Loading {len(files)} {ext.upper()} files..."):
-                                    for file_path in files:
-                                        try:
-                                            file_key = f"numerical_{file_path}"
-                                            if file_key not in st.session_state.local_files_cache:
-                                                sim_data = st.session_state.interpolator.read_simulation_file(
-                                                    file_path, "auto"
-                                                )
-                                                st.session_state.local_files_cache[file_key] = sim_data
-                                            
-                                            st.session_state.source_simulations.append(
-                                                st.session_state.local_files_cache[file_key]
-                                            )
-                                        except Exception as e:
-                                            st.error(f"Error loading {os.path.basename(file_path)}: {str(e)}")
-                                    
-                                    st.success(f"Loaded {len(files)} {ext.upper()} files!")
-                                    st.rerun()
-            else:
-                st.info("No simulation files found in numerical_solutions directory")
-                
-                # Create sample files
-                if st.button("📝 Create Sample Simulation Files", type="primary"):
-                    create_sample_simulations()
-                    st.success("Created sample simulation files!")
-                    st.rerun()
-    
-    with tab3:
         st.subheader("Configure Target Parameters")
         
         if len(st.session_state.source_simulations) < 2:
@@ -1238,7 +991,7 @@ def create_attention_interface():
                 axis=1
             ), use_container_width=True)
     
-    with tab4:
+    with tab3:
         st.subheader("Train Model and Predict")
         
         if len(st.session_state.source_simulations) < 2:
@@ -1304,7 +1057,7 @@ def create_attention_interface():
             ax.set_yscale('log')
             st.pyplot(fig)
     
-    with tab5:
+    with tab4:
         st.subheader("Prediction Results")
         
         if 'prediction_results' not in st.session_state:
@@ -1395,7 +1148,7 @@ def create_attention_interface():
             # Export options
             st.subheader("📥 Export Results")
             
-            export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+            export_col1, export_col2, export_col3 = st.columns(3)
             
             with export_col1:
                 if st.button("💾 Save as PKL", type="secondary"):
@@ -1520,117 +1273,6 @@ def create_attention_interface():
                         file_name=filename,
                         mime="text/plain"
                     )
-            
-            with export_col4:
-                if st.button("📁 Save to Numerical Solutions", type="secondary"):
-                    # Save prediction to numerical_solutions directory
-                    filename = f"prediction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-                    filepath = os.path.join(SOLUTION_DIR, filename)
-                    
-                    export_data = {
-                        'prediction_results': results,
-                        'source_simulations_count': len(st.session_state.source_simulations),
-                        'target_params': st.session_state.target_params,
-                        'interpolator_config': {
-                            'num_heads': st.session_state.interpolator.num_heads,
-                            'sigma_spatial': st.session_state.interpolator.sigma_spatial,
-                            'sigma_param': st.session_state.interpolator.sigma_param
-                        },
-                        'export_timestamp': datetime.now().isoformat()
-                    }
-                    
-                    with open(filepath, 'wb') as f:
-                        pickle.dump(export_data, f)
-                    
-                    st.success(f"✅ Prediction saved to: {filepath}")
-
-def create_sample_simulations():
-    """Create sample simulation files in the numerical_solutions directory"""
-    
-    # Create sample data structure
-    sample_data = []
-    
-    # Sample defect configurations
-    defect_configs = [
-        {'defect_type': 'ISF', 'eps0': 0.707, 'kappa': 0.6, 'shape': 'Square', 'orientation': 'Horizontal {111} (0°)'},
-        {'defect_type': 'ESF', 'eps0': 1.414, 'kappa': 0.7, 'shape': 'Rectangle', 'orientation': 'Tilted 30° (1¯10 projection)'},
-        {'defect_type': 'Twin', 'eps0': 2.121, 'kappa': 0.3, 'shape': 'Ellipse', 'orientation': 'Vertical {111} (90°)'},
-        {'defect_type': 'ISF', 'eps0': 0.850, 'kappa': 0.5, 'shape': 'Horizontal Fault', 'orientation': 'Tilted 60°'},
-        {'defect_type': 'ESF', 'eps0': 1.200, 'kappa': 0.8, 'shape': 'Vertical Fault', 'orientation': 'Horizontal {111} (0°)'}
-    ]
-    
-    for i, config in enumerate(defect_configs):
-        # Create sample stress fields (simplified for demo)
-        np.random.seed(42 + i)
-        
-        # Create random stress field
-        stress_field = np.random.randn(N, N) * 2.0
-        stress_field = gaussian_filter(stress_field, sigma=2)
-        
-        # Create sample data
-        sample_sim = {
-            'params': config,
-            'history': [
-                {
-                    'eta': np.random.rand(N, N) * 0.5 + 0.3,
-                    'stresses': {
-                        'sigma_hydro': stress_field,
-                        'sigma_mag': np.abs(stress_field) * 1.5,
-                        'von_mises': stress_field * 1.2
-                    }
-                }
-            ],
-            'metadata': {
-                'created_at': datetime.now().isoformat(),
-                'grid_size': N,
-                'dx': dx,
-                'frames': 1,
-                'run_time': 1.23
-            }
-        }
-        
-        # Save in different formats
-        base_name = f"{config['defect_type']}_orient{config['orientation'][:2].replace(' ', '')}_{config['shape']}_eps0-{config['eps0']}_kappa-{config['kappa']}"
-        
-        # PKL format
-        pkl_path = os.path.join(SOLUTION_DIR, f"{base_name}.pkl")
-        with open(pkl_path, 'wb') as f:
-            pickle.dump(sample_sim, f)
-        
-        # PT format
-        pt_path = os.path.join(SOLUTION_DIR, f"{base_name}.pt")
-        torch_data = {
-            'params': config,
-            'metadata': sample_sim['metadata'],
-            'history': [
-                {
-                    'eta': torch.FloatTensor(sample_sim['history'][0]['eta']),
-                    'stresses': {k: torch.FloatTensor(v) for k, v in sample_sim['history'][0]['stresses'].items()}
-                }
-            ]
-        }
-        torch.save(torch_data, pt_path)
-        
-        # NPZ format
-        npz_path = os.path.join(SOLUTION_DIR, f"{base_name}.npz")
-        np.savez_compressed(
-            npz_path,
-            params=config,
-            eta=sample_sim['history'][0]['eta'],
-            stresses=sample_sim['history'][0]['stresses']
-        )
-        
-        # JSON format
-        json_path = os.path.join(SOLUTION_DIR, f"{base_name}.json")
-        with open(json_path, 'w') as f:
-            json.dump({
-                'params': config,
-                'metadata': sample_sim['metadata'],
-                'data_info': {
-                    'eta_shape': sample_sim['history'][0]['eta'].shape,
-                    'stresses_keys': list(sample_sim['history'][0]['stresses'].keys())
-                }
-            }, f, indent=2)
 
 # =============================================
 # MAIN APPLICATION
@@ -1661,74 +1303,209 @@ def main():
         st.header("Original Simulation Interface")
         st.write("This interface is available but separate from attention interpolation.")
         
+        # You would integrate the original simulation code here
+        # For brevity, I'm showing a simplified version
+        
         if operation_mode == "Run New Simulation":
             st.subheader("Run New Simulation")
-            
+            # Original simulation code would go here
+        
         elif operation_mode == "Compare Saved Simulations":
             st.subheader("Compare Saved Simulations")
-            
+            # Original comparison code would go here
+        
         elif operation_mode == "Single Simulation View":
             st.subheader("Single Simulation View")
+            # Original single view code would go here
 
 # =============================================
 # THEORETICAL ANALYSIS
 # =============================================
 with st.expander("🔬 Theoretical Analysis: Spatial-Attention Interpolation", expanded=False):
     st.markdown("""
-    ## 🎯 **Spatial Locality Regularized Attention Interpolation with Numerical Solutions**
+    ## 🎯 **Spatial Locality Regularized Attention Interpolation**
     
-    ### **📁 Numerical Solutions Directory Integration**
+    ### **🧠 Core Concept**
     
-    The system now includes seamless integration with the `numerical_solutions` directory:
+    The spatial locality regularization attention interpolator combines:
     
-    **Directory Structure:**
+    1. **Multi-head Attention Mechanism**: Learns complex relationships between simulation parameters
+    2. **Spatial Gaussian Regularization**: Enforces locality in parameter space
+    3. **Physics-informed Encoding**: Preserves material science domain knowledge
+    
+    ### **📐 Mathematical Formulation**
+    
+    #### **Parameter Encoding**:
+    \[
+    \mathbf{p}_i = \text{Encode}(\text{defect}_i, \text{shape}_i, \epsilon^*_i, \kappa_i, \theta_i)
+    \]
+    
+    #### **Attention with Spatial Regularization**:
+    \[
+    \text{Attention}(Q,K,V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}} + \mathbf{B}_{\text{spatial}}\right)V
+    \]
+    
+    #### **Spatial Bias**:
+    \[
+    \mathbf{B}_{\text{spatial}} = -\frac{\|\mathbf{p}_i - \mathbf{p}_j\|^2}{2\sigma^2}
+    \]
+    
+    ### **⚙️ Key Features**
+    
+    #### **1. Multi-format Support**:
+    - **PKL**: Python pickle format (from your export)
+    - **PT**: PyTorch tensor format
+    - **H5**: Hierarchical data format
+    - **NPZ**: Compressed numpy arrays
+    - **SQL**: Database dumps
+    - **JSON**: Standardized metadata
+    
+    #### **2. Spatial Regularization**:
+    - **Parameter Space Locality**: Similar parameters get higher attention weights
+    - **Gaussian Kernel**: Smooth attention distribution
+    - **Adaptive Sigma**: User-controllable locality parameters
+    
+    #### **3. Physics-aware Encoding**:
+    - **Defect Types**: ISF, ESF, Twin with one-hot encoding
+    - **Geometric Features**: Shape encoding with categorical variables
+    - **Material Parameters**: Normalized ε* and κ
+    - **Crystallography**: Orientation encoding for habit planes
+    
+    ### **🔬 Scientific Workflow**
+    
+    1. **Data Collection**:
+       - Run multiple phase field simulations
+       - Export results in supported formats
+       - Upload to the attention interpolator
+    
+    2. **Model Training**:
+       - Train attention model on source simulations
+       - Validate with leave-one-out cross-validation
+       - Monitor convergence with loss curves
+    
+    3. **Prediction**:
+       - Specify target defect parameters
+       - Generate stress fields via attention-weighted interpolation
+       - Visualize attention weights for interpretability
+    
+    4. **Analysis**:
+       - Compare predicted vs. simulated stresses
+       - Analyze attention patterns
+       - Export results for publication
+    
+    ### **📊 Performance Metrics**
+    
+    #### **Interpretability**:
+    - **Attention Weights**: Show which source simulations contribute most
+    - **Spatial Patterns**: Visualize how parameter similarity affects interpolation
+    - **Uncertainty Estimation**: Attention variance indicates prediction confidence
+    
+    #### **Accuracy**:
+    - **Leave-One-Out Error**: Predict held-out simulations
+    - **Parameter Space Coverage**: Interpolate in unexplored regions
+    - **Physical Consistency**: Stress fields obey material symmetry
+    
+    ### **🚀 Applications**
+    
+    #### **Materials Design**:
+    - **Rapid Screening**: Predict stress for thousands of defect configurations
+    - **Parameter Optimization**: Find defect parameters minimizing stress
+    - **Design Space Exploration**: Map stress landscapes in parameter space
+    
+    #### **Experimental Validation**:
+    - **TEM/HRTEM Comparison**: Compare predictions with experimental observations
+    - **Stress Concentration**: Identify potential failure sites
+    - **Defect Interaction**: Study how defects influence each other's stress fields
+    
+    #### **Educational Tool**:
+    - **Interactive Learning**: Visualize how parameters affect stress
+    - **What-If Analysis**: Explore hypothetical defect configurations
+    - **Physical Insight**: Understand defect-stress relationships
+    
+    ### **🔧 Technical Implementation**
+    
+    #### **Architecture**:
     ```
-    your_project/
-    ├── main_script.py
-    └── numerical_solutions/
-        ├── ISF_orient0deg_Square_eps0-0.707_kappa-0.6.pkl
-        ├── ESF_orient30deg_Rectangle_eps0-1.414_kappa-0.7.pt
-        ├── Twin_orient90deg_Ellipse_eps0-2.121_kappa-0.3.npz
-        └── prediction_20241215_143022.pkl
+    Input Parameters → Parameter Encoding → Multi-head Attention
+                                        ↓
+    Spatial Regularization → Weighted Combination → Stress Prediction
     ```
     
-    **Key Features:**
-    1. **Auto-discovery**: Automatically finds simulation files in the directory
-    2. **Multi-format support**: Reads PKL, PT, NPZ, JSON, CSV, H5, MAT formats
-    3. **File management**: Upload, organize, and manage simulation files
-    4. **Caching**: Intelligent caching for fast reloading
-    5. **Sample generation**: Create sample simulations for testing
+    #### **Regularization Strategies**:
+    1. **Spatial Gaussian**: Penalizes attention to distant parameters
+    2. **Weight Decay**: Prevents overfitting to training data
+    3. **Dropout**: Improves generalization to new parameters
     
-    **Workflow Integration:**
-    1. **Store**: Save simulation results to `numerical_solutions/`
-    2. **Load**: Select files from dropdown for attention interpolation
-    3. **Predict**: Generate new predictions using stored simulations
-    4. **Export**: Save predictions back to the directory
+    #### **Optimization**:
+    - **Adam Optimizer**: Adaptive learning rates
+    - **MSE Loss**: Mean squared error for stress fields
+    - **Early Stopping**: Prevents overfitting
     
-    **Advanced capabilities for efficient scientific workflow management!**
+    ### **📈 Advantages Over Traditional Methods**
+    
+    #### **Traditional FEM/PINN**:
+    - **High Computational Cost**: Hours to days per simulation
+    - **Fixed Parameters**: Each simulation requires re-meshing
+    - **Limited Exploration**: Parameter space sampling is expensive
+    
+    #### **Our Attention Method**:
+    - **Real-time Prediction**: Seconds for new configurations
+    - **Continuous Parameter Space**: Smooth interpolation between training points
+    - **Interpretable Weights**: Understand which training data matters
+    - **Physics Integration**: Built on material science principles
+    
+    ### **🔬 Validation Strategy**
+    
+    1. **Internal Validation**:
+       - Leave-one-out cross-validation on training data
+       - Compare attention predictions with actual simulations
+       - Analyze interpolation errors in parameter space
+    
+    2. **External Validation**:
+       - Compare with independent FEM simulations
+       - Validate against experimental stress measurements
+       - Benchmark against other ML methods
+    
+    3. **Physical Validation**:
+       - Check stress symmetry properties
+       - Verify stress concentration locations
+       - Validate material property relationships
+    
+    ### **🎯 Future Directions**
+    
+    #### **Model Improvements**:
+    - **Graph Attention Networks**: Capture defect neighborhood relationships
+    - **Transformer Encoders**: Better parameter relationship modeling
+    - **Uncertainty Quantification**: Bayesian attention for confidence intervals
+    
+    #### **Application Extensions**:
+    - **3D Defects**: Extend to three-dimensional stress analysis
+    - **Multi-material Systems**: Include different material combinations
+    - **Dynamic Evolution**: Predict stress evolution over time
+    
+    #### **Integration Features**:
+    - **API Access**: Programmatic access for automated workflows
+    - **Cloud Deployment**: Scale to thousands of simulations
+    - **Real-time Feedback**: Interactive parameter adjustment
+    
+    **Advanced spatial-attention interpolation platform for defect stress prediction!**
     """)
     
-    # Display directory statistics
-    if os.path.exists(SOLUTION_DIR):
-        file_patterns = ['*.pkl', '*.pt', '*.h5', '*.hdf5', '*.npz', '*.sql', '*.db', '*.json', '*.csv', '*.npy', '*.mat']
-        all_files = []
-        for pattern in file_patterns:
-            all_files.extend(glob.glob(os.path.join(SOLUTION_DIR, pattern)))
-        
-        total_size = sum(os.path.getsize(f) for f in all_files)
-        
+    # Display statistics if available
+    if 'interpolator' in st.session_state:
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Files", len(all_files))
+            st.metric("Model Heads", st.session_state.interpolator.num_heads)
         with col2:
-            st.metric("Total Size", f"{total_size / (1024*1024):.1f} MB")
+            st.metric("σ Spatial", st.session_state.interpolator.sigma_spatial)
         with col3:
-            st.metric("Directory", os.path.basename(SOLUTION_DIR))
+            st.metric("σ Parameter", st.session_state.interpolator.sigma_param)
         with col4:
-            st.metric("Path", "..." + SOLUTION_DIR[-30:])
+            source_count = len(st.session_state.get('source_simulations', []))
+            st.metric("Source Sims", source_count)
 
 # Run the main application
 if __name__ == "__main__":
     main()
 
-st.caption("🔬 Spatial-Attention Stress Interpolation • Numerical Solutions Directory • 2025")
+st.caption("🔬 Spatial-Attention Stress Interpolation • Multi-format Support • 2025")
