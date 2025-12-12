@@ -142,6 +142,12 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation2-streamlit-red)](https://mechanicalstress-attentioninterpolator2.streamlit.app/) (Training data accessible for the model )
 
+# Prediction of Stress for a Multiple Targets (Queries)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation3-streamlit-red)](https://mechanicalstress-attentioninterpolator3.streamlit.app/) (Training data accessible for the model )
+
+
+
 
 
 
