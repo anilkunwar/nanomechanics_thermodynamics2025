@@ -137,6 +137,13 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/datageneration3-streamlit-red)](https://nanomaterials-data-generator3.streamlit.app/) (Robust, data_of_attributes1 )
 
+# Prediction of Stress for a Single Target (Query)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation1-streamlit-red)](https://mechanicalstress-attentioninterpolator1.streamlit.app/) (Manual upload of training / source or key data)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation2-streamlit-red)](https://mechanicalstress-attentioninterpolator2.streamlit.app/) (Training data accessible for the model )
+
+
+
 
 # Sintering Temperature and Diffusion Mechanism
 
