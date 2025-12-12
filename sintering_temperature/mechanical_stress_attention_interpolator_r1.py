@@ -39,36 +39,37 @@ class NumericalSolutionsScanner:
     """Scan and load simulation files from numerical_solutions directory"""
     
     def __init__(self, base_dir=None):
-    """
-    Args:
-        base_dir: Base directory containing numerical solutions (overrides environment variable)
-    """
-    # Read SIM_DIR environment variable or fallback
-    env_dir = os.getenv('SIM_DIR', 'numerical_solutions')
+        """
+        Args:
+            base_dir: Base directory containing numerical solutions (overrides environment variable)
+        """
+        # Read SIM_DIR environment variable or fallback
+        env_dir = os.getenv('SIM_DIR', 'numerical_solutions')
 
-    # Choose base_dir → priority: provided > ENV > default
-    self.base_dir = Path(base_dir or env_dir)
+        # Choose base_dir → priority: provided > ENV > default
+        self.base_dir = Path(base_dir or env_dir)
 
-    # 🔥 Automatically create folder if missing
-    if not self.base_dir.exists():
-        try:
-            self.base_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            raise RuntimeError(f"❌ Unable to create directory {self.base_dir}: {e}")
+        # 🔥 Automatically create folder if missing
+        if not self.base_dir.exists():
+            try:
+                self.base_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                raise RuntimeError(f"❌ Unable to create directory {self.base_dir}: {e}")
 
-    self.supported_formats = {
-        '.pkl': self._read_pkl_file,
-        '.pt': self._read_pt_file,
-        '.h5': self._read_h5_file,
-        '.hdf5': self._read_h5_file,
-        '.npz': self._read_npz_file,
-        '.json': self._read_json_file,
-        '.npy': self._read_npy_file
-    }
+        self.supported_formats = {
+            '.pkl': self._read_pkl_file,
+            '.pt': self._read_pt_file,
+            '.h5': self._read_h5_file,
+            '.hdf5': self._read_h5_file,
+            '.npz': self._read_npz_file,
+            '.json': self._read_json_file,
+            '.npy': self._read_npy_file
+        }
 
-    # Cache for loaded simulations
-    self._cache = {}
-    self._metadata_cache = {}
+        # Cache for loaded simulations
+        self._cache = {}
+        self._metadata_cache = {}
+
 
     
     def scan_directory(self, recursive=True):
