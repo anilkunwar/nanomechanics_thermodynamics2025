@@ -262,7 +262,7 @@ class SpatialLocalityAttentionInterpolator:
         param_vector.append(theta_norm)
         param_names.append('theta_norm')
         
-        # 4. Orientation encoding
+        # 4. Orientation encoding - handle custom angles
         orientation = params.get('orientation', 'Horizontal {111} (0°)')
         orientation_encoding = {
             'Horizontal {111} (0°)': [1, 0, 0, 0],
@@ -270,83 +270,34 @@ class SpatialLocalityAttentionInterpolator:
             'Tilted 60°': [0, 0, 1, 0],
             'Vertical {111} (90°)': [0, 0, 0, 1]
         }
-        param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
+        
+        # Check if orientation is a custom angle string like "Custom (15°)"
+        if orientation.startswith('Custom ('):
+            # For custom angles, we don't use one-hot encoding
+            # Instead we rely on theta_norm for the angle information
+            param_vector.extend([0, 0, 0, 0])  # All zeros for custom
+        else:
+            param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
+            
         param_names.extend(['orient_0deg', 'orient_30deg', 'orient_60deg', 'orient_90deg'])
         
         return np.array(param_vector, dtype=np.float32), param_names
     
-    def generate_target_parameter_grid(self, base_params, param_ranges=None):
-        """
-        Generate a grid of target parameters for multiple predictions
-        
-        Args:
-            base_params: Dictionary with base parameters
-            param_ranges: Dictionary with ranges for parameters to vary
-                Example: {'eps0': (0.5, 2.0, 5), 'kappa': (0.2, 1.0, 4)}
-        
-        Returns:
-            List of parameter dictionaries
-        """
-        if param_ranges is None:
-            return [base_params]
-        
-        # Create parameter variations
-        param_combinations = []
-        
-        # Generate ranges for each parameter
-        param_values = {}
-        for param_name, range_spec in param_ranges.items():
-            if isinstance(range_spec, (list, tuple)):
-                if len(range_spec) == 2:
-                    # Start, end
-                    start, end = range_spec
-                    num_points = 10  # default
-                elif len(range_spec) == 3:
-                    # Start, end, num_points
-                    start, end, num_points = range_spec
-                else:
-                    # Custom values
-                    param_values[param_name] = list(range_spec)
-                    continue
-                
-                # Generate linear range
-                if param_name in ['eps0', 'kappa']:
-                    param_values[param_name] = np.linspace(start, end, num_points).tolist()
-                elif param_name == 'theta':
-                    # For angles, handle wrap-around
-                    param_values[param_name] = np.linspace(start, end, num_points).tolist()
-            else:
-                # Single value
-                param_values[param_name] = [range_spec]
-        
-        # If no variations specified, return single target
-        if not param_values:
-            return [base_params]
-        
-        # Generate all combinations
-        param_names = list(param_values.keys())
-        value_arrays = [param_values[name] for name in param_names]
-        
-        for combination in product(*value_arrays):
-            param_dict = base_params.copy()
-            for name, value in zip(param_names, combination):
-                param_dict[name] = value
-            
-            # Update orientation if theta changed
-            if 'theta' in param_names:
-                angle = np.rad2deg(param_dict['theta'])
-                if 0 <= angle <= 15:
-                    param_dict['orientation'] = 'Horizontal {111} (0°)'
-                elif 15 < angle <= 45:
-                    param_dict['orientation'] = 'Tilted 30° (1¯10 projection)'
-                elif 45 < angle <= 75:
-                    param_dict['orientation'] = 'Tilted 60°'
-                else:
-                    param_dict['orientation'] = 'Vertical {111} (90°)'
-            
-            param_combinations.append(param_dict)
-        
-        return param_combinations
+    @staticmethod
+    def get_orientation_from_angle(angle_deg: float) -> str:
+        """Convert angle in degrees to orientation string with custom support"""
+        if 0 <= angle_deg <= 15:
+            return 'Horizontal {111} (0°)'
+        elif 15 < angle_deg <= 45:
+            return 'Tilted 30° (1¯10 projection)'
+        elif 45 < angle_deg <= 75:
+            return 'Tilted 60°'
+        elif 75 < angle_deg <= 90:
+            return 'Vertical {111} (90°)'
+        else:
+            # Handle angles outside 0-90 by wrapping
+            angle_deg = angle_deg % 90
+            return f"Custom ({angle_deg:.1f}°)"
 
 # =============================================
 # NUMERICAL SOLUTIONS MANAGER
@@ -605,6 +556,13 @@ class MultiTargetPredictionManager:
         return predictions
 
 # =============================================
+# GRID AND EXTENT CONFIGURATION
+# =============================================
+def get_grid_extent(N=128, dx=0.1):
+    """Get grid extent for visualization"""
+    return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+
+# =============================================
 # ATTENTION INTERPOLATOR INTERFACE WITH MULTI-TARGET SUPPORT
 # =============================================
 def create_attention_interface():
@@ -639,6 +597,9 @@ def create_attention_interface():
         st.session_state.multi_target_predictions = {}
         st.session_state.multi_target_params = []
     
+    # Get grid extent for visualization
+    extent = get_grid_extent()
+    
     # Sidebar configuration
     st.sidebar.header("🔮 Attention Interpolator Settings")
     
@@ -668,7 +629,6 @@ def create_attention_interface():
     ])
     
     with tab1:
-        # ... (same as original, no changes needed for tab1)
         st.subheader("Load Source Simulation Files")
         
         # Two-column layout for different loading methods
@@ -793,7 +753,7 @@ def create_attention_interface():
                     if loaded_sims:
                         st.success(f"Successfully loaded {len(loaded_sims)} uploaded files!")
         
-        # Display loaded simulations (same as original)
+        # Display loaded simulations
         if st.session_state.source_simulations:
             st.subheader("📋 Loaded Source Simulations")
             
@@ -867,25 +827,46 @@ def create_attention_interface():
                     key="target_kappa_single"
                 )
                 
-                target_orientation = st.selectbox(
-                    "Target Orientation",
-                    ["Horizontal {111} (0°)", 
-                     "Tilted 30° (1¯10 projection)", 
-                     "Tilted 60°", 
-                     "Vertical {111} (90°)"],
-                    index=0,
-                    key="target_orientation_single"
+                # Orientation selection with custom angle support
+                orientation_mode = st.radio(
+                    "Orientation Mode",
+                    ["Predefined", "Custom Angle"],
+                    horizontal=True,
+                    key="orientation_mode_single"
                 )
                 
-                angle_map = {
-                    "Horizontal {111} (0°)": 0,
-                    "Tilted 30° (1¯10 projection)": 30,
-                    "Tilted 60°": 60,
-                    "Vertical {111} (90°)": 90,
-                }
-                target_theta = np.deg2rad(angle_map.get(target_orientation, 0))
-                
-                st.info(f"**Target θ:** {np.rad2deg(target_theta):.1f}°")
+                if orientation_mode == "Predefined":
+                    target_orientation = st.selectbox(
+                        "Target Orientation",
+                        ["Horizontal {111} (0°)", 
+                         "Tilted 30° (1¯10 projection)", 
+                         "Tilted 60°", 
+                         "Vertical {111} (90°)"],
+                        index=0,
+                        key="target_orientation_single"
+                    )
+                    
+                    angle_map = {
+                        "Horizontal {111} (0°)": 0,
+                        "Tilted 30° (1¯10 projection)": 30,
+                        "Tilted 60°": 60,
+                        "Vertical {111} (90°)": 90,
+                    }
+                    target_theta = np.deg2rad(angle_map.get(target_orientation, 0))
+                    st.info(f"**Target θ:** {np.rad2deg(target_theta):.1f}°")
+                    
+                else:  # Custom Angle
+                    target_angle = st.slider(
+                        "Target Angle (degrees)",
+                        0.0, 90.0, 0.0, 0.5,
+                        key="target_angle_custom_single"
+                    )
+                    target_theta = np.deg2rad(target_angle)
+                    
+                    # Map to orientation string
+                    target_orientation = st.session_state.interpolator.get_orientation_from_angle(target_angle)
+                    st.info(f"**Target θ:** {target_angle:.1f}°")
+                    st.info(f"**Orientation:** {target_orientation}")
             
             # Store target parameters
             target_params = {
@@ -957,23 +938,43 @@ def create_attention_interface():
                 )
             
             with col2:
-                base_orientation = st.selectbox(
-                    "Base Orientation",
-                    ["Horizontal {111} (0°)", 
-                     "Tilted 30° (1¯10 projection)", 
-                     "Tilted 60°", 
-                     "Vertical {111} (90°)"],
-                    index=0,
-                    key="base_orientation_multi"
+                orientation_mode = st.radio(
+                    "Orientation Mode",
+                    ["Predefined", "Custom Angles"],
+                    horizontal=True,
+                    key="orientation_mode_multi"
                 )
                 
-                angle_map = {
-                    "Horizontal {111} (0°)": 0,
-                    "Tilted 30° (1¯10 projection)": 30,
-                    "Tilted 60°": 60,
-                    "Vertical {111} (90°)": 90,
-                }
-                base_theta = np.deg2rad(angle_map.get(base_orientation, 0))
+                if orientation_mode == "Predefined":
+                    base_orientation = st.selectbox(
+                        "Base Orientation",
+                        ["Horizontal {111} (0°)", 
+                         "Tilted 30° (1¯10 projection)", 
+                         "Tilted 60°", 
+                         "Vertical {111} (90°)"],
+                        index=0,
+                        key="base_orientation_multi"
+                    )
+                    
+                    angle_map = {
+                        "Horizontal {111} (0°)": 0,
+                        "Tilted 30° (1¯10 projection)": 30,
+                        "Tilted 60°": 60,
+                        "Vertical {111} (90°)": 90,
+                    }
+                    base_theta = np.deg2rad(angle_map.get(base_orientation, 0))
+                    st.info(f"**Base θ:** {np.rad2deg(base_theta):.1f}°")
+                    
+                else:  # Custom Angle
+                    base_angle = st.slider(
+                        "Base Angle (degrees)",
+                        0.0, 90.0, 0.0, 0.5,
+                        key="base_angle_custom_multi"
+                    )
+                    base_theta = np.deg2rad(base_angle)
+                    base_orientation = st.session_state.interpolator.get_orientation_from_angle(base_angle)
+                    st.info(f"**Base θ:** {base_angle:.1f}°")
+                    st.info(f"**Orientation:** {base_orientation}")
             
             base_params = {
                 'defect_type': base_defect,
@@ -1010,12 +1011,22 @@ def create_attention_interface():
             use_orientation_range = st.checkbox("Vary orientation", value=False, key="use_orientation_range")
             
             if use_orientation_range:
-                orientation_options = st.multiselect(
-                    "Select orientations to include",
-                    ["Horizontal {111} (0°)", "Tilted 30° (1¯10 projection)", "Tilted 60°", "Vertical {111} (90°)"],
-                    default=["Horizontal {111} (0°)", "Vertical {111} (90°)"],
-                    key="orientation_multi_select"
-                )
+                if orientation_mode == "Predefined":
+                    orientation_options = st.multiselect(
+                        "Select orientations to include",
+                        ["Horizontal {111} (0°)", "Tilted 30° (1¯10 projection)", "Tilted 60°", "Vertical {111} (90°)"],
+                        default=["Horizontal {111} (0°)", "Vertical {111} (90°)"],
+                        key="orientation_multi_select"
+                    )
+                else:
+                    # Custom angles range
+                    orientation_range_col1, orientation_range_col2, orientation_range_col3 = st.columns(3)
+                    with orientation_range_col1:
+                        angle_min = st.number_input("Min Angle (°)", 0.0, 90.0, 0.0, 1.0, key="angle_min")
+                    with orientation_range_col2:
+                        angle_max = st.number_input("Max Angle (°)", 0.0, 90.0, 90.0, 1.0, key="angle_max")
+                    with orientation_range_col3:
+                        angle_steps = st.number_input("Steps", 2, 20, 5, 1, key="angle_steps")
             
             # Generate parameter grid
             if st.button("🔄 Generate Parameter Grid", type="primary"):
@@ -1039,15 +1050,26 @@ def create_attention_interface():
                     }
                 
                 # Add orientation range if selected
-                if use_orientation_range and orientation_options:
-                    orientation_angles = []
-                    for orientation in orientation_options:
-                        angle = angle_map.get(orientation, 0)
-                        orientation_angles.append(np.deg2rad(angle))
-                    
-                    ranges_config['theta'] = {
-                        'values': orientation_angles
-                    }
+                if use_orientation_range:
+                    if orientation_mode == "Predefined" and orientation_options:
+                        # Convert predefined orientations to angles
+                        angle_map_rev = {
+                            "Horizontal {111} (0°)": 0,
+                            "Tilted 30° (1¯10 projection)": 30,
+                            "Tilted 60°": 60,
+                            "Vertical {111} (90°)": 90,
+                        }
+                        orientation_angles = [angle_map_rev[orient] for orient in orientation_options]
+                        ranges_config['theta'] = {
+                            'values': [np.deg2rad(angle) for angle in orientation_angles]
+                        }
+                    else:
+                        # Custom angles range
+                        if angle_max > angle_min:
+                            angles = np.linspace(angle_min, angle_max, angle_steps)
+                            ranges_config['theta'] = {
+                                'values': [np.deg2rad(angle) for angle in angles]
+                            }
                 
                 # Generate parameter grid
                 param_grid = st.session_state.multi_target_manager.create_parameter_grid(
@@ -1057,14 +1079,7 @@ def create_attention_interface():
                 # Update orientation strings for each parameter set
                 for param_set in param_grid:
                     angle = np.rad2deg(param_set.get('theta', 0))
-                    if 0 <= angle <= 15:
-                        param_set['orientation'] = 'Horizontal {111} (0°)'
-                    elif 15 < angle <= 45:
-                        param_set['orientation'] = 'Tilted 30° (1¯10 projection)'
-                    elif 45 < angle <= 75:
-                        param_set['orientation'] = 'Tilted 60°'
-                    else:
-                        param_set['orientation'] = 'Vertical {111} (90°)'
+                    param_set['orientation'] = st.session_state.interpolator.get_orientation_from_angle(angle)
                 
                 st.session_state.multi_target_params = param_grid
                 
@@ -1080,8 +1095,8 @@ def create_attention_interface():
                         'ID': i+1,
                         'Defect': params.get('defect_type', 'Unknown'),
                         'Shape': params.get('shape', 'Unknown'),
-                        'ε*': params.get('eps0', 'Unknown'),
-                        'κ': params.get('kappa', 'Unknown'),
+                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
+                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
                         'Orientation': params.get('orientation', 'Unknown'),
                         'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
                     })
@@ -1089,27 +1104,6 @@ def create_attention_interface():
                 if grid_data:
                     df_grid = pd.DataFrame(grid_data)
                     st.dataframe(df_grid, use_container_width=True)
-                    
-                    # Calculate grid size
-                    eps0_count = len(ranges_config.get('eps0', {}).get('values', [])) if 'eps0' in ranges_config else 1
-                    if 'eps0' in ranges_config and 'steps' in ranges_config['eps0']:
-                        eps0_count = ranges_config['eps0']['steps']
-                    
-                    kappa_count = len(ranges_config.get('kappa', {}).get('values', [])) if 'kappa' in ranges_config else 1
-                    if 'kappa' in ranges_config and 'steps' in ranges_config['kappa']:
-                        kappa_count = ranges_config['kappa']['steps']
-                    
-                    orientation_count = len(ranges_config.get('theta', {}).get('values', [])) if 'theta' in ranges_config else 1
-                    
-                    total_combinations = eps0_count * kappa_count * orientation_count
-                    
-                    st.info(f"""
-                    **Grid Statistics:**
-                    - ε* range: {eps0_min} to {eps0_max} ({eps0_steps} steps)
-                    - κ range: {kappa_min} to {kappa_max} ({kappa_steps} steps)
-                    - Orientations: {orientation_count} selected
-                    - Total combinations: {total_combinations}
-                    """)
             
             # Show existing parameter grid if available
             if st.session_state.multi_target_params:
@@ -1121,8 +1115,8 @@ def create_attention_interface():
                         'ID': i+1,
                         'Defect': params.get('defect_type', 'Unknown'),
                         'Shape': params.get('shape', 'Unknown'),
-                        'ε*': params.get('eps0', 'Unknown'),
-                        'κ': params.get('kappa', 'Unknown'),
+                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
+                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
                         'Orientation': params.get('orientation', 'Unknown'),
                         'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
                     })
@@ -1739,113 +1733,122 @@ def main():
 # =============================================
 with st.expander("🔬 Theoretical Analysis: Multi-Target Spatial-Attention Interpolation", expanded=False):
     st.markdown(f"""
-    ## 🎯 **Multi-Target Spatial-Attention Interpolation**
+    ## 🎯 **Enhanced Multi-Target Spatial-Attention Interpolation**
     
-    ### **📊 Batch Prediction Capabilities**
+    ### **🔄 Custom Angle Support**
     
-    The enhanced system now supports **multiple target predictions** through:
+    **New Features:**
+    1. **Custom Angle Input:** Users can now specify any angle between 0° and 90°
+    2. **Flexible Orientation Handling:** 
+       - Predefined orientations (0°, 30°, 60°, 90°)
+       - Custom angles (e.g., 15°, 45°, 75°, or any value)
+    3. **Smart Mapping:** Custom angles are automatically mapped to nearest predefined orientation or labeled as "Custom (X°)"
     
-    **1. Parameter Grid Generation:**
+    **Orientation Encoding:**
     ```python
-    # Example: Generate ε* from 0.5 to 2.0 in 10 steps
-    param_grid = generate_parameter_grid(
-        base_params={{'defect_type': 'ISF', 'shape': 'Square'}},
-        ranges={{'eps0': (0.5, 2.0, 10)}}
-    )
+    # For predefined angles (0°, 30°, 60°, 90°):
+    Orientation → One-hot encoding [1, 0, 0, 0], [0, 1, 0, 0], etc.
+    
+    # For custom angles (e.g., 15°, 45°):
+    Orientation → [0, 0, 0, 0]  # All zeros
+    Angle information → Stored in theta_norm (continuous value)
     ```
     
-    **2. Batch Processing:**
-    - Process 10s-100s of targets simultaneously
-    - Parallelizable attention weight computation
-    - Efficient memory usage with batch operations
+    **Parameter Vector Structure:**
+    ```
+    [defect_ISF, defect_ESF, defect_Twin]    # 3 dimensions
+    [shape_square, shape_horiz, shape_vert, shape_rect, shape_ellipse]  # 5 dimensions
+    eps0_norm                                 # 1 dimension
+    kappa_norm                                # 1 dimension
+    theta_norm                                # 1 dimension (continuous angle)
+    [orient_0deg, orient_30deg, orient_60deg, orient_90deg]  # 4 dimensions
+    ```
     
-    **3. Trend Analysis:**
-    - Visualize stress trends across parameter variations
-    - Identify critical parameter combinations
-    - Export comprehensive comparison tables
+    ### **🎯 Single Target Configuration (Tab 2)**
     
-    ### **🎯 Parameter Range Specification**
+    **Enhanced Interface:**
+    1. **Mode Selection:** Predefined vs Custom Angle
+    2. **Custom Angle Slider:** 0° to 90° with 0.5° precision
+    3. **Real-time Feedback:** Shows orientation label and angle
     
-    **Supported Range Types:**
-    1. **Linear Range:** `(start, end, num_points)`
-    2. **Custom Values:** `[value1, value2, value3]`
-    3. **Grid Combinations:** Multiple parameter variations
+    **Example:**
+    - Select "Custom Angle" mode
+    - Set angle to 45°
+    - System displays: "Target θ: 45.0°" and "Orientation: Tilted 60°" (closest predefined)
+    - Or: "Custom (45.0°)" if outside predefined ranges
     
-    **Example Configurations:**
+    ### **🎯 Multiple Targets Configuration (Tab 3)**
+    
+    **Enhanced Range Specification:**
+    1. **Base Orientation:** Can be predefined or custom
+    2. **Orientation Ranges:**
+       - Predefined: Select specific orientations from list
+       - Custom: Specify angle range (min, max, steps)
+    3. **Parameter Grid Generation:** Creates all combinations
+    
+    **Example Workflow:**
     ```python
-    # Single parameter sweep
-    ranges = {{'eps0': (0.5, 2.0, 10)}}
-    
-    # Multiple parameter grid
-    ranges = {{
-        'eps0': (0.5, 2.0, 5),
-        'kappa': (0.2, 1.0, 4),
-        'theta': [0, np.pi/6, np.pi/3, np.pi/2]
+    # Base parameters
+    base_params = {{
+        'defect_type': 'ISF',
+        'shape': 'Square',
+        'orientation': 'Custom (0°)',
+        'theta': 0.0
     }}
-    ```
     
-    ### **📈 Analysis Features**
-    
-    **1. Cross-Parameter Trends:**
-    - Stress maxima vs. ε* relationships
-    - κ influence on stress distributions
-    - Orientation effects on stress patterns
-    
-    **2. Statistical Comparison:**
-    ```python
-    # Batch comparison metrics
-    metrics = {{
-        'Max Von Mises': max_stress,
-        'Mean Stress': mean_stress,
-        'Stress Concentration': max/mean,
-        'Spatial Variance': stress_variance
+    # Range configuration
+    ranges_config = {{
+        'eps0': {{'min': 0.5, 'max': 2.0, 'steps': 5}},
+        'kappa': {{'min': 0.2, 'max': 1.0, 'steps': 4}},
+        'theta': {{'values': [0, 15, 30, 45, 60, 75, 90]}}  # Custom angles in degrees
     }}
+    
+    # Generate parameter grid
+    param_grid = generate_parameter_grid(base_params, ranges_config)
+    # Result: 5 × 4 × 7 = 140 parameter combinations
     ```
     
-    **3. Export Options:**
-    - Individual predictions (PKL/JSON)
-    - Batch CSV with all results
-    - Comprehensive PDF/HTML reports
-    - Interactive parameter-space visualizations
+    ### **🚀 Advanced Features**
     
-    ### **🚀 Performance Optimization**
+    **1. Angle Continuity:**
+    - Angles outside 0-90° are wrapped using modulo 90
+    - Smooth interpolation across angle boundaries
+    - Periodic boundary conditions for orientation
     
-    **Batch Processing:**
-    - Vectorized attention weight computation
-    - Memory-efficient stress field storage
-    - Parallel processing capabilities
+    **2. Smart Orientation Labeling:**
+    - 0-15° → "Horizontal {111} (0°)"
+    - 15-45° → "Tilted 30° (1¯10 projection)"
+    - 45-75° → "Tilted 60°"
+    - 75-90° → "Vertical {111} (90°)"
+    - Exact values → Predefined labels
+    - Others → "Custom (X°)" format
     
-    **Memory Management:**
-    - Incremental loading for large grids
-    - Compressed storage formats
-    - On-demand visualization
-    
-    **Scalability:**
-    - Handles 100+ target predictions
-    - Scales with available memory
-    - Supports distributed processing
+    **3. Parameter Sensitivity Analysis:**
+    - Study stress variation with continuous angle changes
+    - Identify critical angles for maximum/minimum stress
+    - Optimize orientation for stress minimization
     
     ### **🔬 Scientific Applications**
     
-    **1. Parameter Sensitivity Analysis:**
-    - Identify critical defect parameters
-    - Quantify stress response to variations
-    - Optimize material design parameters
+    **1. Orientation Optimization:**
+    - Find optimal defect orientation for stress relief
+    - Study anisotropic stress responses
+    - Design materials with orientation-dependent properties
     
-    **2. Design Space Exploration:**
-    - Rapid screening of parameter combinations
-    - Identify safe operating regions
-    - Failure probability estimation
+    **2. Angle-Dependent Studies:**
+    - Continuous angle sweeps for comprehensive analysis
+    - Identify orientation transitions and critical angles
+    - Study symmetry breaking effects
     
-    **3. Interpolation Accuracy Assessment:**
-    - Validate attention weights across parameter space
-    - Identify interpolation boundaries
-    - Optimize source simulation placement
+    **3. Interpolation Validation:**
+    - Test attention model with continuous parameters
+    - Validate interpolation across angle space
+    - Identify interpolation limits and boundaries
     
-    **Advanced multi-target features continue below...
+    **Advanced multi-target features with custom angle support continue below...
     """)
 
 if __name__ == "__main__":
     main()
 
-st.caption(f"🔬 Multi-Target Spatial-Attention Stress Interpolation • Auto-loading from {NUMERICAL_SOLUTIONS_DIR} • 2025")
+st.caption(f"🔬 Multi-Target Spatial-Attention Stress Interpolation • Custom Angle Support • Auto-loading from {NUMERICAL_SOLUTIONS_DIR} • 2025")
