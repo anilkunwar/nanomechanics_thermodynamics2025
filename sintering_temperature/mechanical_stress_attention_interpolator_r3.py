@@ -291,6 +291,7 @@ class SpatialLocalityAttentionInterpolator:
         elif 75 < angle_deg <= 90:
             return 'Vertical {111} (90°)'
         else:
+            # Handle angles outside 0-90 by wrapping
             angle_deg = angle_deg % 90
             return f"Custom ({angle_deg:.1f}°)"
 # =============================================
@@ -1684,7 +1685,7 @@ def main():
 # THEORETICAL ANALYSIS
 # =============================================
 with st.expander("🔬 Theoretical Analysis: Multi-Target Spatial-Attention Interpolation", expanded=False):
-    st.markdown(f"""
+    st.markdown("""
     ## 🎯 **Enhanced Multi-Target Spatial-Attention Interpolation**
    
     ### **🔄 Custom Angle Support**
