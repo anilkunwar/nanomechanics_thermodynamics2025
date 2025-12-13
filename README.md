@@ -140,11 +140,11 @@ Comparison codes
 # Prediction of Stress for a Single Target (Query)
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation1-streamlit-red)](https://mechanicalstress-attentioninterpolator1.streamlit.app/) (Manual upload of training / source or key data)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation2-streamlit-red)](https://mechanicalstress-attentioninterpolator2.streamlit.app/) (Training data accessible for the model )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation2-streamlit-red)](https://mechanicalstress-attentioninterpolator2.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention )
 
 # Prediction of Stress for a Multiple Targets (Queries)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation3-streamlit-red)](https://mechanicalstress-attentioninterpolator3.streamlit.app/) (Training data accessible for the model )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation3-streamlit-red)](https://mechanicalstress-attentioninterpolator3.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention )
 
 
 
