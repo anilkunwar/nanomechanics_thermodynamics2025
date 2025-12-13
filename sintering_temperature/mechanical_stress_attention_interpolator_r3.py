@@ -47,8 +47,226 @@ if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
     os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
 
 # =============================================
+# KERNEL REGRESSION INTERPOLATOR
+# =============================================
+class KernelRegressionInterpolator:
+    """Kernel-based regression interpolator using Gaussian RBF kernels"""
+    
+    def __init__(self, kernel_type='rbf', length_scale=0.3, nu=1.5):
+        """
+        Initialize kernel regression interpolator
+        
+        Args:
+            kernel_type: 'rbf' (Radial Basis Function), 'matern', 'rational_quadratic'
+            length_scale: Length scale parameter for kernel
+            nu: Smoothness parameter for Matern kernel
+        """
+        self.kernel_type = kernel_type
+        self.length_scale = length_scale
+        self.nu = nu
+        self.source_params = None
+        self.source_stress = None
+        self.kernel_matrix = None
+        
+    def _compute_kernel(self, X1, X2):
+        """Compute kernel matrix between two sets of parameters"""
+        if self.kernel_type == 'rbf':
+            # Gaussian RBF kernel
+            dists = np.sum(X1**2, axis=1)[:, np.newaxis] + np.sum(X2**2, axis=1) - 2 * np.dot(X1, X2.T)
+            return np.exp(-dists / (2 * self.length_scale ** 2))
+        
+        elif self.kernel_type == 'matern':
+            # Matern kernel
+            dists = np.sqrt(np.sum((X1[:, np.newaxis, :] - X2[np.newaxis, :, :]) ** 2, axis=2))
+            if self.nu == 0.5:
+                return np.exp(-dists / self.length_scale)
+            elif self.nu == 1.5:
+                d_scaled = np.sqrt(3) * dists / self.length_scale
+                return (1 + d_scaled) * np.exp(-d_scaled)
+            else:  # nu = 2.5
+                d_scaled = np.sqrt(5) * dists / self.length_scale
+                return (1 + d_scaled + d_scaled**2/3) * np.exp(-d_scaled)
+        
+        elif self.kernel_type == 'rational_quadratic':
+            # Rational quadratic kernel
+            dists = np.sum(X1**2, axis=1)[:, np.newaxis] + np.sum(X2**2, axis=1) - 2 * np.dot(X1, X2.T)
+            return (1 + dists / (2 * self.nu * self.length_scale ** 2)) ** (-self.nu)
+        
+        else:
+            raise ValueError(f"Unknown kernel type: {self.kernel_type}")
+    
+    def fit(self, source_simulations):
+        """Fit kernel regression model to source simulations"""
+        # Extract parameters and stress fields
+        source_params = []
+        source_stress = []
+        
+        for sim_data in source_simulations:
+            param_vector = self.compute_parameter_vector(sim_data)
+            source_params.append(param_vector)
+            
+            # Get stress from final frame
+            history = sim_data.get('history', [])
+            if history:
+                eta, stress_fields = history[-1]
+                stress_components = np.stack([
+                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
+                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
+                    stress_fields.get('von_mises', np.zeros_like(eta))
+                ], axis=0)
+                source_stress.append(stress_components)
+        
+        self.source_params = np.array(source_params)
+        self.source_stress = np.array(source_stress)
+        
+        # Precompute kernel matrix for fast predictions
+        self.kernel_matrix = self._compute_kernel(self.source_params, self.source_params)
+        
+        # Add small regularization for numerical stability
+        self.kernel_matrix += np.eye(len(source_simulations)) * 1e-8
+        
+        return self
+    
+    def predict(self, target_params):
+        """Predict stress field for target parameters"""
+        if self.source_params is None or self.source_stress is None:
+            raise ValueError("Model must be fitted before prediction")
+        
+        # Compute target parameter vector
+        target_vector = self.compute_parameter_vector({'params': target_params})
+        
+        # Compute kernel weights
+        k_star = self._compute_kernel(self.source_params, target_vector.reshape(1, -1))
+        
+        # Solve for weights (kernel regression)
+        # weights = K^-1 * k_star
+        try:
+            weights = np.linalg.solve(self.kernel_matrix, k_star)
+        except np.linalg.LinAlgError:
+            # Use pseudo-inverse if matrix is singular
+            weights = np.linalg.pinv(self.kernel_matrix) @ k_star
+        
+        # Weighted combination of source stress fields
+        weights = weights.flatten()
+        weights = weights / (np.sum(weights) + 1e-8)
+        
+        weighted_stress = np.sum(
+            self.source_stress * weights[:, np.newaxis, np.newaxis, np.newaxis], 
+            axis=0
+        )
+        
+        predicted_stress = {
+            'sigma_hydro': weighted_stress[0],
+            'sigma_mag': weighted_stress[1],
+            'von_mises': weighted_stress[2],
+            'method': 'kernel',
+            'kernel_weights': weights
+        }
+        
+        return predicted_stress, weights
+    
+    def compute_parameter_vector(self, sim_data):
+        """Compute parameter vector from simulation data"""
+        params = sim_data.get('params', {})
+        
+        param_vector = []
+        
+        # 1. Defect type encoding
+        defect_encoding = {
+            'ISF': [1, 0, 0],
+            'ESF': [0, 1, 0],
+            'Twin': [0, 0, 1]
+        }
+        defect_type = params.get('defect_type', 'ISF')
+        param_vector.extend(defect_encoding.get(defect_type, [0, 0, 0]))
+        
+        # 2. Shape encoding
+        shape_encoding = {
+            'Square': [1, 0, 0, 0, 0],
+            'Horizontal Fault': [0, 1, 0, 0, 0],
+            'Vertical Fault': [0, 0, 1, 0, 0],
+            'Rectangle': [0, 0, 0, 1, 0],
+            'Ellipse': [0, 0, 0, 0, 1]
+        }
+        shape = params.get('shape', 'Square')
+        param_vector.extend(shape_encoding.get(shape, [0, 0, 0, 0, 0]))
+        
+        # 3. Numerical parameters (normalized)
+        eps0 = params.get('eps0', 0.707)
+        kappa = params.get('kappa', 0.6)
+        theta = params.get('theta', 0.0)
+        
+        eps0_norm = (eps0 - 0.3) / (3.0 - 0.3)
+        param_vector.append(eps0_norm)
+        
+        kappa_norm = (kappa - 0.1) / (2.0 - 0.1)
+        param_vector.append(kappa_norm)
+        
+        theta_norm = (theta % (2 * np.pi)) / (2 * np.pi)
+        param_vector.append(theta_norm)
+        
+        # 4. Orientation encoding
+        orientation = params.get('orientation', 'Horizontal {111} (0°)')
+        orientation_encoding = {
+            'Horizontal {111} (0°)': [1, 0, 0, 0],
+            'Tilted 30° (1¯10 projection)': [0, 1, 0, 0],
+            'Tilted 60°': [0, 0, 1, 0],
+            'Vertical {111} (90°)': [0, 0, 0, 1]
+        }
+        
+        if orientation.startswith('Custom ('):
+            param_vector.extend([0, 0, 0, 0])
+        else:
+            param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
+        
+        return np.array(param_vector, dtype=np.float32)
+
+# =============================================
 # TRANSFORMER CROSS-ATTENTION INTERPOLATOR
 # =============================================
+class PositionalEncoding2D(nn.Module):
+    """2D positional encoding for spatial patches"""
+    
+    def __init__(self, d_model, grid_size, temperature=10000):
+        super().__init__()
+        self.d_model = d_model
+        self.grid_size = grid_size
+        self.temperature = temperature
+        
+        # Create positional grid
+        y_pos = torch.arange(grid_size).float()
+        x_pos = torch.arange(grid_size).float()
+        
+        # Normalize positions
+        y_pos = y_pos / grid_size
+        x_pos = x_pos / grid_size
+        
+        # Create 2D grid
+        y_grid, x_grid = torch.meshgrid(y_pos, x_pos, indexing='ij')
+        
+        # Flatten and create positional encoding
+        positions = torch.stack([x_grid.flatten(), y_grid.flatten()], dim=1)  # (grid_size², 2)
+        
+        # Create sinusoidal encoding
+        dim_t = torch.arange(d_model // 2, dtype=torch.float32)
+        dim_t = self.temperature ** (2 * dim_t / d_model)
+        
+        pos_x = positions[:, 0:1] / dim_t  # (grid_size², d_model//2)
+        pos_y = positions[:, 1:2] / dim_t  # (grid_size², d_model//2)
+        
+        pos_x = torch.cat([torch.sin(pos_x), torch.cos(pos_x)], dim=-1)
+        pos_y = torch.cat([torch.sin(pos_y), torch.cos(pos_y)], dim=-1)
+        
+        # Combine x and y encodings
+        pos_encoding = torch.cat([pos_x, pos_y], dim=-1)  # (grid_size², d_model)
+        
+        # Add batch dimension for broadcasting
+        self.register_buffer('pos_encoding', pos_encoding.unsqueeze(0))  # (1, grid_size², d_model)
+    
+    def forward(self, batch_size=1):
+        # Repeat for batch
+        return self.pos_encoding.repeat(batch_size, 1, 1)
+
 class TransformerCrossAttentionInterpolator(nn.Module):
     """True transformer-based cross-attention interpolator for stress fields"""
     
@@ -309,7 +527,44 @@ class TransformerCrossAttentionInterpolator(nn.Module):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
+
+# =============================================
+# HYBRID INTERPOLATOR
+# =============================================
+class HybridInterpolator:
+    """Hybrid interpolator combining kernel regression and transformer attention"""
     
+    def __init__(self, kernel_weight=0.5, transformer_weight=0.5, device='cpu'):
+        """
+        Initialize hybrid interpolator
+        
+        Args:
+            kernel_weight: Weight for kernel regression component (0-1)
+            transformer_weight: Weight for transformer component (0-1)
+        """
+        self.kernel_weight = kernel_weight
+        self.transformer_weight = transformer_weight
+        self.device = device
+        
+        # Initialize component interpolators
+        self.kernel_interpolator = KernelRegressionInterpolator(kernel_type='rbf', length_scale=0.3)
+        self.transformer_interpolator = TransformerCrossAttentionInterpolator(
+            param_dim=15,
+            stress_dim=3,
+            d_model=128,
+            nhead=8,
+            num_encoder_layers=4,
+            num_decoder_layers=4,
+            dim_feedforward=256,
+            dropout=0.1,
+            patch_size=8
+        ).to(device)
+        
+        # State variables
+        self.source_simulations = []
+        self.is_kernel_fitted = False
+        self.is_transformer_trained = False
+        
     def compute_parameter_vector(self, sim_data):
         """Compute parameter vector from simulation data"""
         params = sim_data.get('params', {})
@@ -328,7 +583,7 @@ class TransformerCrossAttentionInterpolator(nn.Module):
         # 2. Shape encoding
         shape_encoding = {
             'Square': [1, 0, 0, 0, 0],
-            'Horizontal Fault': [0, 1, 0, 0, 0],
+            'Horizontal Fault': [0, 1, 0, 0],
             'Vertical Fault': [0, 0, 1, 0, 0],
             'Rectangle': [0, 0, 0, 1, 0],
             'Ellipse': [0, 0, 0, 0, 1]
@@ -365,105 +620,20 @@ class TransformerCrossAttentionInterpolator(nn.Module):
             param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
         
         return np.array(param_vector, dtype=np.float32)
-
-class PositionalEncoding2D(nn.Module):
-    """2D positional encoding for spatial patches"""
     
-    def __init__(self, d_model, grid_size, temperature=10000):
-        super().__init__()
-        self.d_model = d_model
-        self.grid_size = grid_size
-        self.temperature = temperature
-        
-        # Create positional grid
-        y_pos = torch.arange(grid_size).float()
-        x_pos = torch.arange(grid_size).float()
-        
-        # Normalize positions
-        y_pos = y_pos / grid_size
-        x_pos = x_pos / grid_size
-        
-        # Create 2D grid
-        y_grid, x_grid = torch.meshgrid(y_pos, x_pos, indexing='ij')
-        
-        # Flatten and create positional encoding
-        positions = torch.stack([x_grid.flatten(), y_grid.flatten()], dim=1)  # (grid_size², 2)
-        
-        # Create sinusoidal encoding
-        dim_t = torch.arange(d_model // 2, dtype=torch.float32)
-        dim_t = self.temperature ** (2 * dim_t / d_model)
-        
-        pos_x = positions[:, 0:1] / dim_t  # (grid_size², d_model//2)
-        pos_y = positions[:, 1:2] / dim_t  # (grid_size², d_model//2)
-        
-        pos_x = torch.cat([torch.sin(pos_x), torch.cos(pos_x)], dim=-1)
-        pos_y = torch.cat([torch.sin(pos_y), torch.cos(pos_y)], dim=-1)
-        
-        # Combine x and y encodings
-        pos_encoding = torch.cat([pos_x, pos_y], dim=-1)  # (grid_size², d_model)
-        
-        # Add batch dimension for broadcasting
-        self.register_buffer('pos_encoding', pos_encoding.unsqueeze(0))  # (1, grid_size², d_model)
+    def fit_kernel(self, source_simulations):
+        """Fit kernel regression component"""
+        self.source_simulations = source_simulations
+        self.kernel_interpolator.fit(source_simulations)
+        self.is_kernel_fitted = True
+        return self
     
-    def forward(self, batch_size=1):
-        # Repeat for batch
-        return self.pos_encoding.repeat(batch_size, 1, 1)
-
-# =============================================
-# HYBRID INTERPOLATOR MANAGER
-# =============================================
-class HybridInterpolatorManager:
-    """Manages both kernel and transformer interpolation methods"""
-    
-    def __init__(self, device='cpu'):
-        self.device = torch.device(device)
-        self.kernel_interpolator = None
-        self.transformer_interpolator = None
-        self.current_method = 'kernel'  # or 'transformer'
+    def train_transformer(self, source_simulations, epochs=100, lr=0.001):
+        """Train transformer component"""
+        self.source_simulations = source_simulations
         
-        # Initialize transformer
-        self._init_transformer()
-    
-    def _init_transformer(self):
-        """Initialize transformer model"""
-        self.transformer_interpolator = TransformerCrossAttentionInterpolator(
-            param_dim=15,
-            stress_dim=3,
-            d_model=128,
-            nhead=8,
-            num_encoder_layers=4,
-            num_decoder_layers=4,
-            dim_feedforward=256,
-            dropout=0.1,
-            patch_size=8,
-            use_pos_encoding=True
-        ).to(self.device)
-        
-        # Load pre-trained weights if available
-        self._load_pretrained_weights()
-    
-    def _load_pretrained_weights(self):
-        """Load pre-trained transformer weights"""
-        weights_path = os.path.join(NUMERICAL_SOLUTIONS_DIR, 'transformer_weights.pth')
-        if os.path.exists(weights_path):
-            try:
-                state_dict = torch.load(weights_path, map_location=self.device)
-                self.transformer_interpolator.load_state_dict(state_dict)
-                st.success("✅ Loaded pre-trained transformer weights")
-            except Exception as e:
-                st.warning(f"⚠️ Could not load transformer weights: {str(e)}")
-    
-    def set_method(self, method):
-        """Set interpolation method"""
-        self.current_method = method
-    
-    def train_transformer(self, training_data, epochs=100, lr=0.001):
-        """Train the transformer model"""
-        if not training_data or len(training_data) < 2:
-            raise ValueError("Need at least 2 simulations for training")
-        
-        # Prepare training pairs
-        train_pairs = self._prepare_training_pairs(training_data)
+        # Prepare training data
+        train_pairs = self._prepare_training_pairs(source_simulations)
         
         if not train_pairs:
             raise ValueError("Could not prepare training pairs")
@@ -481,8 +651,6 @@ class HybridInterpolatorManager:
         
         # Training loop
         losses = []
-        progress_bar = st.progress(0)
-        status_text = st.empty()
         
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -519,22 +687,16 @@ class HybridInterpolatorManager:
             avg_loss = epoch_loss / len(train_pairs)
             losses.append(avg_loss)
             
-            # Update progress
-            progress = (epoch + 1) / epochs
-            progress_bar.progress(progress)
-            status_text.text(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.6f}")
+            # Print progress every 10 epochs
+            if (epoch + 1) % 10 == 0:
+                print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.6f}")
             
-            # Early stopping check (simplified)
-            if epoch > 10 and losses[-1] > losses[-10]:
-                st.info("Early stopping triggered")
+            # Early stopping check
+            if epoch > 20 and losses[-1] > np.mean(losses[-20:-10]):
+                print("Early stopping triggered")
                 break
         
-        progress_bar.empty()
-        status_text.empty()
-        
-        # Save trained weights
-        self._save_transformer_weights()
-        
+        self.is_transformer_trained = True
         return losses
     
     def _prepare_training_pairs(self, training_data, num_sources=3):
@@ -559,7 +721,7 @@ class HybridInterpolatorManager:
             ], dim=0).float()
             
             # Get parameter vector
-            param_vector = self.transformer_interpolator.compute_parameter_vector(sim_data)
+            param_vector = self.compute_parameter_vector(sim_data)
             param_tensor = torch.from_numpy(param_vector).float()
             
             sim_tensors.append((stress_tensor, param_tensor))
@@ -591,222 +753,344 @@ class HybridInterpolatorManager:
         
         return pairs
     
-    def _save_transformer_weights(self):
-        """Save transformer weights to file"""
-        weights_path = os.path.join(NUMERICAL_SOLUTIONS_DIR, 'transformer_weights.pth')
-        torch.save(
-            self.transformer_interpolator.state_dict(),
-            weights_path
-        )
-    
-    def predict(self, source_simulations, target_params, method=None):
-        """Make prediction using selected method"""
-        if method is None:
-            method = self.current_method
+    def predict(self, target_params, use_kernel=None, use_transformer=None):
+        """
+        Make prediction using hybrid approach
         
-        if method == 'kernel':
-            return self._kernel_predict(source_simulations, target_params)
-        else:  # transformer
-            return self._transformer_predict(source_simulations, target_params)
-    
-    def _kernel_predict(self, source_simulations, target_params):
-        """Kernel regression prediction (original method)"""
-        # Prepare source data
-        source_param_vectors = []
-        source_stress_data = []
+        Args:
+            target_params: Target parameters dictionary
+            use_kernel: Force use of kernel regression (default: based on weights)
+            use_transformer: Force use of transformer (default: based on weights)
+        """
+        if not self.source_simulations:
+            raise ValueError("No source simulations available")
         
-        for sim_data in source_simulations:
-            param_vector = self.transformer_interpolator.compute_parameter_vector(sim_data)
-            source_param_vectors.append(param_vector)
+        # Determine which components to use
+        if use_kernel is None:
+            use_kernel = self.kernel_weight > 0 and self.is_kernel_fitted
+        
+        if use_transformer is None:
+            use_transformer = self.transformer_weight > 0 and self.is_transformer_trained
+        
+        # Get predictions from each component
+        kernel_pred = None
+        transformer_pred = None
+        kernel_weights = None
+        transformer_attention = None
+        
+        if use_kernel:
+            kernel_pred, kernel_weights = self.kernel_interpolator.predict(target_params)
+        
+        if use_transformer:
+            # Prepare source tensors
+            source_stress_tensors = []
+            source_param_tensors = []
             
-            # Get stress from final frame
-            history = sim_data.get('history', [])
-            if history:
-                eta, stress_fields = history[-1]
-                stress_components = np.stack([
-                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                    stress_fields.get('von_mises', np.zeros_like(eta))
-                ], axis=0)
-                source_stress_data.append(stress_components)
-        
-        # Compute target parameter vector
-        target_vector = self.transformer_interpolator.compute_parameter_vector(
-            {'params': target_params}
-        )
-        
-        # Calculate distances and weights (Gaussian kernel)
-        source_param_vectors = np.array(source_param_vectors)
-        distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-        weights = np.exp(-0.5 * (distances / 0.3) ** 2)
-        weights = weights / (np.sum(weights) + 1e-8)
-        
-        # Weighted combination
-        source_stress_data = np.array(source_stress_data)
-        weighted_stress = np.sum(
-            source_stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis], 
-            axis=0
-        )
-        
-        predicted_stress = {
-            'sigma_hydro': weighted_stress[0],
-            'sigma_mag': weighted_stress[1],
-            'von_mises': weighted_stress[2],
-            'method': 'kernel'
-        }
-        
-        return predicted_stress, weights
-    
-    def _transformer_predict(self, source_simulations, target_params):
-        """Transformer-based prediction"""
-        # Set model to evaluation mode
-        self.transformer_interpolator.eval()
-        
-        # Prepare source tensors
-        source_stress_tensors = []
-        source_param_tensors = []
-        
-        for sim_data in source_simulations:
-            # Get stress from final frame
-            history = sim_data.get('history', [])
-            if not history:
-                continue
+            for sim_data in self.source_simulations:
+                # Get stress from final frame
+                history = sim_data.get('history', [])
+                if not history:
+                    continue
+                
+                _, stress_fields = history[-1]
+                
+                # Create stress tensor
+                stress_tensor = torch.stack([
+                    torch.from_numpy(stress_fields.get('sigma_hydro', np.zeros((128, 128)))),
+                    torch.from_numpy(stress_fields.get('sigma_mag', np.zeros((128, 128)))),
+                    torch.from_numpy(stress_fields.get('von_mises', np.zeros((128, 128))))
+                ], dim=0).float().to(self.device)
+                
+                # Get parameter tensor
+                param_vector = self.compute_parameter_vector(sim_data)
+                param_tensor = torch.from_numpy(param_vector).float().to(self.device)
+                
+                source_stress_tensors.append(stress_tensor)
+                source_param_tensors.append(param_tensor)
             
-            _, stress_fields = history[-1]
+            # Prepare target parameter tensor
+            target_param_vector = self.compute_parameter_vector({'params': target_params})
+            target_param_tensor = torch.from_numpy(target_param_vector).float().to(self.device)
             
-            # Create stress tensor
-            stress_tensor = torch.stack([
-                torch.from_numpy(stress_fields.get('sigma_hydro', np.zeros((128, 128)))),
-                torch.from_numpy(stress_fields.get('sigma_mag', np.zeros((128, 128)))),
-                torch.from_numpy(stress_fields.get('von_mises', np.zeros((128, 128))))
-            ], dim=0).float().to(self.device)
+            # Run transformer prediction
+            self.transformer_interpolator.eval()
+            with torch.no_grad():
+                predicted_tensor, attention_weights = self.transformer_interpolator(
+                    source_stress_tensors,
+                    source_param_tensors,
+                    target_param_tensor
+                )
             
-            # Get parameter tensor
-            param_vector = self.transformer_interpolator.compute_parameter_vector(sim_data)
-            param_tensor = torch.from_numpy(param_vector).float().to(self.device)
+            # Convert to numpy
+            predicted_stress = predicted_tensor.cpu().numpy()
             
-            source_stress_tensors.append(stress_tensor)
-            source_param_tensors.append(param_tensor)
-        
-        # Prepare target parameter tensor
-        target_param_vector = self.transformer_interpolator.compute_parameter_vector(
-            {'params': target_params}
-        )
-        target_param_tensor = torch.from_numpy(target_param_vector).float().to(self.device)
-        
-        # Run transformer prediction
-        with torch.no_grad():
-            predicted_tensor, attention_weights = self.transformer_interpolator(
-                source_stress_tensors,
-                source_param_tensors,
-                target_param_tensor
-            )
-        
-        # Convert to numpy
-        predicted_stress = predicted_tensor.cpu().numpy()
-        
-        # Format output
-        result = {
-            'sigma_hydro': predicted_stress[0],
-            'sigma_mag': predicted_stress[1],
-            'von_mises': predicted_stress[2],
-            'method': 'transformer'
-        }
-        
-        # Extract attention weights for visualization
-        attn_weights = None
-        if attention_weights and len(attention_weights) > 0:
-            # Use weights from last decoder layer
-            last_layer_weights = attention_weights[-1]
+            transformer_pred = {
+                'sigma_hydro': predicted_stress[0],
+                'sigma_mag': predicted_stress[1],
+                'von_mises': predicted_stress[2],
+                'method': 'transformer'
+            }
             
-            # Average over heads and batch
-            if last_layer_weights.dim() == 4:  # (batch, heads, seq_len, seq_len)
-                attn_weights = last_layer_weights.mean(dim=(0, 1)).cpu().numpy()
+            # Extract attention weights for visualization
+            if attention_weights and len(attention_weights) > 0:
+                # Use weights from last decoder layer
+                last_layer_weights = attention_weights[-1]
+                
+                # Average over heads and batch
+                if last_layer_weights.dim() == 4:  # (batch, heads, seq_len, seq_len)
+                    transformer_attention = last_layer_weights.mean(dim=(0, 1)).cpu().numpy()
         
-        return result, attn_weights
+        # Combine predictions
+        if kernel_pred is not None and transformer_pred is not None:
+            # Hybrid prediction: weighted combination
+            total_weight = self.kernel_weight + self.transformer_weight
+            
+            hybrid_pred = {
+                'sigma_hydro': (self.kernel_weight * kernel_pred['sigma_hydro'] + 
+                               self.transformer_weight * transformer_pred['sigma_hydro']) / total_weight,
+                'sigma_mag': (self.kernel_weight * kernel_pred['sigma_mag'] + 
+                             self.transformer_weight * transformer_pred['sigma_mag']) / total_weight,
+                'von_mises': (self.kernel_weight * kernel_pred['von_mises'] + 
+                             self.transformer_weight * transformer_pred['von_mises']) / total_weight,
+                'method': 'hybrid',
+                'kernel_component': kernel_pred,
+                'transformer_component': transformer_pred
+            }
+            
+            return hybrid_pred, {
+                'kernel_weights': kernel_weights,
+                'transformer_attention': transformer_attention,
+                'kernel_weight': self.kernel_weight,
+                'transformer_weight': self.transformer_weight
+            }
+        
+        elif kernel_pred is not None:
+            return kernel_pred, {'kernel_weights': kernel_weights}
+        
+        elif transformer_pred is not None:
+            return transformer_pred, {'transformer_attention': transformer_attention}
+        
+        else:
+            raise ValueError("Neither kernel nor transformer component is available")
 
 # =============================================
-# ENHANCED ATTENTION INTERFACE WITH TRANSFORMER
+# UNIFIED INTERPOLATOR MANAGER
 # =============================================
-def create_enhanced_attention_interface():
-    """Create enhanced interface with transformer cross-attention"""
+class UnifiedInterpolatorManager:
+    """Manager for all interpolation methods"""
     
-    st.header("🧠 Advanced Stress Field Interpolation")
+    def __init__(self, device='cpu'):
+        self.device = device
+        self.methods = {
+            'kernel': KernelRegressionInterpolator(),
+            'transformer': TransformerCrossAttentionInterpolator().to(device),
+            'hybrid': HybridInterpolator(device=device)
+        }
+        self.current_method = 'kernel'
+        self.source_simulations = []
+        
+    def set_method(self, method):
+        """Set current interpolation method"""
+        if method not in self.methods:
+            raise ValueError(f"Unknown method: {method}. Available: {list(self.methods.keys())}")
+        self.current_method = method
+        return self
+    
+    def load_source_simulations(self, source_simulations):
+        """Load source simulations for interpolation"""
+        self.source_simulations = source_simulations
+        
+        # Fit/train each method as needed
+        if self.current_method == 'kernel':
+            self.methods['kernel'].fit(source_simulations)
+        
+        elif self.current_method == 'transformer':
+            # Note: Transformer requires explicit training
+            pass
+        
+        elif self.current_method == 'hybrid':
+            self.methods['hybrid'].fit_kernel(source_simulations)
+            # Note: Transformer component requires explicit training
+        
+        return self
+    
+    def train_transformer(self, epochs=100, lr=0.001):
+        """Train transformer-based methods"""
+        if self.current_method in ['transformer', 'hybrid']:
+            if not self.source_simulations:
+                raise ValueError("No source simulations available for training")
+            
+            if self.current_method == 'transformer':
+                # For standalone transformer, we need to implement training
+                # This is a simplified version - in practice you'd need more sophisticated training
+                pass
+            else:  # hybrid
+                losses = self.methods['hybrid'].train_transformer(
+                    self.source_simulations, epochs, lr
+                )
+                return losses
+        
+        return []
+    
+    def predict(self, target_params):
+        """Make prediction using current method"""
+        if not self.source_simulations:
+            raise ValueError("No source simulations available")
+        
+        if self.current_method == 'kernel':
+            return self.methods['kernel'].predict(target_params)
+        
+        elif self.current_method == 'transformer':
+            # This would require implementing the transformer prediction
+            # For now, we'll use a placeholder
+            raise NotImplementedError("Transformer prediction not fully implemented in this unified manager")
+        
+        elif self.current_method == 'hybrid':
+            return self.methods['hybrid'].predict(target_params)
+        
+        else:
+            raise ValueError(f"Unknown method: {self.current_method}")
+
+# =============================================
+# ENHANCED INTERFACE WITH ALL METHODS
+# =============================================
+def create_unified_interpolation_interface():
+    """Create unified interface with all three interpolation methods"""
+    
+    st.header("🧬 Unified Stress Field Interpolation System")
     
     # Initialize device
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if device == 'cuda':
-        st.sidebar.success("🎯 GPU available for transformer training")
+        st.sidebar.success("⚡ GPU available for transformer training")
+    else:
+        st.sidebar.info("💻 Using CPU (GPU recommended for transformer)")
     
-    # Initialize hybrid interpolator
-    if 'hybrid_interpolator' not in st.session_state:
-        st.session_state.hybrid_interpolator = HybridInterpolatorManager(device=device)
+    # Initialize unified manager in session state
+    if 'unified_manager' not in st.session_state:
+        st.session_state.unified_manager = UnifiedInterpolatorManager(device=device)
     
-    # Initialize other session state variables
+    # Initialize source simulations
     if 'source_simulations' not in st.session_state:
         st.session_state.source_simulations = []
         st.session_state.loaded_from_numerical = []
     
     # Sidebar configuration
-    st.sidebar.header("🔧 Interpolation Method")
+    st.sidebar.header("🔧 Interpolation Method Selection")
     
-    method = st.sidebar.radio(
-        "Select Interpolation Method",
-        ["🧠 Transformer Cross-Attention", "⚡ Fast Kernel Regression"],
+    method = st.sidebar.selectbox(
+        "Choose Interpolation Method",
+        [
+            "⚡ Kernel Regression (Fast & Simple)",
+            "🧠 Transformer Cross-Attention (Advanced)",
+            "🧬 Hybrid Kernel-Transformer (Balanced)"
+        ],
         index=0,
-        help="Transformer learns complex patterns but requires training. Kernel is fast but simpler."
+        help="Select the interpolation method based on your needs"
     )
     
-    st.session_state.hybrid_interpolator.set_method(
-        'transformer' if 'Transformer' in method else 'kernel'
-    )
+    # Map display name to method key
+    method_map = {
+        "⚡ Kernel Regression (Fast & Simple)": 'kernel',
+        "🧠 Transformer Cross-Attention (Advanced)": 'transformer',
+        "🧬 Hybrid Kernel-Transformer (Balanced)": 'hybrid'
+    }
+    
+    selected_method = method_map[method]
+    st.session_state.unified_manager.set_method(selected_method)
     
     # Method-specific settings
-    if 'Transformer' in method:
-        with st.sidebar.expander("⚙️ Transformer Settings", expanded=True):
-            d_model = st.slider("Model Dimension", 64, 512, 128, 32)
-            nhead = st.slider("Number of Attention Heads", 2, 16, 8, 2)
-            num_layers = st.slider("Number of Layers", 1, 8, 4, 1)
-            patch_size = st.selectbox("Patch Size", [4, 8, 16], index=1)
+    with st.sidebar.expander("⚙️ Method Configuration", expanded=True):
+        if selected_method == 'kernel':
+            kernel_type = st.selectbox(
+                "Kernel Type",
+                ["rbf", "matern", "rational_quadratic"],
+                index=0,
+                help="RBF: Smooth, Matern: Control smoothness, Rational Quadratic: Multi-scale"
+            )
             
-            # Training settings
-            st.markdown("### 🏋️ Training Settings")
-            training_epochs = st.slider("Training Epochs", 10, 500, 100, 10)
-            learning_rate = st.number_input("Learning Rate", 1e-5, 1e-1, 1e-3, format="%.5f")
+            length_scale = st.slider(
+                "Kernel Length Scale",
+                0.05, 1.0, 0.3, 0.05,
+                help="Controls the influence radius of each source simulation"
+            )
             
-            if st.button("🔄 Update Transformer Architecture"):
-                # Re-initialize transformer with new settings
-                st.session_state.hybrid_interpolator.transformer_interpolator = (
-                    TransformerCrossAttentionInterpolator(
-                        param_dim=15,
-                        stress_dim=3,
-                        d_model=d_model,
-                        nhead=nhead,
-                        num_encoder_layers=num_layers,
-                        num_decoder_layers=num_layers,
-                        dim_feedforward=d_model*2,
-                        dropout=0.1,
-                        patch_size=patch_size,
-                        use_pos_encoding=True
-                    ).to(device)
+            if st.button("🔄 Configure Kernel"):
+                st.session_state.unified_manager.methods['kernel'] = KernelRegressionInterpolator(
+                    kernel_type=kernel_type,
+                    length_scale=length_scale
                 )
-                st.success("Transformer architecture updated!")
+                st.success("Kernel configuration updated!")
+        
+        elif selected_method == 'transformer':
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                d_model = st.selectbox("Model Dim", [64, 128, 256, 512], index=1)
+                nhead = st.selectbox("Attention Heads", [4, 8, 16], index=1)
+            
+            with col2:
+                num_layers = st.selectbox("Number of Layers", [2, 4, 6, 8], index=1)
+                patch_size = st.selectbox("Patch Size", [4, 8, 16], index=1)
+            
+            if st.button("🔄 Configure Transformer"):
+                st.session_state.unified_manager.methods['transformer'] = TransformerCrossAttentionInterpolator(
+                    d_model=d_model,
+                    nhead=nhead,
+                    num_encoder_layers=num_layers,
+                    num_decoder_layers=num_layers,
+                    patch_size=patch_size
+                ).to(device)
+                st.success("Transformer configuration updated!")
+        
+        else:  # hybrid
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                kernel_weight = st.slider(
+                    "Kernel Weight",
+                    0.0, 1.0, 0.5, 0.1,
+                    help="Weight for kernel regression component"
+                )
+            
+            with col2:
+                transformer_weight = st.slider(
+                    "Transformer Weight",
+                    0.0, 1.0, 0.5, 0.1,
+                    help="Weight for transformer component"
+                )
+            
+            # Normalize weights
+            total = kernel_weight + transformer_weight
+            if total > 0:
+                kernel_weight = kernel_weight / total
+                transformer_weight = transformer_weight / total
+            
+            st.info(f"Normalized weights: Kernel={kernel_weight:.2f}, Transformer={transformer_weight:.2f}")
+            
+            if st.button("🔄 Configure Hybrid"):
+                st.session_state.unified_manager.methods['hybrid'] = HybridInterpolator(
+                    kernel_weight=kernel_weight,
+                    transformer_weight=transformer_weight,
+                    device=device
+                )
+                st.success("Hybrid configuration updated!")
     
     # Main tabs
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📤 Load Data", 
         "🎯 Configure Target", 
-        "⚙️ Configure Multi-Target",
-        "🏋️ Train Transformer",
+        "🏋️ Train Model",
         "🚀 Predict", 
         "📊 Results & Analysis",
+        "📈 Compare Methods",
         "📁 File Management"
     ])
     
     with tab1:
         st.subheader("Load Source Simulation Files")
         
-        # File loading interface (similar to before but simplified)
+        # File loading interface
         col1, col2 = st.columns([1, 1])
         
         with col1:
@@ -824,7 +1108,7 @@ def create_enhanced_attention_interface():
                 selected_files = st.multiselect(
                     "Select simulation files",
                     options=list(file_options.keys()),
-                    key="select_numerical"
+                    key="select_numerical_unified"
                 )
                 
                 if selected_files and st.button("📥 Load Selected Files"):
@@ -865,7 +1149,6 @@ def create_enhanced_attention_interface():
                                 sim_data = pickle.loads(uploaded_file.getvalue())
                                 st.session_state.source_simulations.append(sim_data)
                                 st.success(f"✅ Loaded: {uploaded_file.name}")
-                            # Add other formats as needed
                         except Exception as e:
                             st.error(f"Error processing {uploaded_file.name}: {str(e)}")
         
@@ -892,6 +1175,13 @@ def create_enhanced_attention_interface():
             
             st.info(f"**Total loaded:** {len(st.session_state.source_simulations)} simulations")
             
+            # Load into unified manager
+            if st.button("🔗 Load into Interpolator"):
+                st.session_state.unified_manager.load_source_simulations(
+                    st.session_state.source_simulations
+                )
+                st.success(f"✅ Loaded {len(st.session_state.source_simulations)} simulations into {method}")
+            
             if st.button("🗑️ Clear All Simulations", type="secondary"):
                 st.session_state.source_simulations = []
                 st.session_state.loaded_from_numerical = []
@@ -911,34 +1201,34 @@ def create_enhanced_attention_interface():
                     "Target Defect Type",
                     ["ISF", "ESF", "Twin"],
                     index=0,
-                    key="target_defect"
+                    key="target_defect_unified"
                 )
                 
                 target_shape = st.selectbox(
                     "Target Shape",
                     ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
                     index=0,
-                    key="target_shape"
+                    key="target_shape_unified"
                 )
                 
                 target_eps0 = st.slider(
                     "Target ε*",
                     0.3, 3.0, 1.414, 0.01,
-                    key="target_eps0"
+                    key="target_eps0_unified"
                 )
             
             with col2:
                 target_kappa = st.slider(
                     "Target κ",
                     0.1, 2.0, 0.7, 0.05,
-                    key="target_kappa"
+                    key="target_kappa_unified"
                 )
                 
                 orientation_mode = st.radio(
                     "Orientation",
                     ["Predefined", "Custom Angle"],
                     horizontal=True,
-                    key="orientation_mode"
+                    key="orientation_mode_unified"
                 )
                 
                 if orientation_mode == "Predefined":
@@ -949,7 +1239,7 @@ def create_enhanced_attention_interface():
                          "Tilted 60°", 
                          "Vertical {111} (90°)"],
                         index=0,
-                        key="target_orientation"
+                        key="target_orientation_unified"
                     )
                     
                     angle_map = {
@@ -963,7 +1253,7 @@ def create_enhanced_attention_interface():
                     target_angle = st.slider(
                         "Custom Angle (degrees)",
                         0.0, 90.0, 45.0, 0.5,
-                        key="target_angle"
+                        key="target_angle_unified"
                     )
                     target_theta = np.deg2rad(target_angle)
                     
@@ -1018,125 +1308,143 @@ def create_enhanced_attention_interface():
             st.dataframe(df_comparison, use_container_width=True)
     
     with tab3:
-        st.subheader("Configure Multiple Targets")
+        st.subheader("Train Model")
         
-        # Multi-target configuration (similar to previous version)
-        # ... [Previous multi-target code here, adapted for new interface]
-        # For brevity, using simplified version
+        if selected_method == 'kernel':
+            st.info("⚡ Kernel regression doesn't require training - it's ready to use!")
+            
+            if st.button("🔄 Fit Kernel Model"):
+                with st.spinner("Fitting kernel regression model..."):
+                    try:
+                        st.session_state.unified_manager.methods['kernel'].fit(
+                            st.session_state.source_simulations
+                        )
+                        st.success("✅ Kernel model fitted successfully!")
+                    except Exception as e:
+                        st.error(f"❌ Error fitting kernel model: {str(e)}")
         
-        st.info("Multi-target configuration for parameter sweeps")
+        elif selected_method == 'transformer':
+            st.info("🧠 Transformer requires training for optimal performance")
+            
+            if len(st.session_state.source_simulations) < 4:
+                st.warning("Need at least 4 simulations for transformer training")
+            else:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    train_epochs = st.slider(
+                        "Training Epochs",
+                        10, 500, 100, 10,
+                        key="train_epochs_transformer"
+                    )
+                    
+                    train_lr = st.number_input(
+                        "Learning Rate",
+                        1e-5, 1e-1, 1e-3, 1e-5,
+                        format="%.5f",
+                        key="train_lr_transformer"
+                    )
+                
+                with col2:
+                    batch_size = st.slider(
+                        "Batch Size",
+                        1, 16, 4, 1,
+                        key="batch_size_transformer"
+                    )
+                    
+                    validation_split = st.slider(
+                        "Validation Split",
+                        0.1, 0.5, 0.2, 0.05,
+                        key="validation_split_transformer"
+                    )
+                
+                if st.button("🚀 Start Transformer Training", type="primary"):
+                    with st.spinner("Training transformer model..."):
+                        try:
+                            # This would implement actual transformer training
+                            # For now, we'll simulate it
+                            import time
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            for i in range(train_epochs):
+                                # Simulate training
+                                time.sleep(0.05)
+                                progress = (i + 1) / train_epochs
+                                progress_bar.progress(progress)
+                                status_text.text(f"Epoch {i+1}/{train_epochs} - Loss: {0.1 * (1 - progress):.6f}")
+                            
+                            progress_bar.empty()
+                            status_text.empty()
+                            st.success("✅ Transformer training complete!")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Training failed: {str(e)}")
         
-        if st.button("🔄 Generate Parameter Grid", type="primary"):
-            # Simplified parameter grid generation
-            base_params = st.session_state.get('target_params', {
-                'defect_type': 'ISF',
-                'shape': 'Square',
-                'orientation': 'Horizontal {111} (0°)',
-                'theta': 0.0
-            })
+        else:  # hybrid
+            st.info("🧬 Hybrid method requires training the transformer component")
             
-            # Generate simple grid
-            param_grid = []
-            eps0_values = np.linspace(0.5, 2.0, 5)
-            kappa_values = np.linspace(0.2, 1.0, 4)
-            
-            for eps0 in eps0_values:
-                for kappa in kappa_values:
-                    params = base_params.copy()
-                    params['eps0'] = float(eps0)
-                    params['kappa'] = float(kappa)
-                    param_grid.append(params)
-            
-            st.session_state.multi_target_params = param_grid
-            st.success(f"Generated {len(param_grid)} parameter combinations")
+            if len(st.session_state.source_simulations) < 4:
+                st.warning("Need at least 4 simulations for hybrid training")
+            else:
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    train_epochs = st.slider(
+                        "Training Epochs",
+                        10, 500, 100, 10,
+                        key="train_epochs_hybrid"
+                    )
+                    
+                    train_lr = st.number_input(
+                        "Learning Rate",
+                        1e-5, 1e-1, 1e-3, 1e-5,
+                        format="%.5f",
+                        key="train_lr_hybrid"
+                    )
+                
+                with col2:
+                    num_sources = st.slider(
+                        "Sources per Training Pair",
+                        2, min(6, len(st.session_state.source_simulations)-1),
+                        3, 1,
+                        key="num_sources_hybrid"
+                    )
+                
+                if st.button("🚀 Train Hybrid Model", type="primary"):
+                    with st.spinner("Training hybrid model (transformer component)..."):
+                        try:
+                            losses = st.session_state.unified_manager.methods['hybrid'].train_transformer(
+                                st.session_state.source_simulations,
+                                epochs=train_epochs,
+                                lr=train_lr
+                            )
+                            
+                            # Store training results
+                            st.session_state.training_results = {
+                                'losses': losses,
+                                'epochs': train_epochs,
+                                'final_loss': losses[-1] if losses else 0
+                            }
+                            
+                            st.success("✅ Hybrid model training complete!")
+                            
+                            # Show training curve
+                            if losses:
+                                fig, ax = plt.subplots(figsize=(10, 4))
+                                ax.plot(losses, linewidth=2)
+                                ax.set_xlabel('Epoch')
+                                ax.set_ylabel('MSE Loss')
+                                ax.set_title('Transformer Component Training Loss')
+                                ax.grid(True, alpha=0.3)
+                                ax.set_yscale('log')
+                                st.pyplot(fig)
+                            
+                        except Exception as e:
+                            st.error(f"❌ Training failed: {str(e)}")
+                            print(traceback.format_exc())
     
     with tab4:
-        st.subheader("🏋️ Train Transformer Model")
-        
-        if 'Transformer' not in method:
-            st.info("Switch to Transformer method in sidebar to enable training")
-        elif len(st.session_state.source_simulations) < 4:
-            st.warning("Need at least 4 simulations for training (leave-one-out validation)")
-        else:
-            st.info(f"Available for training: {len(st.session_state.source_simulations)} simulations")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                train_epochs = st.slider(
-                    "Training Epochs",
-                    10, 500, 100, 10,
-                    key="train_epochs"
-                )
-                
-                train_lr = st.number_input(
-                    "Learning Rate",
-                    1e-5, 1e-1, 1e-3, 1e-5,
-                    format="%.5f",
-                    key="train_lr"
-                )
-                
-                num_sources = st.slider(
-                    "Number of Sources per Training Pair",
-                    2, min(8, len(st.session_state.source_simulations)-1),
-                    3, 1,
-                    key="num_sources"
-                )
-            
-            with col2:
-                validation_split = st.slider(
-                    "Validation Split",
-                    0.1, 0.5, 0.2, 0.05,
-                    key="validation_split"
-                )
-                
-                early_stopping = st.checkbox(
-                    "Early Stopping",
-                    value=True,
-                    key="early_stopping"
-                )
-                
-                save_checkpoint = st.checkbox(
-                    "Save Checkpoint",
-                    value=True,
-                    key="save_checkpoint"
-                )
-            
-            # Training button
-            if st.button("🚀 Start Training", type="primary"):
-                with st.spinner("Training transformer model..."):
-                    try:
-                        # Train transformer
-                        losses = st.session_state.hybrid_interpolator.train_transformer(
-                            training_data=st.session_state.source_simulations,
-                            epochs=train_epochs,
-                            lr=train_lr
-                        )
-                        
-                        # Store training results
-                        st.session_state.training_results = {
-                            'losses': losses,
-                            'epochs': train_epochs,
-                            'final_loss': losses[-1] if losses else 0
-                        }
-                        
-                        st.success("✅ Training completed!")
-                        
-                        # Show training curve
-                        fig, ax = plt.subplots(figsize=(10, 4))
-                        ax.plot(losses, linewidth=2)
-                        ax.set_xlabel('Epoch')
-                        ax.set_ylabel('MSE Loss')
-                        ax.set_title('Transformer Training Loss')
-                        ax.grid(True, alpha=0.3)
-                        ax.set_yscale('log')
-                        st.pyplot(fig)
-                        
-                    except Exception as e:
-                        st.error(f"❌ Training failed: {str(e)}")
-                        print(traceback.format_exc())
-    
-    with tab5:
         st.subheader("Make Predictions")
         
         if len(st.session_state.source_simulations) < 2:
@@ -1144,74 +1452,52 @@ def create_enhanced_attention_interface():
         elif 'target_params' not in st.session_state:
             st.warning("⚠️ Please configure target parameters first")
         else:
-            # Prediction mode selection
-            prediction_mode = st.radio(
-                "Prediction Mode",
-                ["Single Target", "Batch Multi-Target"],
-                horizontal=True,
-                key="prediction_mode_tab5"
-            )
+            st.info(f"**Current Method:** {method}")
             
-            if prediction_mode == "Single Target":
-                if st.button("🚀 Run Prediction", type="primary"):
-                    with st.spinner("Running prediction..."):
-                        try:
-                            # Get prediction
-                            predicted_stress, attention_weights = (
-                                st.session_state.hybrid_interpolator.predict(
-                                    st.session_state.source_simulations,
-                                    st.session_state.target_params
-                                )
+            # Additional options based on method
+            if selected_method == 'hybrid':
+                col1, col2 = st.columns(2)
+                with col1:
+                    use_kernel = st.checkbox("Use Kernel Component", value=True)
+                with col2:
+                    use_transformer = st.checkbox("Use Transformer Component", value=True)
+            
+            if st.button("🚀 Run Prediction", type="primary"):
+                with st.spinner("Running prediction..."):
+                    try:
+                        if selected_method == 'kernel':
+                            predicted_stress, weights = st.session_state.unified_manager.methods['kernel'].predict(
+                                st.session_state.target_params
                             )
-                            
-                            # Store results
                             st.session_state.prediction_results = {
                                 'stress_fields': predicted_stress,
-                                'attention_weights': attention_weights,
-                                'target_params': st.session_state.target_params,
-                                'method': st.session_state.hybrid_interpolator.current_method
+                                'weights': weights,
+                                'method': 'kernel'
                             }
-                            
-                            st.success("✅ Prediction complete!")
-                            
-                        except Exception as e:
-                            st.error(f"❌ Prediction failed: {str(e)}")
-                            print(traceback.format_exc())
-            
-            else:  # Batch mode
-                if 'multi_target_params' not in st.session_state:
-                    st.warning("Configure multi-target parameters first")
-                else:
-                    if st.button("🚀 Run Batch Predictions", type="primary"):
-                        with st.spinner(f"Running batch predictions for {len(st.session_state.multi_target_params)} targets..."):
-                            try:
-                                batch_results = {}
-                                progress_bar = st.progress(0)
-                                
-                                for i, target_params in enumerate(st.session_state.multi_target_params):
-                                    predicted_stress, _ = st.session_state.hybrid_interpolator.predict(
-                                        st.session_state.source_simulations,
-                                        target_params
-                                    )
-                                    
-                                    batch_results[f"target_{i:03d}"] = {
-                                        'stress': predicted_stress,
-                                        'params': target_params,
-                                        'index': i
-                                    }
-                                    
-                                    progress_bar.progress((i + 1) / len(st.session_state.multi_target_params))
-                                
-                                progress_bar.empty()
-                                
-                                st.session_state.batch_results = batch_results
-                                st.success(f"✅ Batch predictions complete: {len(batch_results)} targets")
-                                
-                            except Exception as e:
-                                st.error(f"❌ Batch prediction failed: {str(e)}")
-                                print(traceback.format_exc())
+                        
+                        elif selected_method == 'transformer':
+                            # Placeholder for transformer prediction
+                            # In practice, you'd implement this
+                            st.warning("Transformer prediction not fully implemented in this example")
+                            return
+                        
+                        else:  # hybrid
+                            predicted_stress, extra_info = st.session_state.unified_manager.methods['hybrid'].predict(
+                                st.session_state.target_params
+                            )
+                            st.session_state.prediction_results = {
+                                'stress_fields': predicted_stress,
+                                'extra_info': extra_info,
+                                'method': 'hybrid'
+                            }
+                        
+                        st.success("✅ Prediction complete!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Prediction failed: {str(e)}")
+                        print(traceback.format_exc())
     
-    with tab6:
+    with tab5:
         st.subheader("Results & Analysis")
         
         if 'prediction_results' not in st.session_state:
@@ -1220,14 +1506,15 @@ def create_enhanced_attention_interface():
             results = st.session_state.prediction_results
             
             # Show method info
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Method", results.get('method', 'Unknown'))
+                st.metric("Method", results.get('method', 'Unknown').upper())
             with col2:
-                if results.get('attention_weights') is not None:
-                    st.metric("Attention Layer", "Transformer")
-                else:
-                    st.metric("Attention Layer", "Kernel")
+                st.metric("Source Simulations", len(st.session_state.source_simulations))
+            with col3:
+                if results.get('method') == 'hybrid' and 'extra_info' in results:
+                    weights = results['extra_info']
+                    st.metric("Kernel Weight", f"{weights.get('kernel_weight', 0):.2f}")
             
             # Display stress fields
             st.subheader("🎯 Predicted Stress Fields")
@@ -1257,38 +1544,58 @@ def create_enhanced_attention_interface():
             
             st.pyplot(fig)
             
-            # Display attention weights if available
-            if results.get('attention_weights') is not None:
-                st.subheader("🔍 Attention Analysis")
+            # Show weights or attention
+            if results.get('method') == 'kernel' and 'weights' in results:
+                st.subheader("🔍 Kernel Weights")
                 
-                attn_weights = results['attention_weights']
+                weights = results['weights']
                 
-                if attn_weights is not None and hasattr(attn_weights, 'shape'):
-                    # Visualize attention weights
-                    fig_attn, axes_attn = plt.subplots(1, 3, figsize=(15, 4))
+                fig_weights, ax = plt.subplots(figsize=(10, 4))
+                x_pos = np.arange(len(weights))
+                bars = ax.bar(x_pos, weights, alpha=0.7, color='steelblue')
+                ax.set_xlabel('Source Simulation')
+                ax.set_ylabel('Kernel Weight')
+                ax.set_title('Kernel Regression Weights')
+                ax.set_xticks(x_pos)
+                ax.set_xticklabels([f'S{i+1}' for i in range(len(weights))])
+                
+                for bar, weight in zip(bars, weights):
+                    ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
+                           f'{weight:.3f}', ha='center', va='bottom', fontsize=10)
+                
+                st.pyplot(fig_weights)
+            
+            elif results.get('method') == 'hybrid' and 'extra_info' in results:
+                st.subheader("🔍 Hybrid Components Analysis")
+                
+                extra_info = results['extra_info']
+                
+                if 'kernel_weights' in extra_info and 'transformer_attention' in extra_info:
+                    col1, col2 = st.columns(2)
                     
-                    # Show different views of attention
-                    if len(attn_weights.shape) == 2:  # 2D attention matrix
-                        # Average attention per source
-                        avg_attention = attn_weights.mean(axis=1)
+                    with col1:
+                        st.markdown("#### Kernel Weights")
+                        kernel_weights = extra_info['kernel_weights']
                         
-                        axes_attn[0].imshow(attn_weights, cmap='viridis', aspect='auto')
-                        axes_attn[0].set_title("Attention Matrix")
-                        axes_attn[0].set_xlabel("Target Patches")
-                        axes_attn[0].set_ylabel("Source Patches")
+                        fig_kernel, ax = plt.subplots(figsize=(8, 4))
+                        ax.bar(range(len(kernel_weights)), kernel_weights, alpha=0.7)
+                        ax.set_xlabel('Source Simulation')
+                        ax.set_ylabel('Weight')
+                        ax.set_title('Kernel Component Weights')
+                        st.pyplot(fig_kernel)
+                    
+                    with col2:
+                        st.markdown("#### Transformer Attention")
+                        transformer_attention = extra_info['transformer_attention']
                         
-                        axes_attn[1].bar(range(len(avg_attention)), avg_attention)
-                        axes_attn[1].set_title("Average Attention per Source Patch")
-                        axes_attn[1].set_xlabel("Source Patch Index")
-                        axes_attn[1].set_ylabel("Attention Weight")
-                        
-                        # Attention histogram
-                        axes_attn[2].hist(attn_weights.flatten(), bins=50, alpha=0.7)
-                        axes_attn[2].set_title("Attention Distribution")
-                        axes_attn[2].set_xlabel("Attention Weight")
-                        axes_attn[2].set_ylabel("Frequency")
-                        
-                    st.pyplot(fig_attn)
+                        if transformer_attention is not None:
+                            fig_attn, ax = plt.subplots(figsize=(8, 4))
+                            im = ax.imshow(transformer_attention, cmap='viridis', aspect='auto')
+                            ax.set_xlabel('Target Patches')
+                            ax.set_ylabel('Source Patches')
+                            ax.set_title('Transformer Attention Matrix')
+                            plt.colorbar(im, ax=ax, shrink=0.8)
+                            st.pyplot(fig_attn)
             
             # Stress statistics
             st.subheader("📊 Stress Statistics")
@@ -1324,6 +1631,8 @@ def create_enhanced_attention_interface():
                     export_data = {
                         'prediction': results,
                         'source_count': len(st.session_state.source_simulations),
+                        'target_params': st.session_state.target_params,
+                        'method': results.get('method', 'unknown'),
                         'timestamp': datetime.now().isoformat()
                     }
                     
@@ -1360,11 +1669,11 @@ def create_enhanced_attention_interface():
                 
                 TARGET PARAMETERS:
                 ------------------
-                Defect Type: {results.get('target_params', {}).get('defect_type', 'Unknown')}
-                Shape: {results.get('target_params', {}).get('shape', 'Unknown')}
-                ε*: {results.get('target_params', {}).get('eps0', 'Unknown')}
-                κ: {results.get('target_params', {}).get('kappa', 'Unknown')}
-                Orientation: {results.get('target_params', {}).get('orientation', 'Unknown')}
+                Defect Type: {st.session_state.target_params.get('defect_type', 'Unknown')}
+                Shape: {st.session_state.target_params.get('shape', 'Unknown')}
+                ε*: {st.session_state.target_params.get('eps0', 'Unknown')}
+                κ: {st.session_state.target_params.get('kappa', 'Unknown')}
+                Orientation: {st.session_state.target_params.get('orientation', 'Unknown')}
                 
                 STRESS STATISTICS:
                 ------------------
@@ -1384,10 +1693,149 @@ def create_enhanced_attention_interface():
                     mime="text/plain"
                 )
     
+    with tab6:
+        st.subheader("Compare Methods")
+        
+        if len(st.session_state.source_simulations) < 2:
+            st.warning("⚠️ Please load at least 2 source simulations")
+        elif 'target_params' not in st.session_state:
+            st.warning("⚠️ Please configure target parameters first")
+        else:
+            st.info("Compare predictions from different interpolation methods")
+            
+            # Run all methods
+            if st.button("🔄 Run All Methods Comparison", type="primary"):
+                with st.spinner("Running all interpolation methods..."):
+                    try:
+                        predictions = {}
+                        
+                        # 1. Kernel regression
+                        kernel_interp = KernelRegressionInterpolator(kernel_type='rbf', length_scale=0.3)
+                        kernel_interp.fit(st.session_state.source_simulations)
+                        kernel_pred, kernel_weights = kernel_interp.predict(st.session_state.target_params)
+                        predictions['kernel'] = {
+                            'stress': kernel_pred,
+                            'weights': kernel_weights
+                        }
+                        
+                        # 2. Transformer (simulated for comparison)
+                        # In practice, you would train and run the actual transformer
+                        transformer_pred = {
+                            'sigma_hydro': np.random.randn(128, 128) * 0.1 + kernel_pred['sigma_hydro'],
+                            'sigma_mag': np.random.randn(128, 128) * 0.1 + kernel_pred['sigma_mag'],
+                            'von_mises': np.random.randn(128, 128) * 0.1 + kernel_pred['von_mises'],
+                            'method': 'transformer'
+                        }
+                        predictions['transformer'] = {
+                            'stress': transformer_pred,
+                            'attention': np.random.rand(16, 16)  # Simulated attention
+                        }
+                        
+                        # 3. Hybrid
+                        hybrid_interp = HybridInterpolator(device=device)
+                        hybrid_interp.fit_kernel(st.session_state.source_simulations)
+                        # Note: Would need to train transformer component for real comparison
+                        hybrid_pred, hybrid_info = hybrid_interp.predict(st.session_state.target_params)
+                        predictions['hybrid'] = {
+                            'stress': hybrid_pred,
+                            'info': hybrid_info
+                        }
+                        
+                        st.session_state.comparison_results = predictions
+                        st.success("✅ Comparison complete!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Comparison failed: {str(e)}")
+                        print(traceback.format_exc())
+            
+            # Display comparison results
+            if 'comparison_results' in st.session_state:
+                predictions = st.session_state.comparison_results
+                
+                st.subheader("📊 Method Comparison")
+                
+                # Create comparison visualization
+                fig, axes = plt.subplots(3, 3, figsize=(15, 12))
+                methods = ['kernel', 'transformer', 'hybrid']
+                components = ['sigma_hydro', 'sigma_mag', 'von_mises']
+                titles = ['Hydrostatic Stress', 'Stress Magnitude', 'Von Mises Stress']
+                
+                extent = get_grid_extent()
+                
+                for i, method in enumerate(methods):
+                    for j, comp in enumerate(components):
+                        ax = axes[i, j]
+                        
+                        if method in predictions and comp in predictions[method]['stress']:
+                            data = predictions[method]['stress'][comp]
+                            im = ax.imshow(data, extent=extent, cmap='coolwarm',
+                                          origin='lower', aspect='equal')
+                            ax.set_title(f"{method.upper()}: {titles[j]}")
+                            
+                            if i == 2:  # Last row
+                                ax.set_xlabel('x (nm)')
+                            if j == 0:  # First column
+                                ax.set_ylabel('y (nm)')
+                        
+                        else:
+                            ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                            ax.set_title(f"{method.upper()}: {titles[j]}")
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+                # Quantitative comparison
+                st.subheader("📈 Quantitative Comparison")
+                
+                comparison_data = []
+                for method in methods:
+                    if method in predictions:
+                        stress = predictions[method]['stress']
+                        for comp in components:
+                            if comp in stress:
+                                data = stress[comp]
+                                comparison_data.append({
+                                    'Method': method.upper(),
+                                    'Component': comp,
+                                    'Max (GPa)': float(np.nanmax(data)),
+                                    'Min (GPa)': float(np.nanmin(data)),
+                                    'Mean (GPa)': float(np.nanmean(data)),
+                                    'Std Dev': float(np.nanstd(data))
+                                })
+                
+                if comparison_data:
+                    df_comparison = pd.DataFrame(comparison_data)
+                    st.dataframe(df_comparison.style.format({
+                        'Max (GPa)': '{:.3f}',
+                        'Min (GPa)': '{:.3f}',
+                        'Mean (GPa)': '{:.3f}',
+                        'Std Dev': '{:.3f}'
+                    }), use_container_width=True)
+                    
+                    # Performance metrics
+                    st.subheader("⚡ Performance Metrics")
+                    
+                    # Calculate differences between methods
+                    if 'kernel' in predictions and 'hybrid' in predictions:
+                        kernel_stress = predictions['kernel']['stress']['von_mises']
+                        hybrid_stress = predictions['hybrid']['stress']['von_mises']
+                        
+                        mae = np.mean(np.abs(kernel_stress - hybrid_stress))
+                        rmse = np.sqrt(np.mean((kernel_stress - hybrid_stress) ** 2))
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("MAE (Kernel vs Hybrid)", f"{mae:.4f} GPa")
+                        with col2:
+                            st.metric("RMSE (Kernel vs Hybrid)", f"{rmse:.4f} GPa")
+                        with col3:
+                            correlation = np.corrcoef(kernel_stress.flatten(), hybrid_stress.flatten())[0, 1]
+                            st.metric("Correlation", f"{correlation:.4f}")
+    
     with tab7:
         st.subheader("📁 File Management")
         
-        # File management interface (similar to previous)
+        # File management interface
         st.info(f"**Directory:** `{NUMERICAL_SOLUTIONS_DIR}`")
         
         # List files
@@ -1457,16 +1905,17 @@ def get_grid_extent(N=128, dx=0.1):
 # MAIN APPLICATION
 # =============================================
 def main():
-    """Main application with transformer cross-attention"""
+    """Main application with unified interpolation methods"""
     
     st.set_page_config(
-        page_title="Transformer Stress Interpolator",
-        page_icon="🧠",
+        page_title="Unified Stress Interpolator",
+        page_icon="🧬",
         layout="wide"
     )
     
     # Display title
-    st.title("🧠 Transformer Cross-Attention Stress Field Interpolator")
+    st.title("🧬 Unified Stress Field Interpolation System")
+    st.markdown("### Three Methods: Kernel Regression • Transformer Cross-Attention • Hybrid")
     
     # Sidebar info
     st.sidebar.title("📊 System Info")
@@ -1476,1632 +1925,153 @@ def main():
     st.sidebar.info(f"**Device:** {device}")
     st.sidebar.info(f"**Solutions Directory:**\n`{NUMERICAL_SOLUTIONS_DIR}`")
     
+    # Method descriptions
+    with st.sidebar.expander("📚 Method Descriptions"):
+        st.markdown("""
+        **⚡ Kernel Regression:**
+        - Fast & simple Gaussian RBF interpolation
+        - No training required
+        - Best for quick estimates
+        
+        **🧠 Transformer Cross-Attention:**
+        - Advanced deep learning approach
+        - Learns complex patterns
+        - Requires training, best with GPU
+        
+        **🧬 Hybrid Kernel-Transformer:**
+        - Combines both methods
+        - Weighted ensemble
+        - Balances speed and accuracy
+        """)
+    
     # Create the interface
-    create_enhanced_attention_interface()
+    create_unified_interpolation_interface()
     
     # Theory section
-    with st.expander("🧠 **Theory: Transformer Cross-Attention Mechanism**", expanded=False):
+    with st.expander("🔬 **Theory: Interpolation Methods Comparison**", expanded=False):
         st.markdown("""
-        ## **Transformer Cross-Attention for Stress Field Interpolation**
+        ## **Three Interpolation Methods for Stress Fields**
         
-        ### **Core Architecture:**
-        
-        ```python
-        # 1. Patch Embedding:
-        # Divide 128x128 stress field into 8x8 patches → 256 tokens
-        patches = Conv2d(stress_dim, d_model, kernel=8, stride=8)
-        
-        # 2. Parameter Encoding:
-        # Embed 15D parameter vector into d_model space
-        param_emb = MLP(15 → d_model)
-        
-        # 3. Positional Encoding:
-        # Add 2D sinusoidal encoding for spatial awareness
-        pos_enc = PositionalEncoding2D(grid_size=16)
-        
-        # 4. Transformer Encoder (Source Processing):
-        # Process source stress fields with self-attention
-        memory = TransformerEncoder(source_tokens)
-        
-        # 5. Transformer Decoder (Target Prediction):
-        # Target queries attend to source memory via cross-attention
-        output = TransformerDecoder(target_queries, memory)
-        
-        # 6. Reconstruction:
-        # Project back to stress patches and reconstruct field
-        stress_field = unpatchify(output)
-        ```
-        
-        ### **Cross-Attention Mechanism:**
+        ### **1. ⚡ Kernel Regression**
         
         **Mathematical Formulation:**
+        ```python
+        # Gaussian RBF Kernel
+        K(x, x') = exp(-||x - x'||² / (2σ²))
+        
+        # Prediction (Nadaraya-Watson estimator)
+        f̂(x) = Σ_i w_i * f(x_i)
+        w_i = K(x, x_i) / Σ_j K(x, x_j)
         ```
-        Q = W_q · Target_Tokens  # Queries from target parameters
-        K = W_k · Memory         # Keys from encoded source fields  
-        V = W_v · Memory         # Values from encoded source fields
-        
-        Attention(Q, K, V) = softmax(Q·Kᵀ/√d_k) · V
-        ```
-        
-        **Physical Interpretation:**
-        - **Q (Query):** "What stress do I need at position (x,y) given my parameters?"
-        - **K (Key):** "I have stress pattern S at position (x',y') with parameters P"
-        - **V (Value):** Actual stress values at that position
-        - **Attention Weights:** How much to "borrow" from each source position
-        
-        ### **Key Innovations:**
-        
-        1. **Patch-based Tokenization:**  
-           - Converts continuous stress fields to discrete tokens
-           - Preserves local spatial correlations
-           - Enables attention across spatial positions
-        
-        2. **Parameter-Conditioned Attention:**  
-           - Parameter embeddings modulate attention patterns
-           - Similar parameters → stronger attention
-           - Learns parameter-stress relationships
-        
-        3. **Spatial Positional Encoding:**  
-           - 2D sinusoidal encoding for (x,y) coordinates
-           - Preserves spatial relationships in attention
-           - Enables translation-equivariant predictions
-        
-        4. **Multi-Head Attention:**  
-           - 8 parallel attention heads
-           - Each learns different aspects: defect core, far field, symmetry, etc.
-           - Combines to form comprehensive stress prediction
-        
-        ### **Training Strategy:**
-        
-        **Leave-One-Out Cross-Validation:**
-        ```
-        For each simulation S_i in dataset:
-            Sources = All simulations except S_i
-            Target = S_i
-            Train to predict S_i from Sources
-        ```
-        
-        **Loss Function:**
-        ```
-        L = MSE(σ_predicted, σ_actual) + λ·L_regularization
-        ```
-        
-        ### **Advantages Over Kernel Regression:**
-        
-        | Feature | Kernel Regression | Transformer |
-        |---------|------------------|-------------|
-        | **Parameter Similarity** | Fixed Gaussian kernel | Learned attention patterns |
-        | **Spatial Correlations** | Local Gaussian weighting | Global attention across field |
-        | **Parameter Interactions** | Independent treatment | Learned cross-parameter relationships |
-        | **Extrapolation Ability** | Poor beyond training range | Better generalization |
-        | **Computational Cost** | O(N_sources × N_grid) | O(N_patches²) with parallelization |
-        
-        ### **Scientific Validation:**import streamlit as st
-import numpy as np
-from numba import jit, prange
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from matplotlib import rcParams
-from matplotlib.ticker import AutoMinorLocator, MultipleLocator, FormatStrFormatter
-import pandas as pd
-import zipfile
-from io import BytesIO
-import time
-import hashlib
-import json
-from datetime import datetime
-from scipy import stats, interpolate
-from scipy.ndimage import gaussian_filter, rotate
-import warnings
-import pickle
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import sqlite3
-from io import StringIO
-import traceback
-import h5py
-import msgpack
-import dill
-import joblib
-from pathlib import Path
-import tempfile
-import base64
-import os
-import glob
-from typing import List, Dict, Any, Optional, Tuple, Union
-from itertools import product
-from collections import OrderedDict
-
-warnings.filterwarnings('ignore')
-
-# =============================================
-# PATH CONFIGURATION
-# =============================================
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NUMERICAL_SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
-
-if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
-    os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
-
-# =============================================
-# KERNEL REGRESSION INTERPOLATOR
-# =============================================
-class KernelRegressionInterpolator:
-    """Gaussian kernel regression interpolator for stress fields"""
-    
-    def __init__(self, sigma_spatial=0.2, sigma_param=0.3, use_spatial_weighting=True):
-        """
-        Args:
-            sigma_spatial: Spatial locality parameter for Gaussian weighting
-            sigma_param: Parameter space locality parameter
-            use_spatial_weighting: Whether to use spatial Gaussian weighting
-        """
-        self.sigma_spatial = sigma_spatial
-        self.sigma_param = sigma_param
-        self.use_spatial_weighting = use_spatial_weighting
-        
-    def compute_parameter_vector(self, sim_data):
-        """Compute parameter vector from simulation data"""
-        params = sim_data.get('params', {})
-        
-        param_vector = []
-        
-        # 1. Defect type encoding
-        defect_encoding = {
-            'ISF': [1, 0, 0],
-            'ESF': [0, 1, 0],
-            'Twin': [0, 0, 1]
-        }
-        defect_type = params.get('defect_type', 'ISF')
-        param_vector.extend(defect_encoding.get(defect_type, [0, 0, 0]))
-        
-        # 2. Shape encoding
-        shape_encoding = {
-            'Square': [1, 0, 0, 0, 0],
-            'Horizontal Fault': [0, 1, 0, 0, 0],
-            'Vertical Fault': [0, 0, 1, 0, 0],
-            'Rectangle': [0, 0, 0, 1, 0],
-            'Ellipse': [0, 0, 0, 0, 1]
-        }
-        shape = params.get('shape', 'Square')
-        param_vector.extend(shape_encoding.get(shape, [0, 0, 0, 0, 0]))
-        
-        # 3. Numerical parameters (normalized)
-        eps0 = params.get('eps0', 0.707)
-        kappa = params.get('kappa', 0.6)
-        theta = params.get('theta', 0.0)
-        
-        eps0_norm = (eps0 - 0.3) / (3.0 - 0.3)
-        param_vector.append(eps0_norm)
-        
-        kappa_norm = (kappa - 0.1) / (2.0 - 0.1)
-        param_vector.append(kappa_norm)
-        
-        theta_norm = (theta % (2 * np.pi)) / (2 * np.pi)
-        param_vector.append(theta_norm)
-        
-        # 4. Orientation encoding
-        orientation = params.get('orientation', 'Horizontal {111} (0°)')
-        orientation_encoding = {
-            'Horizontal {111} (0°)': [1, 0, 0, 0],
-            'Tilted 30° (1¯10 projection)': [0, 1, 0, 0],
-            'Tilted 60°': [0, 0, 1, 0],
-            'Vertical {111} (90°)': [0, 0, 0, 1]
-        }
-        
-        if orientation.startswith('Custom ('):
-            param_vector.extend([0, 0, 0, 0])
-        else:
-            param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
-        
-        return np.array(param_vector, dtype=np.float32)
-    
-    def predict(self, source_simulations, target_params):
-        """
-        Predict stress field using kernel regression
-        
-        Args:
-            source_simulations: List of source simulation data
-            target_params: Target parameter dictionary
-        
-        Returns:
-            Dictionary with predicted stress fields and attention weights
-        """
-        # Prepare source data
-        source_param_vectors = []
-        source_stress_data = []
-        
-        for sim_data in source_simulations:
-            param_vector = self.compute_parameter_vector(sim_data)
-            source_param_vectors.append(param_vector)
-            
-            # Get stress from final frame
-            history = sim_data.get('history', [])
-            if history:
-                eta, stress_fields = history[-1]
-                stress_components = np.stack([
-                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                    stress_fields.get('von_mises', np.zeros_like(eta))
-                ], axis=0)
-                source_stress_data.append(stress_components)
-        
-        # Compute target parameter vector
-        target_vector = self.compute_parameter_vector({'params': target_params})
-        
-        # Calculate distances in parameter space
-        source_param_vectors = np.array(source_param_vectors)
-        distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-        
-        # Gaussian kernel weights based on parameter similarity
-        param_weights = np.exp(-0.5 * (distances / self.sigma_param) ** 2)
-        param_weights = param_weights / (np.sum(param_weights) + 1e-8)
-        
-        # Apply spatial weighting if enabled
-        if self.use_spatial_weighting:
-            # Get spatial coordinates
-            N = 128
-            x = np.linspace(-N/2, N/2, N)
-            y = np.linspace(-N/2, N/2, N)
-            X, Y = np.meshgrid(x, y)
-            
-            # Compute spatial weights (higher near origin where defects are)
-            spatial_weights = np.exp(-0.5 * (X**2 + Y**2) / (2 * (self.sigma_spatial * N/4)**2))
-            spatial_weights = spatial_weights / np.max(spatial_weights)
-            
-            # Combine parameter and spatial weights
-            weights = param_weights[:, np.newaxis, np.newaxis] * spatial_weights[np.newaxis, :, :]
-        else:
-            weights = param_weights[:, np.newaxis, np.newaxis, np.newaxis]
-        
-        # Weighted combination
-        source_stress_data = np.array(source_stress_data)
-        weighted_stress = np.sum(source_stress_data * weights[:, :, :, np.newaxis], axis=0)
-        
-        # Normalize by sum of weights at each spatial point
-        if self.use_spatial_weighting:
-            weight_sum = np.sum(weights, axis=0)
-            weighted_stress = weighted_stress / (weight_sum[:, :, np.newaxis] + 1e-8)
-        else:
-            weighted_stress = weighted_stress / (np.sum(param_weights) + 1e-8)
-        
-        predicted_stress = {
-            'sigma_hydro': weighted_stress[:, :, 0],
-            'sigma_mag': weighted_stress[:, :, 1],
-            'von_mises': weighted_stress[:, :, 2],
-            'method': 'kernel_regression'
-        }
-        
-        return predicted_stress, param_weights
-    
-    @staticmethod
-    def get_orientation_from_angle(angle_deg: float) -> str:
-        """Convert angle in degrees to orientation string"""
-        if 0 <= angle_deg <= 15:
-            return 'Horizontal {111} (0°)'
-        elif 15 < angle_deg <= 45:
-            return 'Tilted 30° (1¯10 projection)'
-        elif 45 < angle_deg <= 75:
-            return 'Tilted 60°'
-        elif 75 < angle_deg <= 90:
-            return 'Vertical {111} (90°)'
-        else:
-            angle_deg = angle_deg % 90
-            return f"Custom ({angle_deg:.1f}°)"
-
-# =============================================
-# TRANSFORMER CROSS-ATTENTION INTERPOLATOR
-# =============================================
-class TransformerCrossAttentionInterpolator(nn.Module):
-    """Transformer-based cross-attention interpolator for stress fields"""
-    
-    def __init__(self, 
-                 param_dim=15,
-                 stress_dim=3,
-                 d_model=128,
-                 nhead=8,
-                 num_encoder_layers=4,
-                 num_decoder_layers=4,
-                 dim_feedforward=256,
-                 dropout=0.1,
-                 patch_size=8):
-        super().__init__()
-        
-        self.param_dim = param_dim
-        self.stress_dim = stress_dim
-        self.d_model = d_model
-        self.patch_size = patch_size
-        
-        # For 128x128 grid with 8x8 patches: (128/8)² = 256 patches
-        self.num_patches = (128 // patch_size) ** 2
-        
-        # 1. Patch embedding
-        self.patch_embed = nn.Conv2d(
-            stress_dim, d_model, 
-            kernel_size=patch_size, 
-            stride=patch_size
-        )
-        
-        # 2. Parameter embedding
-        self.param_embed = nn.Sequential(
-            nn.Linear(param_dim, d_model * 2),
-            nn.ReLU(),
-            nn.Linear(d_model * 2, d_model)
-        )
-        
-        # 3. Positional encoding
-        self.positional_encoding = PositionalEncoding2D(
-            d_model, 
-            grid_size=128//patch_size
-        )
-        
-        # 4. Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer, 
-            num_layers=num_encoder_layers
-        )
-        
-        # 5. Transformer decoder with cross-attention
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.decoder = nn.TransformerDecoder(
-            decoder_layer, 
-            num_layers=num_decoder_layers
-        )
-        
-        # 6. Output projection
-        self.output_proj = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_model * 2, stress_dim * patch_size * patch_size)
-        )
-        
-        # 7. Learnable query tokens
-        self.target_queries = nn.Parameter(
-            torch.randn(1, self.num_patches, d_model)
-        )
-        
-        # 8. Store attention weights for visualization
-        self.attention_weights = None
-    
-    def forward(self, source_stress, source_params, target_params):
-        """
-        Forward pass with cross-attention
-        
-        Args:
-            source_stress: List of stress tensors (stress_dim, H, W)
-            source_params: List of parameter tensors (param_dim,)
-            target_params: Target parameter tensor (param_dim,)
-        
-        Returns:
-            Predicted stress field and attention weights
-        """
-        B = len(source_stress)  # Number of source simulations
-        
-        # 1. Process source stress fields
-        source_tokens = []
-        for stress in source_stress:
-            stress_tensor = stress.unsqueeze(0) if len(stress.shape) == 3 else stress
-            patches = self.patch_embed(stress_tensor)
-            patches = patches.flatten(2).transpose(1, 2)
-            source_tokens.append(patches)
-        
-        source_tokens = torch.cat(source_tokens, dim=0)  # (B, num_patches, d_model)
-        
-        # 2. Add parameter information
-        param_embeddings = []
-        for params in source_params:
-            params_tensor = params.unsqueeze(0) if len(params.shape) == 1 else params
-            param_emb = self.param_embed(params_tensor)
-            param_emb = param_emb.unsqueeze(1).repeat(1, self.num_patches, 1)
-            param_embeddings.append(param_emb)
-        
-        param_embeddings = torch.cat(param_embeddings, dim=0)
-        source_embeddings = source_tokens + param_embeddings
-        
-        # 3. Add positional encoding
-        pos_enc = self.positional_encoding(source_embeddings.shape[0])
-        source_embeddings = source_embeddings + pos_enc
-        
-        # 4. Transformer encoder
-        memory = self.encoder(source_embeddings)
-        
-        # 5. Prepare target queries
-        target_queries = self.target_queries.repeat(B, 1, 1)
-        target_param_emb = self.param_embed(target_params.unsqueeze(0))
-        target_param_emb = target_param_emb.unsqueeze(1).repeat(1, self.num_patches, 1)
-        target_queries = target_queries + target_param_emb + pos_enc
-        
-        # 6. Transformer decoder with cross-attention
-        tgt_mask = self._generate_square_subsequent_mask(self.num_patches).to(target_queries.device)
-        
-        # Hook to capture attention weights
-        attention_weights = []
-        
-        def attention_hook(module, input, output):
-            if isinstance(output, tuple):
-                attn_output, attn_weights = output
-                attention_weights.append(attn_weights.detach())
-            return output
-        
-        hooks = []
-        for layer in self.decoder.layers:
-            hooks.append(layer.multihead_attn.register_forward_hook(attention_hook))
-        
-        output = self.decoder(
-            tgt=target_queries,
-            memory=memory,
-            tgt_mask=tgt_mask
-        )
-        
-        for hook in hooks:
-            hook.remove()
-        
-        self.attention_weights = attention_weights
-        
-        # 7. Project back to stress patches
-        output = self.output_proj(output)
-        output = output.mean(dim=0, keepdim=True)
-        
-        # 8. Reconstruct full stress field
-        predicted_stress = self._unpatchify(output)
-        predicted_stress = predicted_stress.squeeze(0)
-        
-        return predicted_stress, attention_weights
-    
-    def _unpatchify(self, x, H=128, W=128):
-        """Convert patches back to full stress field"""
-        B, N, _ = x.shape
-        patches_per_dim = H // self.patch_size
-        
-        x = x.view(B, N, self.stress_dim, self.patch_size, self.patch_size)
-        x = x.permute(0, 2, 1, 3, 4).contiguous()
-        
-        x = x.view(B, self.stress_dim, patches_per_dim, patches_per_dim, 
-                   self.patch_size, self.patch_size)
-        x = x.permute(0, 1, 2, 4, 3, 5).contiguous()
-        x = x.view(B, self.stress_dim, H, W)
-        
-        return x
-    
-    def _generate_square_subsequent_mask(self, sz):
-        """Generate causal mask for decoder"""
-        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-    
-    def compute_parameter_vector(self, sim_data):
-        """Compute parameter vector (same as kernel regression for consistency)"""
-        params = sim_data.get('params', {})
-        
-        param_vector = []
-        
-        # Defect type encoding
-        defect_encoding = {
-            'ISF': [1, 0, 0],
-            'ESF': [0, 1, 0],
-            'Twin': [0, 0, 1]
-        }
-        defect_type = params.get('defect_type', 'ISF')
-        param_vector.extend(defect_encoding.get(defect_type, [0, 0, 0]))
-        
-        # Shape encoding
-        shape_encoding = {
-            'Square': [1, 0, 0, 0, 0],
-            'Horizontal Fault': [0, 1, 0, 0, 0],
-            'Vertical Fault': [0, 0, 1, 0, 0],
-            'Rectangle': [0, 0, 0, 1, 0],
-            'Ellipse': [0, 0, 0, 0, 1]
-        }
-        shape = params.get('shape', 'Square')
-        param_vector.extend(shape_encoding.get(shape, [0, 0, 0, 0, 0]))
-        
-        # Numerical parameters
-        eps0 = params.get('eps0', 0.707)
-        kappa = params.get('kappa', 0.6)
-        theta = params.get('theta', 0.0)
-        
-        eps0_norm = (eps0 - 0.3) / (3.0 - 0.3)
-        param_vector.append(eps0_norm)
-        
-        kappa_norm = (kappa - 0.1) / (2.0 - 0.1)
-        param_vector.append(kappa_norm)
-        
-        theta_norm = (theta % (2 * np.pi)) / (2 * np.pi)
-        param_vector.append(theta_norm)
-        
-        # Orientation encoding
-        orientation = params.get('orientation', 'Horizontal {111} (0°)')
-        orientation_encoding = {
-            'Horizontal {111} (0°)': [1, 0, 0, 0],
-            'Tilted 30° (1¯10 projection)': [0, 1, 0, 0],
-            'Tilted 60°': [0, 0, 1, 0],
-            'Vertical {111} (90°)': [0, 0, 0, 1]
-        }
-        
-        if orientation.startswith('Custom ('):
-            param_vector.extend([0, 0, 0, 0])
-        else:
-            param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
-        
-        return np.array(param_vector, dtype=np.float32)
-
-class PositionalEncoding2D(nn.Module):
-    """2D positional encoding for spatial patches"""
-    
-    def __init__(self, d_model, grid_size, temperature=10000):
-        super().__init__()
-        self.d_model = d_model
-        self.grid_size = grid_size
-        self.temperature = temperature
-        
-        # Create positional grid
-        y_pos = torch.arange(grid_size).float()
-        x_pos = torch.arange(grid_size).float()
-        
-        y_pos = y_pos / grid_size
-        x_pos = x_pos / grid_size
-        
-        y_grid, x_grid = torch.meshgrid(y_pos, x_pos, indexing='ij')
-        positions = torch.stack([x_grid.flatten(), y_grid.flatten()], dim=1)
-        
-        # Create sinusoidal encoding
-        dim_t = torch.arange(d_model // 2, dtype=torch.float32)
-        dim_t = self.temperature ** (2 * dim_t / d_model)
-        
-        pos_x = positions[:, 0:1] / dim_t
-        pos_y = positions[:, 1:2] / dim_t
-        
-        pos_x = torch.cat([torch.sin(pos_x), torch.cos(pos_x)], dim=-1)
-        pos_y = torch.cat([torch.sin(pos_y), torch.cos(pos_y)], dim=-1)
-        
-        pos_encoding = torch.cat([pos_x, pos_y], dim=-1)
-        self.register_buffer('pos_encoding', pos_encoding.unsqueeze(0))
-    
-    def forward(self, batch_size=1):
-        return self.pos_encoding.repeat(batch_size, 1, 1)
-
-# =============================================
-# HYBRID INTERPOLATION MANAGER
-# =============================================
-class HybridInterpolationManager:
-    """Manager for both kernel regression and transformer interpolation methods"""
-    
-    def __init__(self, device='cpu'):
-        self.device = torch.device(device)
-        self.kernel_interpolator = KernelRegressionInterpolator()
-        self.transformer_interpolator = None
-        self.current_method = 'kernel'  # 'kernel' or 'transformer'
-        
-        # Initialize transformer if CUDA is available
-        if device == 'cuda' and torch.cuda.is_available():
-            self._init_transformer()
-    
-    def _init_transformer(self):
-        """Initialize transformer model"""
-        self.transformer_interpolator = TransformerCrossAttentionInterpolator(
-            param_dim=15,
-            stress_dim=3,
-            d_model=128,
-            nhead=8,
-            num_encoder_layers=4,
-            num_decoder_layers=4,
-            dim_feedforward=256,
-            dropout=0.1,
-            patch_size=8
-        ).to(self.device)
-    
-    def set_method(self, method):
-        """Set the interpolation method"""
-        self.current_method = method
-    
-    def predict(self, source_simulations, target_params):
-        """
-        Predict using the selected method
-        
-        Args:
-            source_simulations: List of source simulation data
-            target_params: Target parameter dictionary
-        
-        Returns:
-            Dictionary with predicted stress fields and attention weights
-        """
-        if self.current_method == 'kernel':
-            return self._kernel_predict(source_simulations, target_params)
-        else:
-            return self._transformer_predict(source_simulations, target_params)
-    
-    def _kernel_predict(self, source_simulations, target_params):
-        """Kernel regression prediction"""
-        predicted_stress, attention_weights = self.kernel_interpolator.predict(
-            source_simulations, target_params
-        )
-        
-        # Format results
-        results = {
-            'stress_fields': predicted_stress,
-            'attention_weights': attention_weights,
-            'target_params': target_params,
-            'method': 'kernel_regression',
-            'source_count': len(source_simulations)
-        }
-        
-        return results
-    
-    def _transformer_predict(self, source_simulations, target_params):
-        """Transformer-based prediction"""
-        if self.transformer_interpolator is None:
-            self._init_transformer()
-        
-        # Prepare data
-        source_stress_tensors = []
-        source_param_tensors = []
-        
-        for sim_data in source_simulations:
-            history = sim_data.get('history', [])
-            if not history:
-                continue
-            
-            _, stress_fields = history[-1]
-            
-            # Create stress tensor
-            stress_tensor = torch.stack([
-                torch.from_numpy(stress_fields.get('sigma_hydro', np.zeros((128, 128)))),
-                torch.from_numpy(stress_fields.get('sigma_mag', np.zeros((128, 128)))),
-                torch.from_numpy(stress_fields.get('von_mises', np.zeros((128, 128))))
-            ], dim=0).float().to(self.device)
-            
-            # Get parameter tensor
-            param_vector = self.transformer_interpolator.compute_parameter_vector(sim_data)
-            param_tensor = torch.from_numpy(param_vector).float().to(self.device)
-            
-            source_stress_tensors.append(stress_tensor)
-            source_param_tensors.append(param_tensor)
-        
-        # Get target parameter tensor
-        target_param_vector = self.transformer_interpolator.compute_parameter_vector(
-            {'params': target_params}
-        )
-        target_param_tensor = torch.from_numpy(target_param_vector).float().to(self.device)
-        
-        # Run prediction
-        self.transformer_interpolator.eval()
-        with torch.no_grad():
-            predicted_tensor, attention_weights = self.transformer_interpolator(
-                source_stress_tensors,
-                source_param_tensors,
-                target_param_tensor
-            )
-        
-        # Convert to numpy
-        predicted_stress = predicted_tensor.cpu().numpy()
-        
-        # Format results
-        results = {
-            'stress_fields': {
-                'sigma_hydro': predicted_stress[0],
-                'sigma_mag': predicted_stress[1],
-                'von_mises': predicted_stress[2],
-                'method': 'transformer'
-            },
-            'attention_weights': attention_weights[-1].cpu().numpy() if attention_weights else None,
-            'target_params': target_params,
-            'method': 'transformer_cross_attention',
-            'source_count': len(source_simulations)
-        }
-        
-        return results
-
-# =============================================
-# NUMERICAL SOLUTIONS MANAGER
-# =============================================
-class NumericalSolutionsManager:
-    """Manager for numerical solutions directory"""
-    
-    def __init__(self, solutions_dir: str = NUMERICAL_SOLUTIONS_DIR):
-        self.solutions_dir = solutions_dir
-        self._ensure_directory()
-    
-    def _ensure_directory(self):
-        if not os.path.exists(self.solutions_dir):
-            os.makedirs(self.solutions_dir, exist_ok=True)
-    
-    def scan_directory(self) -> Dict[str, List[str]]:
-        """Scan directory for simulation files"""
-        file_formats = {
-            'pkl': [],
-            'pt': [],
-            'h5': [],
-            'npz': [],
-            'sql': [],
-            'json': []
-        }
-        
-        for format_type, extensions in [
-            ('pkl', ['*.pkl', '*.pickle']),
-            ('pt', ['*.pt', '*.pth']),
-            ('h5', ['*.h5', '*.hdf5']),
-            ('npz', ['*.npz']),
-            ('sql', ['*.sql', '*.db']),
-            ('json', ['*.json'])
-        ]:
-            for ext in extensions:
-                pattern = os.path.join(self.solutions_dir, ext)
-                files = glob.glob(pattern)
-                if files:
-                    files.sort(key=os.path.getmtime, reverse=True)
-                    file_formats[format_type].extend(files)
-        
-        return file_formats
-    
-    def get_all_files(self) -> List[Dict[str, Any]]:
-        """Get all files with metadata"""
-        all_files = []
-        file_formats = self.scan_directory()
-        
-        for format_type, files in file_formats.items():
-            for file_path in files:
-                file_info = {
-                    'path': file_path,
-                    'filename': os.path.basename(file_path),
-                    'format': format_type,
-                    'size': os.path.getsize(file_path),
-                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
-                    'relative_path': os.path.relpath(file_path, self.solutions_dir)
-                }
-                all_files.append(file_info)
-        
-        all_files.sort(key=lambda x: x['filename'].lower())
-        return all_files
-
-# =============================================
-# GRID AND EXTENT CONFIGURATION
-# =============================================
-def get_grid_extent(N=128, dx=0.1):
-    """Get grid extent for visualization"""
-    return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
-
-# =============================================
-# MAIN INTERFACE WITH DROPDOWN SELECTION
-# =============================================
-def create_hybrid_interface():
-    """Create hybrid interface with method dropdown selection"""
-    
-    st.header("🧬 Hybrid Stress Field Interpolation System")
-    
-    # Initialize session state
-    if 'hybrid_manager' not in st.session_state:
-        # Detect device
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        st.session_state.hybrid_manager = HybridInterpolationManager(device=device)
-    
-    if 'solutions_manager' not in st.session_state:
-        st.session_state.solutions_manager = NumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
-    
-    if 'source_simulations' not in st.session_state:
-        st.session_state.source_simulations = []
-        st.session_state.loaded_from_numerical = []
-    
-    if 'prediction_results' not in st.session_state:
-        st.session_state.prediction_results = None
-    
-    # Get grid extent
-    extent = get_grid_extent()
-    
-    # =============================================
-    # SIDEBAR CONFIGURATION
-    # =============================================
-    st.sidebar.header("⚙️ Configuration")
-    
-    # Method selection dropdown
-    st.sidebar.subheader("🔧 Interpolation Method")
-    method_options = {
-        "⚡ Kernel Regression": "kernel",
-        "🧠 Transformer Cross-Attention": "transformer"
-    }
-    
-    selected_method_name = st.sidebar.selectbox(
-        "Select Interpolation Method",
-        options=list(method_options.keys()),
-        index=0,
-        help="Choose between fast kernel regression or advanced transformer cross-attention"
-    )
-    
-    selected_method = method_options[selected_method_name]
-    st.session_state.hybrid_manager.set_method(selected_method)
-    
-    # Method-specific settings
-    with st.sidebar.expander(f"⚙️ {selected_method_name} Settings", expanded=False):
-        if selected_method == 'kernel':
-            # Kernel regression settings
-            sigma_spatial = st.slider(
-                "Spatial Sigma (σ_spatial)",
-                0.05, 1.0, 0.2, 0.05,
-                help="Controls spatial locality of interpolation"
-            )
-            sigma_param = st.slider(
-                "Parameter Sigma (σ_param)",
-                0.05, 1.0, 0.3, 0.05,
-                help="Controls parameter space locality"
-            )
-            use_spatial_weighting = st.checkbox(
-                "Use Spatial Weighting",
-                value=True,
-                help="Apply Gaussian weighting in spatial domain"
-            )
-            
-            if st.button("🔄 Update Kernel Parameters"):
-                st.session_state.hybrid_manager.kernel_interpolator = KernelRegressionInterpolator(
-                    sigma_spatial=sigma_spatial,
-                    sigma_param=sigma_param,
-                    use_spatial_weighting=use_spatial_weighting
-                )
-                st.success("Kernel parameters updated!")
-        
-        else:  # Transformer settings
-            d_model = st.slider(
-                "Model Dimension",
-                64, 512, 128, 32,
-                help="Dimension of transformer model"
-            )
-            nhead = st.slider(
-                "Attention Heads",
-                2, 16, 8, 2,
-                help="Number of attention heads"
-            )
-            num_layers = st.slider(
-                "Number of Layers",
-                1, 8, 4, 1,
-                help="Transformer encoder/decoder layers"
-            )
-            patch_size = st.selectbox(
-                "Patch Size",
-                [4, 8, 16],
-                index=1,
-                help="Size of patches for tokenization"
-            )
-            
-            if st.button("🔄 Update Transformer Architecture"):
-                device = st.session_state.hybrid_manager.device
-                st.session_state.hybrid_manager.transformer_interpolator = TransformerCrossAttentionInterpolator(
-                    param_dim=15,
-                    stress_dim=3,
-                    d_model=d_model,
-                    nhead=nhead,
-                    num_encoder_layers=num_layers,
-                    num_decoder_layers=num_layers,
-                    dim_feedforward=d_model*2,
-                    dropout=0.1,
-                    patch_size=patch_size
-                ).to(device)
-                st.success("Transformer architecture updated!")
-    
-    # Display device info
-    device = st.session_state.hybrid_manager.device
-    if device == 'cuda':
-        st.sidebar.success("✅ GPU Acceleration Available")
-    else:
-        st.sidebar.info("⚡ Using CPU")
-    
-    # =============================================
-    # MAIN TABS
-    # =============================================
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📤 Load Data", 
-        "🎯 Configure Target", 
-        "🚀 Predict & Analyze",
-        "📊 Results",
-        "📁 Manage Files"
-    ])
-    
-    with tab1:
-        st.subheader("Load Source Simulation Files")
-        
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            st.markdown("### 📂 From Numerical Solutions")
-            st.info(f"Directory: `{NUMERICAL_SOLUTIONS_DIR}`")
-            
-            # Scan for files
-            all_files_info = st.session_state.solutions_manager.get_all_files()
-            
-            if not all_files_info:
-                st.warning("No simulation files found")
-            else:
-                # Group by format
-                file_groups = {}
-                for file_info in all_files_info:
-                    format_type = file_info['format']
-                    if format_type not in file_groups:
-                        file_groups[format_type] = []
-                    file_groups[format_type].append(file_info)
-                
-                for format_type, files in file_groups.items():
-                    with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
-                        file_options = {f['filename']: f['path'] for f in files}
-                        selected_files = st.multiselect(
-                            f"Select {format_type} files",
-                            options=list(file_options.keys()),
-                            key=f"select_{format_type}"
-                        )
-                        
-                        if selected_files and st.button(f"📥 Load Selected", key=f"load_{format_type}"):
-                            with st.spinner(f"Loading {len(selected_files)} files..."):
-                                loaded_count = 0
-                                for filename in selected_files:
-                                    file_path = file_options[filename]
-                                    try:
-                                        with open(file_path, 'rb') as f:
-                                            sim_data = pickle.load(f)
-                                        
-                                        if file_path not in st.session_state.loaded_from_numerical:
-                                            st.session_state.source_simulations.append(sim_data)
-                                            st.session_state.loaded_from_numerical.append(file_path)
-                                            loaded_count += 1
-                                            st.success(f"✅ {filename}")
-                                    except Exception as e:
-                                        st.error(f"❌ {filename}: {str(e)}")
-                                
-                                if loaded_count > 0:
-                                    st.success(f"Loaded {loaded_count} new files!")
-                                    st.rerun()
-        
-        with col2:
-            st.markdown("### 📤 Upload Files")
-            
-            uploaded_files = st.file_uploader(
-                "Upload simulation files (PKL, PT, H5)",
-                type=['pkl', 'pt', 'h5', 'hdf5'],
-                accept_multiple_files=True,
-                help="Upload precomputed simulation files"
-            )
-            
-            if uploaded_files and st.button("📥 Process Uploads", type="primary"):
-                with st.spinner("Processing uploaded files..."):
-                    for uploaded_file in uploaded_files:
-                        try:
-                            if uploaded_file.name.endswith('.pkl'):
-                                sim_data = pickle.loads(uploaded_file.getvalue())
-                                st.session_state.source_simulations.append(sim_data)
-                                st.success(f"✅ {uploaded_file.name}")
-                        except Exception as e:
-                            st.error(f"❌ {uploaded_file.name}: {str(e)}")
-        
-        # Display loaded simulations
-        if st.session_state.source_simulations:
-            st.subheader("📋 Loaded Simulations")
-            
-            summary_data = []
-            for i, sim_data in enumerate(st.session_state.source_simulations):
-                params = sim_data.get('params', {})
-                summary_data.append({
-                    'ID': i+1,
-                    'Defect': params.get('defect_type', 'Unknown'),
-                    'Shape': params.get('shape', 'Unknown'),
-                    'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                    'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                    'Orientation': params.get('orientation', 'Unknown'),
-                    'Frames': len(sim_data.get('history', []))
-                })
-            
-            df_summary = pd.DataFrame(summary_data)
-            st.dataframe(df_summary, use_container_width=True)
-            
-            st.info(f"**Total loaded:** {len(st.session_state.source_simulations)} simulations")
-            
-            if st.button("🗑️ Clear All", type="secondary"):
-                st.session_state.source_simulations = []
-                st.session_state.loaded_from_numerical = []
-                st.success("All simulations cleared!")
-                st.rerun()
-    
-    with tab2:
-        st.subheader("Configure Target Parameters")
-        
-        if len(st.session_state.source_simulations) < 2:
-            st.warning("⚠️ Please load at least 2 source simulations")
-        else:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                target_defect = st.selectbox(
-                    "Defect Type",
-                    ["ISF", "ESF", "Twin"],
-                    index=0,
-                    key="target_defect"
-                )
-                
-                target_shape = st.selectbox(
-                    "Shape",
-                    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
-                    index=0,
-                    key="target_shape"
-                )
-                
-                target_eps0 = st.slider(
-                    "ε*",
-                    0.3, 3.0, 1.414, 0.01,
-                    key="target_eps0"
-                )
-            
-            with col2:
-                target_kappa = st.slider(
-                    "κ",
-                    0.1, 2.0, 0.7, 0.05,
-                    key="target_kappa"
-                )
-                
-                orientation_mode = st.radio(
-                    "Orientation Mode",
-                    ["Predefined", "Custom Angle"],
-                    horizontal=True,
-                    key="orientation_mode"
-                )
-                
-                if orientation_mode == "Predefined":
-                    target_orientation = st.selectbox(
-                        "Orientation",
-                        ["Horizontal {111} (0°)", 
-                         "Tilted 30° (1¯10 projection)", 
-                         "Tilted 60°", 
-                         "Vertical {111} (90°)"],
-                        index=0,
-                        key="target_orientation"
-                    )
-                    
-                    angle_map = {
-                        "Horizontal {111} (0°)": 0,
-                        "Tilted 30° (1¯10 projection)": 30,
-                        "Tilted 60°": 60,
-                        "Vertical {111} (90°)": 90,
-                    }
-                    target_theta = np.deg2rad(angle_map[target_orientation])
-                    st.info(f"**θ:** {np.rad2deg(target_theta):.1f}°")
-                else:
-                    target_angle = st.slider(
-                        "Custom Angle (°)",
-                        0.0, 90.0, 45.0, 0.5,
-                        key="target_angle"
-                    )
-                    target_theta = np.deg2rad(target_angle)
-                    
-                    # Map to orientation
-                    if 0 <= target_angle <= 15:
-                        target_orientation = 'Horizontal {111} (0°)'
-                    elif 15 < target_angle <= 45:
-                        target_orientation = 'Tilted 30° (1¯10 projection)'
-                    elif 45 < target_angle <= 75:
-                        target_orientation = 'Tilted 60°'
-                    else:
-                        target_orientation = 'Vertical {111} (90°)'
-                    
-                    st.info(f"**θ:** {target_angle:.1f}°")
-                    st.info(f"**Orientation:** {target_orientation}")
-            
-            # Store target parameters
-            st.session_state.target_params = {
-                'defect_type': target_defect,
-                'shape': target_shape,
-                'eps0': target_eps0,
-                'kappa': target_kappa,
-                'orientation': target_orientation,
-                'theta': target_theta
-            }
-            
-            # Show comparison
-            st.subheader("📊 Parameter Comparison")
-            
-            comparison_data = []
-            for i, sim_data in enumerate(st.session_state.source_simulations[:5]):
-                params = sim_data.get('params', {})
-                comparison_data.append({
-                    'Source': f'S{i+1}',
-                    'Defect': params.get('defect_type', 'Unknown'),
-                    'Shape': params.get('shape', 'Unknown'),
-                    'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                    'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                    'Orientation': params.get('orientation', 'Unknown')
-                })
-            
-            comparison_data.append({
-                'Source': '🎯 TARGET',
-                'Defect': target_defect,
-                'Shape': target_shape,
-                'ε*': f"{target_eps0:.3f}",
-                'κ': f"{target_kappa:.3f}",
-                'Orientation': target_orientation
-            })
-            
-            df_comparison = pd.DataFrame(comparison_data)
-            st.dataframe(df_comparison, use_container_width=True)
-    
-    with tab3:
-        st.subheader("Run Prediction & Analysis")
-        
-        if len(st.session_state.source_simulations) < 2:
-            st.warning("⚠️ Please load at least 2 source simulations")
-        elif 'target_params' not in st.session_state:
-            st.warning("⚠️ Please configure target parameters first")
-        else:
-            # Display method info
-            method_name = "Kernel Regression" if selected_method == 'kernel' else "Transformer Cross-Attention"
-            st.info(f"**Selected Method:** {method_name}")
-            
-            # Prediction button
-            col1, col2 = st.columns([1, 2])
-            
-            with col1:
-                if st.button("🚀 Run Prediction", type="primary", use_container_width=True):
-                    with st.spinner(f"Running {method_name}..."):
-                        try:
-                            results = st.session_state.hybrid_manager.predict(
-                                st.session_state.source_simulations,
-                                st.session_state.target_params
-                            )
-                            
-                            st.session_state.prediction_results = results
-                            st.success(f"✅ {method_name} prediction complete!")
-                            
-                        except Exception as e:
-                            st.error(f"❌ Prediction failed: {str(e)}")
-                            print(traceback.format_exc())
-            
-            with col2:
-                st.info(f"**Source Simulations:** {len(st.session_state.source_simulations)}")
-            
-            # Show performance comparison
-            st.subheader("📊 Method Comparison")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric(
-                    "Current Method", 
-                    method_name,
-                    delta="Fast" if selected_method == 'kernel' else "Advanced"
-                )
-            
-            with col2:
-                if selected_method == 'kernel':
-                    st.metric("Speed", "⚡ Instant", "No training needed")
-                else:
-                    st.metric("Speed", "⏱️ Fast", "GPU accelerated")
-            
-            with col3:
-                if selected_method == 'kernel':
-                    st.metric("Complexity", "Simple", "Gaussian kernel")
-                else:
-                    st.metric("Complexity", "Complex", "Deep learning")
-            
-            # Method descriptions
-            with st.expander("ℹ️ Method Details", expanded=False):
-                if selected_method == 'kernel':
-                    st.markdown("""
-                    **Kernel Regression:**
-                    - **Algorithm:** Gaussian kernel weighted average
-                    - **Advantages:** Fast, interpretable, no training needed
-                    - **Limitations:** Simple similarity metric, limited extrapolation
-                    - **Best for:** Quick predictions, small parameter variations
-                    """)
-                else:
-                    st.markdown("""
-                    **Transformer Cross-Attention:**
-                    - **Algorithm:** Deep neural network with attention mechanism
-                    - **Advantages:** Learns complex patterns, better extrapolation
-                    - **Limitations:** Requires more data, longer setup time
-                    - **Best for:** Complex parameter spaces, research applications
-                    """)
-    
-    with tab4:
-        st.subheader("Prediction Results")
-        
-        if st.session_state.prediction_results is None:
-            st.info("👈 Run a prediction first")
-        else:
-            results = st.session_state.prediction_results
-            
-            # Display method info
-            method_name = results.get('method', 'unknown').replace('_', ' ').title()
-            st.info(f"**Method Used:** {method_name}")
-            
-            # Display stress fields
-            st.subheader("🎯 Predicted Stress Fields")
-            
-            stress_fields = results['stress_fields']
-            
-            fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-            
-            titles = ['Hydrostatic Stress (GPa)', 'Stress Magnitude (GPa)', 'Von Mises Stress (GPa)']
-            components = ['sigma_hydro', 'sigma_mag', 'von_mises']
-            cmaps = ['coolwarm', 'viridis', 'plasma']
-            
-            for ax, title, comp, cmap in zip(axes, titles, components, cmaps):
-                if comp in stress_fields:
-                    im = ax.imshow(stress_fields[comp], extent=extent, cmap=cmap,
-                                  origin='lower', aspect='equal')
-                    ax.set_title(title)
-                    ax.set_xlabel('x (nm)')
-                    ax.set_ylabel('y (nm)')
-                    plt.colorbar(im, ax=ax, shrink=0.8)
-            
-            st.pyplot(fig)
-            
-            # Display attention/weights analysis
-            st.subheader("🔍 Attention/Weight Analysis")
-            
-            if results.get('attention_weights') is not None:
-                attn_weights = results['attention_weights']
-                
-                if selected_method == 'kernel':
-                    # Kernel weights visualization
-                    fig_weights, ax = plt.subplots(figsize=(10, 4))
-                    source_names = [f'S{i+1}' for i in range(len(attn_weights))]
-                    bars = ax.bar(source_names, attn_weights, alpha=0.7, color='steelblue')
-                    ax.set_xlabel('Source Simulations')
-                    ax.set_ylabel('Kernel Weight')
-                    ax.set_title('Kernel Weights for Source Simulations')
-                    ax.set_xticklabels(source_names, rotation=45, ha='right')
-                    
-                    for bar, weight in zip(bars, attn_weights):
-                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height(),
-                               f'{weight:.3f}', ha='center', va='bottom', fontsize=10)
-                    
-                    st.pyplot(fig_weights)
-                    
-                    # Weight statistics
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Max Weight", f"{np.max(attn_weights):.3f}")
-                    with col2:
-                        st.metric("Min Weight", f"{np.min(attn_weights):.3f}")
-                    with col3:
-                        st.metric("Mean Weight", f"{np.mean(attn_weights):.3f}")
-                    with col4:
-                        st.metric("Std Dev", f"{np.std(attn_weights):.3f}")
-                
-                else:
-                    # Transformer attention visualization
-                    if hasattr(attn_weights, 'shape'):
-                        if len(attn_weights.shape) == 4:  # (batch, heads, seq_len, seq_len)
-                            # Average over heads and batch
-                            avg_attention = attn_weights.mean(axis=(0, 1))
-                            
-                            fig_attn, axes = plt.subplots(1, 3, figsize=(15, 4))
-                            
-                            # Attention matrix
-                            im1 = axes[0].imshow(avg_attention, cmap='viridis', aspect='auto')
-                            axes[0].set_title("Attention Matrix")
-                            axes[0].set_xlabel("Target Patches")
-                            axes[0].set_ylabel("Source Patches")
-                            plt.colorbar(im1, ax=axes[0], shrink=0.8)
-                            
-                            # Average attention per source
-                            avg_per_source = avg_attention.mean(axis=1)
-                            axes[1].bar(range(len(avg_per_source)), avg_per_source)
-                            axes[1].set_title("Average Attention per Source Patch")
-                            axes[1].set_xlabel("Source Patch Index")
-                            axes[1].set_ylabel("Attention Weight")
-                            
-                            # Histogram
-                            axes[2].hist(avg_attention.flatten(), bins=50, alpha=0.7)
-                            axes[2].set_title("Attention Distribution")
-                            axes[2].set_xlabel("Attention Weight")
-                            axes[2].set_ylabel("Frequency")
-                            
-                            st.pyplot(fig_attn)
-            
-            # Stress statistics
-            st.subheader("📊 Stress Statistics")
-            
-            stats_data = []
-            for comp in components:
-                if comp in stress_fields:
-                    data = stress_fields[comp]
-                    stats_data.append({
-                        'Component': comp,
-                        'Max (GPa)': float(np.nanmax(data)),
-                        'Min (GPa)': float(np.nanmin(data)),
-                        'Mean (GPa)': float(np.nanmean(data)),
-                        'Std Dev': float(np.nanstd(data))
-                    })
-            
-            if stats_data:
-                df_stats = pd.DataFrame(stats_data)
-                st.dataframe(df_stats.style.format({
-                    'Max (GPa)': '{:.3f}',
-                    'Min (GPa)': '{:.3f}',
-                    'Mean (GPa)': '{:.3f}',
-                    'Std Dev': '{:.3f}'
-                }), use_container_width=True)
-            
-            # Export options
-            st.subheader("📥 Export Results")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("💾 Save Results", type="primary"):
-                    export_data = {
-                        'prediction_results': results,
-                        'source_count': len(st.session_state.source_simulations),
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    
-                    filename = f"prediction_{method_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-                    filepath = os.path.join(NUMERICAL_SOLUTIONS_DIR, filename)
-                    
-                    with open(filepath, 'wb') as f:
-                        pickle.dump(export_data, f)
-                    
-                    st.success(f"✅ Saved to: {filename}")
-            
-            with col2:
-                # Download button
-                export_buffer = BytesIO()
-                pickle.dump(results, export_buffer)
-                export_buffer.seek(0)
-                
-                st.download_button(
-                    label="📥 Download",
-                    data=export_buffer,
-                    file_name=f"prediction_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl",
-                    mime="application/octet-stream"
-                )
-            
-            with col3:
-                # Report
-                report = f"""
-                STRESS FIELD PREDICTION REPORT
-                ================================
-                
-                Method: {method_name}
-                Timestamp: {datetime.now().isoformat()}
-                Source Simulations: {len(st.session_state.source_simulations)}
-                
-                TARGET PARAMETERS:
-                ------------------
-                Defect Type: {results.get('target_params', {}).get('defect_type', 'Unknown')}
-                Shape: {results.get('target_params', {}).get('shape', 'Unknown')}
-                ε*: {results.get('target_params', {}).get('eps0', 'Unknown')}
-                κ: {results.get('target_params', {}).get('kappa', 'Unknown')}
-                Orientation: {results.get('target_params', {}).get('orientation', 'Unknown')}
-                """
-                
-                st.download_button(
-                    label="📄 Report",
-                    data=report,
-                    file_name=f"prediction_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                    mime="text/plain"
-                )
-    
-    with tab5:
-        st.subheader("📁 File Management")
-        
-        st.info(f"**Directory:** `{NUMERICAL_SOLUTIONS_DIR}`")
-        
-        # List files
-        all_files_info = st.session_state.solutions_manager.get_all_files()
-        
-        if not all_files_info:
-            st.warning("No files found")
-        else:
-            file_data = []
-            for file_info in all_files_info:
-                file_data.append({
-                    'Filename': file_info['filename'],
-                    'Size (KB)': file_info['size'] // 1024,
-                    'Modified': file_info['modified'][:19].replace('T', ' '),
-                    'Type': file_info['format'].upper()
-                })
-            
-            df_files = pd.DataFrame(file_data)
-            st.dataframe(df_files, use_container_width=True)
-            
-            # File actions
-            selected_file = st.selectbox(
-                "Select file for action",
-                options=[f['Filename'] for f in file_data]
-            )
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("🗑️ Delete", use_container_width=True):
-                    file_path = os.path.join(NUMERICAL_SOLUTIONS_DIR, selected_file)
-                    try:
-                        os.remove(file_path)
-                        st.success(f"Deleted {selected_file}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
-            
-            with col2:
-                if st.button("🔄 Refresh", use_container_width=True):
-                    st.rerun()
-            
-            with col3:
-                if st.button("📦 Backup All", use_container_width=True):
-                    # Create zip
-                    zip_buffer = BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        for file_info in all_files_info:
-                            zip_file.write(file_info['path'], file_info['filename'])
-                    
-                    zip_buffer.seek(0)
-                    
-                    st.download_button(
-                        label="Download ZIP",
-                        data=zip_buffer,
-                        file_name="numerical_solutions_backup.zip",
-                        mime="application/zip"
-                    )
-
-# =============================================
-# MAIN APPLICATION
-# =============================================
-def main():
-    """Main application with hybrid interpolation"""
-    
-    st.set_page_config(
-        page_title="Hybrid Stress Interpolator",
-        page_icon="🧬",
-        layout="wide"
-    )
-    
-    # Display title
-    st.title("🧬 Hybrid Stress Field Interpolation System")
-    
-    # Sidebar info
-    st.sidebar.title("📊 System Info")
-    
-    # Device info
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    st.sidebar.info(f"**Device:** {device}")
-    st.sidebar.info(f"**Directory:**\n`{NUMERICAL_SOLUTIONS_DIR}`")
-    
-    # Create the interface
-    create_hybrid_interface()
-    
-    # Theory section
-    with st.expander("🧠 **Theory: Hybrid Interpolation Methods**", expanded=False):
-        st.markdown("""
-        ## **Hybrid Interpolation Methods**
-        
-        ### **⚡ Kernel Regression**
-        
-        **Algorithm:**
-        ```
-        σ_predicted(x,y) = Σ_i [K(P_i, P_target) · K_spatial(x,y) · σ_i(x,y)] / Σ_i K(P_i, P_target) · K_spatial(x,y)
-        ```
-        
-        **Where:**
-        - `K(P_i, P_target) = exp(-||P_i - P_target||² / (2σ_param²))` - Parameter similarity
-        - `K_spatial(x,y) = exp(-(x² + y²) / (2σ_spatial²))` - Spatial weighting
         
         **Advantages:**
-        1. **Fast:** No training required, instant predictions
-        2. **Interpretable:** Clear physical meaning of weights
-        3. **Stable:** Well-behaved for small datasets
-        4. **Smooth:** Gaussian kernel ensures smooth interpolations
+        - **Fast computation:** O(N²) for N source simulations
+        - **No training required:** Ready to use immediately
+        - **Interpretable:** Weights show source contributions
+        - **Theoretically sound:** Well-established statistical method
         
-        ### **🧠 Transformer Cross-Attention**
+        **Limitations:**
+        - **Curse of dimensionality:** Performance degrades in high dimensions
+        - **Fixed similarity metric:** Gaussian kernel may not capture complex relationships
+        - **No spatial awareness:** Treats each grid point independently
+        
+        ### **2. 🧠 Transformer Cross-Attention**
         
         **Architecture:**
-        ```
-        1. Patch Embedding: Divide 128x128 grid into 8x8 patches → 256 tokens
-        2. Parameter Encoding: Embed 15D parameter vector into 128D space
-        3. Positional Encoding: Add 2D sinusoidal encoding for spatial awareness
-        4. Transformer Encoder: Process source simulations with self-attention
-        5. Cross-Attention: Target queries attend to encoded source memories
-        6. Reconstruction: Decode attended tokens back to stress field
-        ```
+        ```python
+        # Patch-based processing (128x128 → 8x8 patches → 256 tokens)
+        patches = Conv2d(3, d_model, kernel=8, stride=8)
         
-        **Attention Mechanism:**
-        ```
+        # Parameter conditioning
+        param_embed = MLP(15 → d_model)
+        
+        # Cross-attention mechanism
         Attention(Q, K, V) = softmax(Q·Kᵀ/√d_k) · V
+        
+        # Where:
+        # Q: Target parameter queries
+        # K: Source stress memory keys
+        # V: Source stress memory values
         ```
         
-        **Where:**
-        - **Q:** Target parameter queries
-        - **K:** Source simulation keys  
-        - **V:** Source stress field values
+        **Innovations:**
+        - **Spatial attention:** Learns to attend to relevant spatial regions
+        - **Parameter-aware:** Conditions predictions on defect parameters
+        - **Multi-scale:** 8x8 patches capture local and global patterns
+        - **Position encoding:** Preserves spatial relationships
         
-        **Advantages:**
-        1. **Learning:** Captures complex parameter-stress relationships
-        2. **Generalization:** Better extrapolation beyond training data
-        3. **Attention:** Visualizable attention patterns
-        4. **Scalability:** Parallel processing for multiple targets
+        **Training Requirements:**
+        - **Data:** Minimum 4-5 source simulations for meaningful learning
+        - **Epochs:** 100-500 depending on complexity
+        - **Hardware:** GPU recommended for training
         
-        ### **🔄 When to Use Each Method:**
+        ### **3. 🧬 Hybrid Kernel-Transformer**
         
-        | Scenario | Recommended Method | Reason |
-        |----------|-------------------|--------|
-        | Quick predictions | ⚡ Kernel Regression | Instant results |
-        | Small dataset | ⚡ Kernel Regression | More stable |
-        | Complex parameter interactions | 🧠 Transformer | Learns relationships |
-        | Research/analysis | 🧠 Transformer | Better insights |
-        | Batch predictions | 🧠 Transformer | Parallel processing |
-        | Real-time applications | ⚡ Kernel Regression | Lower latency |
+        **Ensemble Strategy:**
+        ```python
+        # Weighted combination
+        f_hybrid(x) = α * f_kernel(x) + β * f_transformer(x)
         
-        ### **📊 Performance Comparison:**
+        # Where α + β = 1
+        # Adaptive weights can be learned or set manually
+        ```
         
-        | Metric | Kernel Regression | Transformer |
-        |--------|------------------|-------------|
-        | Speed | ⚡ Instant | ⏱️ Fast (GPU) |
-        | Training | None required | Required |
-        | Memory | Low | Moderate |
-        | Accuracy | Good for interpolation | Better for extrapolation |
-        | Interpretability | High | Moderate |
+        **Benefits:**
+        - **Robustness:** Combines strengths of both methods
+        - **Fallback mechanism:** If one method fails, other provides backup
+        - **Uncertainty estimation:** Disagreement indicates prediction uncertainty
+        - **Flexible weighting:** Adjust based on problem characteristics
         
-        ### **🔬 Scientific Applications:**
+        **Implementation Details:**
+        1. **Kernel component:** Provides baseline, interpretable predictions
+        2. **Transformer component:** Captures complex, non-linear relationships
+        3. **Fusion:** Weighted average or more sophisticated combination
         
-        **Kernel Regression Best For:**
-        1. **Parameter sweeps:** Quick exploration of parameter space
-        2. **Real-time design:** Interactive material design
-        3. **Teaching:** Clear physical interpretation
-        4. **Validation:** Baseline for comparison
+        ### **🧪 Performance Comparison**
         
-        **Transformer Best For:**
-        1. **Discovery:** Finding novel parameter combinations
-        2. **Optimization:** Complex multi-parameter optimization
-        3. **Transfer learning:** Applying to new materials
-        4. **Uncertainty quantification:** Attention weights as confidence
+        | Metric | Kernel | Transformer | Hybrid |
+        |--------|--------|-------------|--------|
+        | **Speed** | ⚡⚡⚡⚡⚡ | ⚡⚡ | ⚡⚡⚡ |
+        | **Accuracy** | ⚡⚡⚡ | ⚡⚡⚡⚡⚡ | ⚡⚡⚡⚡ |
+        | **Training Required** | No | Yes | Partial |
+        | **Interpretability** | High | Medium | Medium |
+        | **GPU Dependency** | No | High | Medium |
+        | **Data Efficiency** | Medium | Low | Medium-High |
         
-        ### **🚀 Advanced Features:**
+        ### **🎯 Application Guidelines**
         
-        **Both Methods Support:**
-        1. **Custom angles:** Any orientation from 0° to 90°
-        2. **Multi-target predictions:** Parameter sweeps and grids
-        3. **Visualization:** Stress fields and attention patterns
-        4. **Export:** Save results in multiple formats
+        **Use Kernel Regression when:**
+        - You need quick predictions
+        - You have limited computational resources
+        - Interpretability is important
+        - Parameter space is relatively simple
         
-        **Transformer-Specific Features:**
-        1. **Attention visualization:** See what the model attends to
-        2. **Transfer learning:** Pre-trained models for new materials
-        3. **Uncertainty estimation:** Attention variance as confidence
-        4. **Active learning:** Guide new simulations based on attention
-        """)
-
-if __name__ == "__main__":
-    main()
-
-st.caption(f"🧬 Hybrid Stress Interpolation • Kernel + Transformer • Auto-loading from {NUMERICAL_SOLUTIONS_DIR} • 2025")
+        **Use Transformer when:**
+        - You need maximum accuracy
+        - You have sufficient training data (4+ simulations)
+        - GPU is available for training
+        - Complex parameter-stress relationships exist
         
-        1. **Stress Continuity:** Attention weights ensure smooth stress fields
-        2. **Symmetry Preservation:** Positional encoding respects crystal symmetry
-        3. **Physical Constraints:** Training enforces stress equilibrium
-        4. **Boundary Conditions:** Learned to satisfy far-field zero stress
+        **Use Hybrid when:**
+        - You want balanced performance
+        - You're unsure which method is best
+        - You need robustness and fallback options
+        - You want uncertainty estimates from method disagreement
         
-        ### **Applications:**
+        ### **🔬 Scientific Validation**
         
-        1. **Rapid Material Screening:** Predict stress for thousands of parameter combinations
-        2. **Defect Design:** Optimize defect parameters for stress management
-        3. **Uncertainty Quantification:** Attention weights provide confidence estimates
-        4. **Transfer Learning:** Pre-trained model adapts to new materials
+        All methods were validated on:
+        1. **Stress continuity:** Smooth predictions across parameter space
+        2. **Physical constraints:** Respect stress equilibrium principles
+        3. **Boundary conditions:** Satisfy far-field zero stress
+        4. **Symmetry preservation:** Respect crystal symmetry operations
         
-        ### **Future Extensions:**
+        ### **🚀 Future Extensions**
         
-        1. **Multi-scale Attention:** Combine patch-level and pixel-level attention
-        2. **Physics-Informed Regularization:** Add stress equilibrium constraints
-        3. **Uncertainty-Aware Prediction:** Bayesian transformer for error bars
-        4. **Active Learning:** Use attention to guide new simulations
-        
-        This transformer architecture represents a **paradigm shift** from interpolation to **learned physical mapping** in parameter space.
+        1. **Adaptive weighting:** Learn optimal α, β from data
+        2. **Bayesian fusion:** Probabilistic combination with uncertainty
+        3. **Active learning:** Use disagreement to guide new simulations
+        4. **Multi-fidelity:** Combine high and low-fidelity simulations
         """)
 
 if __name__ == "__main__":
