@@ -15,3 +15,5 @@ msgpack
 dill
 joblib
 scikit-learn
+pandas
+
