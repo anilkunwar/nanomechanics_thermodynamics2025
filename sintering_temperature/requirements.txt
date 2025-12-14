@@ -16,4 +16,5 @@ dill
 joblib
 scikit-learn
 pandas
+xgboost
 
