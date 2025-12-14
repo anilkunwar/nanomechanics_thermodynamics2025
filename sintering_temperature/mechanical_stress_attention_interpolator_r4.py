@@ -548,7 +548,7 @@ class NumericalSolutionsManager:
            
         except Exception as e:
             st.error(f"Error loading {file_path}: {str(e)}")
-            raise
+            return None  # Changed from raise to return None for error handling
    
     def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
         if not filename.endswith(f'.{format_type}'):
@@ -790,7 +790,7 @@ class SpatialLocalityAttentionInterpolator:
    
     def _read_pt(self, file_content):
         buffer = BytesIO(file_content)
-        return torch.load(buffer, map_location=torch.device('cpu'))
+        return torch.load(buffer, map_location=torch.device('cpu'), weights_only=False)
    
     def _read_h5(self, file_content):
         buffer = BytesIO(file_content)
@@ -1145,12 +1145,11 @@ def create_attention_interface():
                                     loaded_count = 0
                                     for display_name in selected_files:
                                         file_path = file_options[display_name]
-                                        try:
-                                            sim_data = st.session_state.solutions_manager.load_simulation(
-                                                file_path,
-                                                st.session_state.interpolator
-                                            )
-                                           
+                                        sim_data = st.session_state.solutions_manager.load_simulation(
+                                            file_path,
+                                            st.session_state.interpolator
+                                        )
+                                        if sim_data is not None:
                                             if file_path not in st.session_state.loaded_from_numerical:
                                                 st.session_state.source_simulations.append(sim_data)
                                                 st.session_state.loaded_from_numerical.append(file_path)
@@ -1158,9 +1157,6 @@ def create_attention_interface():
                                                 st.success(f"✅ Loaded: {os.path.basename(file_path)}")
                                             else:
                                                 st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
-                                               
-                                        except Exception as e:
-                                            st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
                                    
                                     if loaded_count > 0:
                                         st.success(f"Successfully loaded {loaded_count} new files!")
@@ -1800,12 +1796,11 @@ def create_attention_interface():
                    
                     with col2:
                         if st.button("📂 Load", key=f"load_{file_info['filename']}"):
-                            try:
-                                sim_data = st.session_state.solutions_manager.load_simulation(
-                                    file_info['path'],
-                                    st.session_state.interpolator
-                                )
-                               
+                            sim_data = st.session_state.solutions_manager.load_simulation(
+                                file_info['path'],
+                                st.session_state.interpolator
+                            )
+                            if sim_data is not None:
                                 if file_info['path'] not in st.session_state.loaded_from_numerical:
                                     st.session_state.source_simulations.append(sim_data)
                                     st.session_state.loaded_from_numerical.append(file_info['path'])
@@ -1813,9 +1808,6 @@ def create_attention_interface():
                                     st.rerun()
                                 else:
                                     st.warning(f"⚠️ Already loaded: {file_info['filename']}")
-                                   
-                            except Exception as e:
-                                st.error(f"❌ Error loading: {str(e)}")
                    
                     with col3:
                         if st.button("🗑️ Delete", key=f"delete_{file_info['filename']}"):
@@ -2244,14 +2236,12 @@ def main():
             with st.spinner("Loading all simulations..."):
                 all_simulations = []
                 for file_info in all_files[:50]:
-                    try:
-                        sim_data = st.session_state.solutions_manager.load_simulation(
-                            file_info['path'],
-                            st.session_state.interpolator
-                        )
+                    sim_data = st.session_state.solutions_manager.load_simulation(
+                        file_info['path'],
+                        st.session_state.interpolator
+                    )
+                    if sim_data is not None:
                         all_simulations.append(sim_data)
-                    except:
-                        continue
                
                 if all_simulations:
                     stress_df = st.session_state.stress_analyzer.create_stress_summary_dataframe(
