@@ -160,6 +160,11 @@ Comparison codes
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolation8-streamlit-red)](https://mechanicalstress-attentioninterpolator8.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention )
 
 
+# Modular approach:  Interpolation (part I) and postprocessing (part II)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa1-streamlit-red)](https://mechanicalstress-interpolator-module-a1.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/postprocessingb1-streamlit-red)](https://mechanicalstress-interpolator-module-b1.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention )
 
 
 
