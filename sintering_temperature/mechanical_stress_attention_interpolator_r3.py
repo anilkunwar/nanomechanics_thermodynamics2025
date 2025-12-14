@@ -458,6 +458,253 @@ class SunburstChartManager:
         return fig
 
 # =============================================
+# NEW: SAFE DATA LOADING AND VALIDATION CLASSES
+# =============================================
+class SafeSimulationLoader:
+    """Safely load and validate simulation files with error handling"""
+    
+    @staticmethod
+    def validate_and_load_pkl(filepath):
+        """Attempts to load a PKL file with multiple safety checks."""
+        try:
+            with open(filepath, 'rb') as f:
+                # First, check file size and initial bytes
+                header = f.read(2)
+                f.seek(0)
+                if header == b'\x0d\x0d':  # Example corruption signature
+                    return None, f"File header indicates corruption (CR/LF issue)."
+
+                data = pickle.load(f)
+
+            # Validate the loaded structure has the keys we expect
+            if not isinstance(data, dict):
+                return None, "Loaded object is not a dictionary."
+            
+            # Check for required structure
+            has_stress_data = False
+            if 'stress_fields' in data:
+                if isinstance(data['stress_fields'], dict):
+                    has_stress_data = True
+            elif 'history' in data:
+                if isinstance(data['history'], list) and len(data['history']) > 0:
+                    has_stress_data = True
+            
+            if not has_stress_data:
+                return None, "Dictionary missing stress data ('stress_fields' or 'history')."
+
+            # Standardize structure
+            standardized = {
+                'params': data.get('params', {}),
+                'stress_fields': data.get('stress_fields', {}),
+                'history': data.get('history', []),
+                'metadata': data.get('metadata', {}),
+                'file_source': filepath,
+                'load_success': True
+            }
+            
+            # If we have history but no stress_fields, extract from last frame
+            if standardized['history'] and not standardized['stress_fields']:
+                try:
+                    eta, stress_fields = standardized['history'][-1]
+                    standardized['stress_fields'] = stress_fields
+                except:
+                    pass
+                    
+            return standardized, "Success"
+
+        except (pickle.UnpicklingError, EOFError, KeyError) as e:
+            return None, f"Failed to unpickle: {type(e).__name__}"
+        except Exception as e:
+            return None, f"Unexpected error: {str(e)[:100]}"
+
+class ResilientDataManager:
+    """Manages loading of simulation data with robust error handling"""
+    
+    def __init__(self, solutions_dir):
+        self.solutions_dir = Path(solutions_dir)
+        self.valid_simulations = []
+        self.failed_files_log = []  # Keep track of what failed and why
+        self.summary_df = pd.DataFrame()
+    
+    def scan_and_load_all(self, file_limit=100):
+        """Scans directory, attempts to load all files, and aggregates results."""
+        self.valid_simulations.clear()
+        self.failed_files_log.clear()
+        
+        pkl_files = list(self.solutions_dir.glob("*.pkl"))[:file_limit]
+        pt_files = list(self.solutions_dir.glob("*.pt"))[:file_limit]
+        all_files = pkl_files + pt_files
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for idx, file_path in enumerate(all_files):
+            status_text.text(f"Loading {idx+1}/{len(all_files)}: {file_path.name}")
+            progress_bar.progress((idx + 1) / len(all_files))
+            
+            if file_path.suffix.lower() == '.pkl':
+                sim_data, message = SafeSimulationLoader.validate_and_load_pkl(file_path)
+            else:
+                # For .pt files, use a simpler approach
+                sim_data, message = self._load_pt_file(file_path)
+            
+            if sim_data:
+                self.valid_simulations.append(sim_data)
+            else:
+                log_entry = {'file': file_path.name, 'error': message}
+                self.failed_files_log.append(log_entry)
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Create summary dataframe
+        self._create_summary_dataframe()
+        
+        return len(self.valid_simulations), len(self.failed_files_log)
+    
+    def _load_pt_file(self, file_path):
+        """Load PyTorch .pt files"""
+        try:
+            data = torch.load(file_path, map_location=torch.device('cpu'), weights_only=False)
+            
+            # Standardize structure
+            standardized = {
+                'params': data.get('params', {}),
+                'stress_fields': data.get('stress_fields', {}),
+                'history': data.get('history', []),
+                'metadata': data.get('metadata', {}),
+                'file_source': str(file_path),
+                'load_success': True
+            }
+            return standardized, "Success"
+        except Exception as e:
+            return None, f"Failed to load .pt file: {str(e)[:100]}"
+    
+    def _create_summary_dataframe(self):
+        """Creates a clean DataFrame from only the successfully loaded data."""
+        if not self.valid_simulations:
+            self.summary_df = pd.DataFrame()
+            return
+        
+        rows = []
+        for idx, sim in enumerate(self.valid_simulations):
+            params = sim.get('params', {})
+            stress_fields = sim.get('stress_fields', {})
+            
+            # Safely compute max stress, use 0 if field is missing or empty
+            max_vm = 0.0
+            if 'von_mises' in stress_fields:
+                vm_data = stress_fields['von_mises']
+                if isinstance(vm_data, np.ndarray) and vm_data.size > 0:
+                    max_vm = float(np.max(vm_data))
+            
+            max_hydro = 0.0
+            if 'sigma_hydro' in stress_fields:
+                hydro_data = stress_fields['sigma_hydro']
+                if isinstance(hydro_data, np.ndarray) and hydro_data.size > 0:
+                    max_hydro = float(np.max(np.abs(hydro_data)))
+            
+            rows.append({
+                'id': f"sim_{idx:03d}",
+                'defect_type': params.get('defect_type', 'Unknown'),
+                'shape': params.get('shape', 'Unknown'),
+                'orientation': params.get('orientation', 'Unknown'),
+                'eps0': float(params.get('eps0', 0)),
+                'kappa': float(params.get('kappa', 0)),
+                'max_von_mises': max_vm,
+                'max_abs_hydrostatic': max_hydro,
+                'source_file': Path(sim.get('file_source', '')).name,
+                'type': 'source'
+            })
+        
+        self.summary_df = pd.DataFrame(rows)
+    
+    def get_summary_dataframe(self):
+        """Return the summary dataframe"""
+        return self.summary_df.copy()
+    
+    def get_failed_files_report(self):
+        """Return a formatted report of failed files"""
+        if not self.failed_files_log:
+            return "No files failed to load."
+        
+        report = "## Failed Files Report\n\n"
+        for entry in self.failed_files_log:
+            report += f"- **{entry['file']}**: {entry['error']}\n"
+        
+        return report
+
+# =============================================
+# SAFE VISUALIZATION FUNCTIONS
+# =============================================
+def create_safe_box_plot(df, value_columns, group_by_column='defect_type', max_columns=5):
+    """Creates a box plot only if the required data is available."""
+    if df.empty:
+        st.warning("No data available for the box plot.")
+        return None
+    
+    # Filter to columns that actually exist in the DataFrame
+    valid_value_cols = [col for col in value_columns if col in df.columns]
+    if not valid_value_cols:
+        st.warning("No selected value columns found in the data.")
+        return None
+    
+    if group_by_column not in df.columns:
+        st.warning(f"Grouping column '{group_by_column}' not found.")
+        return None
+    
+    # Limit number of columns for performance
+    valid_value_cols = valid_value_cols[:max_columns]
+    
+    # Now, safely create the plot
+    try:
+        fig = make_subplots(
+            rows=len(valid_value_cols), 
+            cols=1,
+            subplot_titles=[f"Distribution of {col}" for col in valid_value_cols],
+            vertical_spacing=0.1
+        )
+        
+        # Define a safe color palette
+        safe_colors = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
+        ]
+        
+        for i, col in enumerate(valid_value_cols):
+            for j, group_name in enumerate(df[group_by_column].unique()):
+                group_data = df[df[group_by_column] == group_name][col].dropna()
+                
+                if len(group_data) > 0:
+                    # Use safe color indexing
+                    color_idx = j % len(safe_colors)
+                    color = safe_colors[color_idx]
+                    
+                    fig.add_trace(
+                        go.Box(
+                            y=group_data, 
+                            name=str(group_name),
+                            marker_color=color,
+                            legendgroup=group_name,
+                            showlegend=(i == 0)  # Show legend only for first subplot
+                        ),
+                        row=i + 1, 
+                        col=1
+                    )
+        
+        fig.update_layout(
+            height=300 * len(valid_value_cols),
+            showlegend=True,
+            title_text=f"Box Plots by {group_by_column}"
+        )
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating box plot: {str(e)}")
+        return None
+
+# =============================================
 # NUMERICAL SOLUTIONS MANAGER
 # =============================================
 class NumericalSolutionsManager:
@@ -1055,6 +1302,10 @@ def create_attention_interface():
     # Initialize sunburst chart manager
     if 'sunburst_manager' not in st.session_state:
         st.session_state.sunburst_manager = SunburstChartManager()
+    
+    # Initialize resilient data manager
+    if 'resilient_data_manager' not in st.session_state:
+        st.session_state.resilient_data_manager = ResilientDataManager(NUMERICAL_SOLUTIONS_DIR)
     
     # Initialize source simulations list
     if 'source_simulations' not in st.session_state:
@@ -1847,37 +2098,95 @@ def create_attention_interface():
                         st.rerun()
     
     # =============================================
-    # TAB 7: STRESS ANALYSIS & SUNBURST CHARTS
+    # TAB 7: STRESS ANALYSIS & SUNBURST CHARTS (FIXED)
     # =============================================
     with tab7:
         st.header("📈 Stress Analysis and Sunburst Visualization")
         
-        # Update stress summary DataFrame
-        if st.button("🔄 Update Stress Summary", type="secondary"):
-            with st.spinner("Computing stress statistics..."):
-                st.session_state.stress_summary_df = (
-                    st.session_state.stress_analyzer.create_stress_summary_dataframe(
-                        st.session_state.source_simulations,
-                        st.session_state.multi_target_predictions
-                    )
-                )
-                if not st.session_state.stress_summary_df.empty:
-                    st.success(f"✅ Stress summary updated with {len(st.session_state.stress_summary_df)} entries")
+        # NEW: Robust data loading section
+        st.subheader("🔄 Robust Data Loading")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            file_limit = st.number_input("Max files to load", 1, 500, 100, 10)
+        with col2:
+            load_method = st.radio("Loading Method", ["Robust Loader", "Standard Loader"], index=0)
+        
+        if st.button("🚀 Load Simulations for Analysis", type="primary"):
+            with st.spinner("Loading and validating simulation files..."):
+                if load_method == "Robust Loader":
+                    # Use the resilient data manager
+                    successful, failed = st.session_state.resilient_data_manager.scan_and_load_all(file_limit)
+                    
+                    if successful > 0:
+                        st.session_state.stress_summary_df = st.session_state.resilient_data_manager.get_summary_dataframe()
+                        st.success(f"✅ Successfully loaded {successful} simulations")
+                        
+                        if failed > 0:
+                            st.warning(f"⚠️ Failed to load {failed} files (see sidebar for details)")
+                            with st.sidebar.expander("❌ Failed Files Report", expanded=False):
+                                st.markdown(st.session_state.resilient_data_manager.get_failed_files_report())
+                    else:
+                        st.error("❌ No simulations could be loaded")
                 else:
-                    st.warning("No data available for stress analysis")
+                    # Use standard loader (original method)
+                    all_files = st.session_state.solutions_manager.get_all_files()[:file_limit]
+                    all_simulations = []
+                    failed_count = 0
+                    
+                    progress_bar = st.progress(0)
+                    for idx, file_info in enumerate(all_files):
+                        progress_bar.progress((idx + 1) / len(all_files))
+                        try:
+                            sim_data = st.session_state.solutions_manager.load_simulation(
+                                file_info['path'],
+                                st.session_state.interpolator
+                            )
+                            all_simulations.append(sim_data)
+                        except Exception as e:
+                            failed_count += 1
+                            st.sidebar.error(f"Failed: {file_info['filename']}")
+                    
+                    progress_bar.empty()
+                    
+                    if all_simulations:
+                        stress_df = st.session_state.stress_analyzer.create_stress_summary_dataframe(
+                            all_simulations, {}
+                        )
+                        st.session_state.stress_summary_df = stress_df
+                        st.success(f"✅ Loaded {len(all_simulations)} simulations for analysis")
+                        if failed_count > 0:
+                            st.warning(f"⚠️ Failed to load {failed_count} files")
+                    else:
+                        st.error("No simulations could be loaded")
         
         # Display stress summary if available
         if not st.session_state.stress_summary_df.empty:
             st.subheader("📋 Stress Summary Statistics")
             
             # Show DataFrame
+            numeric_cols = st.session_state.stress_summary_df.select_dtypes(include=[np.number]).columns
+            format_dict = {col: "{:.3f}" for col in numeric_cols}
+            
             st.dataframe(
-                st.session_state.stress_summary_df.style.format({
-                    col: "{:.3f}" for col in st.session_state.stress_summary_df.select_dtypes(include=[np.number]).columns
-                }),
+                st.session_state.stress_summary_df.style.format(format_dict),
                 use_container_width=True,
                 height=400
             )
+            
+            # Quick stats
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Simulations", len(st.session_state.stress_summary_df))
+            with col2:
+                max_vm = st.session_state.stress_summary_df['max_von_mises'].max() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
+                st.metric("Max Von Mises", f"{max_vm:.2f} GPa")
+            with col3:
+                mean_vm = st.session_state.stress_summary_df['max_von_mises'].mean() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
+                st.metric("Avg Max Von Mises", f"{mean_vm:.2f} GPa")
+            with col4:
+                defect_counts = st.session_state.stress_summary_df['defect_type'].value_counts().to_dict() if 'defect_type' in st.session_state.stress_summary_df.columns else {}
+                st.metric("Unique Defect Types", len(defect_counts))
             
             # Download stress summary
             csv_buffer = BytesIO()
@@ -1905,7 +2214,7 @@ def create_attention_interface():
                 level1 = st.selectbox(
                     "First Level (Center)",
                     categorical_cols,
-                    index=0 if 'type' in categorical_cols else 0
+                    index=0 if 'defect_type' in categorical_cols else 0
                 )
                 
                 level2_options = [c for c in categorical_cols if c != level1]
@@ -2094,19 +2403,20 @@ def create_attention_interface():
                     col_x, col_y, col_z = st.columns(3)
                     
                     with col_x:
-                        x_col = st.selectbox("X-axis", stress_value_cols, index=0)
+                        x_col = st.selectbox("X-axis", stress_value_cols, index=0, key="x_3d")
                     with col_y:
-                        y_col = st.selectbox("Y-axis", stress_value_cols, index=1)
+                        y_col = st.selectbox("Y-axis", stress_value_cols, index=1, key="y_3d")
                     with col_z:
-                        z_col = st.selectbox("Z-axis", stress_value_cols, index=2)
+                        z_col = st.selectbox("Z-axis", stress_value_cols, index=2, key="z_3d")
                     
                     color_by = st.selectbox(
                         "Color by",
                         ['defect_type', 'shape', 'orientation', 'type'] + stress_value_cols,
-                        index=0
+                        index=0,
+                        key="color_3d"
                     )
                     
-                    if st.button("Generate 3D Scatter"):
+                    if st.button("Generate 3D Scatter", key="btn_3d"):
                         fig_3d = px.scatter_3d(
                             df_filtered,
                             x=x_col,
@@ -2147,51 +2457,37 @@ def create_attention_interface():
                     group_by = st.selectbox(
                         "Group by for Box Plot",
                         path_columns,
-                        index=0
+                        index=0,
+                        key="group_box"
                     )
+                    
+                    # Get available numeric columns
+                    available_numeric = df_filtered.select_dtypes(include=[np.number]).columns.tolist()
+                    default_box_values = [col for col in ['max_von_mises', 'max_abs_hydrostatic', 'eps0', 'kappa'] 
+                                         if col in available_numeric][:3]
                     
                     box_values = st.multiselect(
                         "Select metrics for Box Plot",
-                        stress_value_cols,
-                        default=stress_value_cols[:min(5, len(stress_value_cols))]
+                        available_numeric,
+                        default=default_box_values,
+                        key="box_values"
                     )
                     
                     if len(box_values) > 0:
-                        fig_boxes = make_subplots(
-                            rows=len(box_values),
-                            cols=1,
-                            subplot_titles=[v.replace('_', ' ').title() for v in box_values],
-                            vertical_spacing=0.1
+                        # Use the safe box plot function
+                        fig_boxes = create_safe_box_plot(
+                            df_filtered, 
+                            box_values, 
+                            group_by_column=group_by,
+                            max_columns=5
                         )
                         
-                        for i, value_col in enumerate(box_values):
-                            for group in df_filtered[group_by].unique():
-                                group_data = df_filtered[df_filtered[group_by] == group][value_col].dropna()
-                                
-                                fig_boxes.add_trace(
-                                    go.Box(
-                                        y=group_data,
-                                        name=str(group),
-                                        boxpoints='outliers',
-                                        jitter=0.3,
-                                        pointpos=-1.8,
-                                        marker_color=px.colors.sequential.Viridis[i/len(box_values)]
-                                    ),
-                                    row=i+1,
-                                    col=1
-                                )
-                        
-                        fig_boxes.update_layout(
-                            height=300 * len(box_values),
-                            showlegend=True,
-                            title_text=f"Box Plots by {group_by}"
-                        )
-                        
-                        st.plotly_chart(fig_boxes, use_container_width=True)
+                        if fig_boxes:
+                            st.plotly_chart(fig_boxes, use_container_width=True)
                 else:
                     st.info("Please configure hierarchical levels first")
         else:
-            st.info("👈 Please load simulations and generate predictions first to enable stress analysis")
+            st.info("👈 Load simulations first to enable stress analysis")
 
 # =============================================
 # MAIN APPLICATION
@@ -2235,52 +2531,131 @@ def main():
         if 'interpolator' not in st.session_state:
             st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
         
-        all_files = st.session_state.solutions_manager.get_all_files()
+        if 'resilient_data_manager' not in st.session_state:
+            st.session_state.resilient_data_manager = ResilientDataManager(NUMERICAL_SOLUTIONS_DIR)
         
-        if st.button("📥 Load All Simulations for Analysis"):
-            with st.spinner("Loading all simulations..."):
-                all_simulations = []
-                for file_info in all_files[:50]:
-                    try:
-                        sim_data = st.session_state.solutions_manager.load_simulation(
-                            file_info['path'],
-                            st.session_state.interpolator
-                        )
-                        all_simulations.append(sim_data)
-                    except:
-                        continue
-                
-                if all_simulations:
-                    stress_df = st.session_state.stress_analyzer.create_stress_summary_dataframe(
-                        all_simulations, {}
-                    )
+        # NEW: Simplified stress dashboard
+        st.subheader("Robust Stress Analysis Dashboard")
+        
+        # Load data section
+        st.markdown("### 📥 Load Simulation Data")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            file_limit = st.number_input("Maximum files to process", 10, 500, 50, 10)
+        with col2:
+            load_method = st.radio("Loading method", ["Robust (recommended)", "Standard"], index=0)
+        
+        if st.button("🚀 Load and Analyze Simulations", type="primary"):
+            with st.spinner("Loading simulations..."):
+                if load_method == "Robust (recommended)":
+                    # Use resilient data manager
+                    successful, failed = st.session_state.resilient_data_manager.scan_and_load_all(file_limit)
                     
-                    if not stress_df.empty:
-                        st.session_state.stress_summary_df = stress_df
-                        st.success(f"✅ Loaded {len(all_simulations)} simulations for analysis")
+                    if successful > 0:
+                        st.session_state.stress_summary_df = st.session_state.resilient_data_manager.get_summary_dataframe()
+                        
+                        # Display summary metrics
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Loaded Simulations", successful)
+                        with col2:
+                            if not st.session_state.stress_summary_df.empty and 'max_von_mises' in st.session_state.stress_summary_df.columns:
+                                max_vm = st.session_state.stress_summary_df['max_von_mises'].max()
+                                st.metric("Max Von Mises", f"{max_vm:.2f} GPa")
+                        with col3:
+                            if not st.session_state.stress_summary_df.empty and 'defect_type' in st.session_state.stress_summary_df.columns:
+                                defect_types = st.session_state.stress_summary_df['defect_type'].nunique()
+                                st.metric("Defect Types", defect_types)
+                        with col4:
+                            if failed > 0:
+                                st.metric("Failed Files", failed, delta_color="inverse")
+                        
+                        # Show failed files if any
+                        if failed > 0:
+                            with st.expander("⚠️ View Failed Files", expanded=False):
+                                st.markdown(st.session_state.resilient_data_manager.get_failed_files_report())
+                        
+                        st.success(f"✅ Analysis complete! Loaded {successful} valid simulations.")
                     else:
-                        st.warning("No stress data found in loaded simulations")
+                        st.error("❌ No valid simulations could be loaded.")
+                
                 else:
-                    st.error("No simulations could be loaded")
+                    # Standard method
+                    all_files = st.session_state.solutions_manager.get_all_files()[:file_limit]
+                    all_simulations = []
+                    
+                    progress_bar = st.progress(0)
+                    for idx, file_info in enumerate(all_files):
+                        progress_bar.progress((idx + 1) / len(all_files))
+                        try:
+                            sim_data = st.session_state.solutions_manager.load_simulation(
+                                file_info['path'],
+                                st.session_state.interpolator
+                            )
+                            all_simulations.append(sim_data)
+                        except:
+                            continue
+                    
+                    progress_bar.empty()
+                    
+                    if all_simulations:
+                        stress_df = st.session_state.stress_analyzer.create_stress_summary_dataframe(
+                            all_simulations, {}
+                        )
+                        st.session_state.stress_summary_df = stress_df
+                        st.success(f"✅ Loaded {len(all_simulations)} simulations")
+                    else:
+                        st.error("No simulations could be loaded")
         
-        if not st.session_state.stress_summary_df.empty:
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Simulations", len(st.session_state.stress_summary_df))
-            with col2:
-                max_vm = st.session_state.stress_summary_df['max_von_mises'].max() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
-                st.metric("Max Von Mises", f"{max_vm:.2f} GPa")
-            with col3:
-                mean_vm = st.session_state.stress_summary_df['max_von_mises'].mean() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
-                st.metric("Avg Max Von Mises", f"{mean_vm:.2f} GPa")
-            with col4:
-                defect_counts = st.session_state.stress_summary_df['defect_type'].value_counts().to_dict() if 'defect_type' in st.session_state.stress_summary_df.columns else {}
-                st.metric("Unique Defect Types", len(defect_counts))
+        # Show data if available
+        if 'stress_summary_df' in st.session_state and not st.session_state.stress_summary_df.empty:
+            st.markdown("### 📊 Analysis Results")
             
-            # Show the stress analysis tab interface
-            create_attention_interface()
+            # Quick visualizations
+            viz_col1, viz_col2 = st.columns(2)
+            
+            with viz_col1:
+                st.subheader("Von Mises by Defect Type")
+                if 'defect_type' in st.session_state.stress_summary_df.columns and 'max_von_mises' in st.session_state.stress_summary_df.columns:
+                    fig = px.box(
+                        st.session_state.stress_summary_df,
+                        x='defect_type',
+                        y='max_von_mises',
+                        title="Von Mises Stress Distribution by Defect Type",
+                        color='defect_type'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with viz_col2:
+                st.subheader("Stress vs Parameters")
+                if 'eps0' in st.session_state.stress_summary_df.columns and 'max_von_mises' in st.session_state.stress_summary_df.columns:
+                    fig = px.scatter(
+                        st.session_state.stress_summary_df,
+                        x='eps0',
+                        y='max_von_mises',
+                        color='defect_type',
+                        title="Von Mises vs ε*",
+                        hover_data=['shape', 'orientation']
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            # Data table
+            st.subheader("📋 Complete Data Table")
+            st.dataframe(
+                st.session_state.stress_summary_df.style.format({
+                    col: "{:.3f}" for col in st.session_state.stress_summary_df.select_dtypes(include=[np.number]).columns
+                }),
+                use_container_width=True,
+                height=300
+            )
+            
+            # Option to go to detailed analysis
+            if st.button("🔬 Open Detailed Analysis Interface"):
+                st.session_state.operation_mode = "Attention Interpolation"
+                st.rerun()
         else:
-            st.info("Please load simulations first to enable the stress analysis dashboard")
+            st.info("👆 Click the button above to load and analyze simulation data")
 
 # =============================================
 # THEORETICAL ANALYSIS
@@ -2354,6 +2729,14 @@ with st.expander("🔬 Enhanced Theoretical Analysis: Stress Metrics and Visuali
     1. **Threshold-based Detection:** User-defined percentile threshold
     2. **Peak Characterization:** Number of peaks, maximum value, position
     3. **Visualization:** Overlay peaks on stress field maps
+    
+    ### **🛡️ New Robust Features**
+    
+    **File Loading Improvements:**
+    1. **Safe Validation:** Checks file integrity before loading
+    2. **Error Isolation:** One corrupt file doesn't break entire batch
+    3. **Detailed Logging:** See exactly which files failed and why
+    4. **Progress Tracking:** Visual loading progress with status updates
     """)
 
 if __name__ == "__main__":
