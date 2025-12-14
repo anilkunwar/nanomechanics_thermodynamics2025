@@ -17,7 +17,7 @@ from scipy.ndimage import gaussian_filter, rotate
 import warnings
 import pickle
 import torch
-import torch.serialization  # Import torch serialization for safe globals
+import torch.serialization  # For PyTorch security settings
 import sqlite3
 from io import StringIO
 import traceback
@@ -30,6 +30,7 @@ import tempfile
 import base64
 import os
 import glob
+import sys
 from typing import List, Dict, Any, Optional, Tuple, Union
 from itertools import product
 import plotly.graph_objects as go
@@ -39,40 +40,34 @@ from plotly.subplots import make_subplots
 warnings.filterwarnings('ignore')
 
 # =============================================
-# GLOBAL PYTORCH SECURITY FIXES
+# GLOBAL PYTORCH SECURITY SETUP
 # =============================================
-def setup_torch_security_globals():
-    """
-    Configure safe globals for PyTorch serialization to handle NumPy objects
-    This fixes the 'weights_only=True' security restrictions in PyTorch 2.6+
-    """
+def setup_torch_security():
+    """Configure PyTorch security settings for compatibility with older files"""
     try:
         import numpy as np
         import torch.serialization
         
-        # List of safe globals to add for NumPy compatibility
+        # Add safe globals for NumPy compatibility
         safe_globals = []
         
-        # Try to add various NumPy scalar types that might appear in files
+        # Add NumPy scalar types
         try:
-            # NumPy 2.0+ style
             safe_globals.extend([
                 np._core.multiarray.scalar,  # Internal scalar type
                 np.core.multiarray.scalar,   # Public alias
                 np.dtype,                    # Data type objects
                 np.ndarray,                  # Array objects
-                np.bool_,                    # Boolean type
-                np.int8, np.int16, np.int32, np.int64,  # Integer types
+                np.bool_, np.int8, np.int16, np.int32, np.int64,
                 np.uint8, np.uint16, np.uint32, np.uint64,
-                np.float16, np.float32, np.float64,     # Float types
+                np.float16, np.float32, np.float64,
                 np.complex64, np.complex128,
-                np.str_, np.bytes_,                     # String types
-                np.object_,                            # Object type
+                np.str_, np.bytes_, np.object_
             ])
         except AttributeError:
             pass
         
-        # Try to add dtype classes (NumPy 2.0+)
+        # Add dtype classes for NumPy 2.0+
         try:
             from numpy.dtypes import Float64DType, Float32DType, Int64DType, Int32DType
             safe_globals.extend([
@@ -81,16 +76,15 @@ def setup_torch_security_globals():
         except ImportError:
             pass
         
-        # Add the safe globals to torch serialization
+        # Add the safe globals
         if safe_globals:
             torch.serialization.add_safe_globals(safe_globals)
-            st.sidebar.info(f"✅ Added {len(safe_globals)} safe globals for PyTorch loading")
             
     except Exception as e:
-        st.sidebar.warning(f"⚠️ Could not setup torch security globals: {str(e)}")
+        st.sidebar.warning(f"⚠️ Could not setup torch security: {str(e)}")
 
-# Initialize torch security settings
-setup_torch_security_globals()
+# Initialize security settings
+setup_torch_security()
 
 # =============================================
 # PATH CONFIGURATION
@@ -102,431 +96,284 @@ if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
     os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
 
 # =============================================
-# STRESS ANALYSIS MANAGER
+# ENHANCED FILE LOADING MANAGER
 # =============================================
-class StressAnalysisManager:
-    """Manager for stress value analysis and visualization"""
+class EnhancedFileLoader:
+    """Enhanced file loader with multiple fallback strategies"""
     
     @staticmethod
-    def compute_max_stress_values(stress_fields: Dict[str, np.ndarray]) -> Dict[str, float]:
+    def check_file_integrity(file_path: str) -> Tuple[bool, str]:
         """
-        Compute maximum stress values from stress fields
+        Check if a file is valid before attempting to load
         
         Args:
-            stress_fields: Dictionary containing stress component arrays
+            file_path: Path to file
             
         Returns:
-            Dictionary with max stress values
+            Tuple of (is_valid, reason)
         """
-        results = {}
-        
-        # Hydrostatic stress - take absolute maximum
-        if 'sigma_hydro' in stress_fields:
-            hydro_data = stress_fields['sigma_hydro']
-            results['max_abs_hydrostatic'] = float(np.max(np.abs(hydro_data)))
-            results['max_hydrostatic'] = float(np.max(hydro_data))
-            results['min_hydrostatic'] = float(np.min(hydro_data))
-            results['mean_abs_hydrostatic'] = float(np.mean(np.abs(hydro_data)))
-        
-        # Stress magnitude - take maximum
-        if 'sigma_mag' in stress_fields:
-            mag_data = stress_fields['sigma_mag']
-            results['max_stress_magnitude'] = float(np.max(mag_data))
-            results['mean_stress_magnitude'] = float(np.mean(mag_data))
-        
-        # Von Mises stress - take maximum
-        if 'von_mises' in stress_fields:
-            vm_data = stress_fields['von_mises']
-            results['max_von_mises'] = float(np.max(vm_data))
-            results['mean_von_mises'] = float(np.mean(vm_data))
-            results['min_von_mises'] = float(np.min(vm_data))
-        
-        # Principal stresses if available
-        if 'sigma_1' in stress_fields and 'sigma_2' in stress_fields and 'sigma_3' in stress_fields:
-            sigma1 = stress_fields['sigma_1']
-            sigma2 = stress_fields['sigma_2']
-            sigma3 = stress_fields['sigma_3']
+        try:
+            if not os.path.exists(file_path):
+                return False, "File does not exist"
             
-            results['max_principal_1'] = float(np.max(sigma1))
-            results['max_principal_2'] = float(np.max(sigma2))
-            results['max_principal_3'] = float(np.max(sigma3))
-            results['max_principal_abs'] = float(np.max(np.abs(sigma1)))
+            file_size = os.path.getsize(file_path)
+            if file_size == 0:
+                return False, "File is empty"
             
-            # Maximum shear stress (Tresca)
-            max_shear = 0.5 * np.max(np.abs(sigma1 - sigma3))
-            results['max_shear_tresca'] = float(max_shear)
-        
-        # Additional statistical measures
-        if 'sigma_hydro' in stress_fields:
-            hydro_data = stress_fields['sigma_hydro']
-            results['hydro_std'] = float(np.std(hydro_data))
-            results['hydro_skewness'] = float(stats.skew(hydro_data.flatten()))
-            results['hydro_kurtosis'] = float(stats.kurtosis(hydro_data.flatten()))
-        
-        if 'von_mises' in stress_fields:
-            vm_data = stress_fields['von_mises']
-            # Percentiles
-            results['von_mises_p95'] = float(np.percentile(vm_data, 95))
-            results['von_mises_p99'] = float(np.percentile(vm_data, 99))
-            results['von_mises_p99_9'] = float(np.percentile(vm_data, 99.9))
-        
-        return results
+            if file_size < 10:
+                return False, "File is too small"
+            
+            # Check file headers
+            with open(file_path, 'rb') as f:
+                header = f.read(16)
+                
+                if len(header) < 4:
+                    return False, "File too short for header check"
+                
+                # Check for common file signatures
+                if file_path.endswith('.pt') or file_path.endswith('.pth'):
+                    # PyTorch files start with a pickle header
+                    if header[0] != 0x80:
+                        return False, "Invalid PyTorch file header"
+                
+                elif file_path.endswith('.pkl') or file_path.endswith('.pickle'):
+                    # Pickle files have protocol header
+                    if header[0] not in [0x80, 0x83, 0x84, 0x85, 0x86, 0x87]:
+                        return False, "Invalid pickle protocol"
+                
+                elif file_path.endswith('.h5') or file_path.endswith('.hdf5'):
+                    # HDF5 signature
+                    if not header.startswith(b'\x89HDF\r\n\x1a\n'):
+                        return False, "Invalid HDF5 header"
+                
+                elif file_path.endswith('.npz'):
+                    # NPZ files are zip files
+                    if not header.startswith(b'PK'):
+                        return False, "Invalid NPZ (not a ZIP file)"
+            
+            return True, "File appears valid"
+            
+        except Exception as e:
+            return False, f"Error checking file: {str(e)}"
     
     @staticmethod
-    def extract_stress_peaks(stress_fields: Dict[str, np.ndarray], 
-                           threshold_percentile: float = 95) -> Dict[str, Dict]:
+    def load_pytorch_file(file_path: str, use_secure_loading: bool = True):
         """
-        Extract stress peak locations and values
+        Load PyTorch file with multiple fallback strategies
         
         Args:
-            stress_fields: Dictionary containing stress component arrays
-            threshold_percentile: Percentile for peak detection
+            file_path: Path to PyTorch file
+            use_secure_loading: Whether to use weights_only=True
             
         Returns:
-            Dictionary with peak information for each stress component
+            Loaded data
         """
-        peaks = {}
+        strategies = [
+            ("Secure loading (weights_only=True)", lambda: torch.load(file_path, map_location='cpu', weights_only=True)),
+            ("Insecure loading (weights_only=False)", lambda: torch.load(file_path, map_location='cpu', weights_only=False)),
+            ("Direct buffer load", lambda: EnhancedFileLoader._load_pytorch_from_buffer(file_path)),
+            ("Zip extraction", lambda: EnhancedFileLoader._extract_pytorch_zip(file_path))
+        ]
         
-        for component_name, stress_data in stress_fields.items():
-            if not isinstance(stress_data, np.ndarray):
-                continue
-                
-            # Calculate threshold based on percentile
-            threshold = np.percentile(stress_data, threshold_percentile)
-            
-            # Find peaks (indices where value > threshold)
-            peak_indices = np.where(stress_data > threshold)
-            
-            if len(peak_indices[0]) > 0:
-                # Get peak values
-                peak_values = stress_data[peak_indices]
-                
-                # Find global maximum
-                max_idx = np.argmax(peak_values)
-                max_pos = (peak_indices[0][max_idx], peak_indices[1][max_idx])
-                
-                peaks[component_name] = {
-                    'num_peaks': len(peak_values),
-                    'max_value': float(np.max(peak_values)),
-                    'max_position': max_pos,
-                    'mean_peak_value': float(np.mean(peak_values)),
-                    'peak_indices': peak_indices,
-                    'peak_values': peak_values,
-                    'threshold': float(threshold)
-                }
-        
-        return peaks
-    
-    @staticmethod
-    def compute_stress_gradients(stress_fields: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """
-        Compute stress gradients for each stress component
-        
-        Args:
-            stress_fields: Dictionary containing stress component arrays
-            
-        Returns:
-            Dictionary with gradient magnitudes
-        """
-        gradients = {}
-        
-        for component_name, stress_data in stress_fields.items():
-            if not isinstance(stress_data, np.ndarray):
-                continue
-            
-            # Compute gradients using numpy's gradient
-            grad_y, grad_x = np.gradient(stress_data)
-            
-            # Compute gradient magnitude
-            grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-            
-            gradients[f'{component_name}_grad_x'] = grad_x
-            gradients[f'{component_name}_grad_y'] = grad_y
-            gradients[f'{component_name}_grad_mag'] = grad_magnitude
-            
-            # Statistics
-            gradients[f'{component_name}_max_grad'] = float(np.max(grad_magnitude))
-            gradients[f'{component_name}_mean_grad'] = float(np.mean(grad_magnitude))
-        
-        return gradients
-    
-    @staticmethod
-    def create_stress_summary_dataframe(source_simulations: List[Dict], 
-                                      predictions: Dict) -> pd.DataFrame:
-        """
-        Create comprehensive stress summary DataFrame
-        
-        Args:
-            source_simulations: List of source simulation data
-            predictions: Dictionary of predictions
-            
-        Returns:
-            DataFrame with stress summary for all simulations and predictions
-        """
-        summary_rows = []
-        
-        # Process source simulations
-        for i, sim_data in enumerate(source_simulations):
-            params = sim_data.get('params', {})
-            history = sim_data.get('history', [])
-            
-            if history:
-                # Use final frame
-                eta, stress_fields = history[-1]
-                
-                # Compute max stress values
-                max_stress = StressAnalysisManager.compute_max_stress_values(stress_fields)
-                
-                # Create row
-                row = {
-                    'id': f'source_{i}',
-                    'type': 'source',
-                    'defect_type': params.get('defect_type', 'Unknown'),
-                    'shape': params.get('shape', 'Unknown'),
-                    'orientation': params.get('orientation', 'Unknown'),
-                    'eps0': params.get('eps0', np.nan),
-                    'kappa': params.get('kappa', np.nan),
-                    'theta_deg': np.deg2rad(params.get('theta', 0)) if params.get('theta') else np.nan,
-                    **max_stress
-                }
-                summary_rows.append(row)
-        
-        # Process predictions
-        if predictions:
-            for pred_key, pred_data in predictions.items():
-                if isinstance(pred_data, dict) and 'target_params' in pred_data:
-                    params = pred_data['target_params']
+        for strategy_name, strategy_func in strategies:
+            try:
+                if "Secure" in strategy_name and not use_secure_loading:
+                    continue
                     
-                    # Compute max stress values
-                    max_stress = StressAnalysisManager.compute_max_stress_values(pred_data)
-                    
-                    # Create row
-                    row = {
-                        'id': pred_key,
-                        'type': 'prediction',
-                        'defect_type': params.get('defect_type', 'Unknown'),
-                        'shape': params.get('shape', 'Unknown'),
-                        'orientation': params.get('orientation', 'Unknown'),
-                        'eps0': params.get('eps0', np.nan),
-                        'kappa': params.get('kappa', np.nan),
-                        'theta_deg': np.deg2rad(params.get('theta', 0)) if params.get('theta') else np.nan,
-                        **max_stress
-                    }
-                    summary_rows.append(row)
+                data = strategy_func()
+                st.info(f"✅ Loaded using {strategy_name}")
+                return data
+                
+            except Exception as e:
+                st.warning(f"⚠️ {strategy_name} failed: {str(e)}")
+                continue
         
-        # Create DataFrame
-        if summary_rows:
-            df = pd.DataFrame(summary_rows)
-            # Calculate additional metrics
-            if 'max_von_mises' in df.columns and 'max_abs_hydrostatic' in df.columns:
-                df['stress_ratio_vm_hydro'] = df['max_von_mises'] / (df['max_abs_hydrostatic'] + 1e-10)
-            return df
-        else:
-            return pd.DataFrame()
+        raise ValueError("All PyTorch loading strategies failed")
+    
+    @staticmethod
+    def _load_pytorch_from_buffer(file_path: str):
+        """Load PyTorch file using BytesIO buffer"""
+        with open(file_path, 'rb') as f:
+            buffer = BytesIO(f.read())
+        return torch.load(buffer, map_location='cpu')
+    
+    @staticmethod
+    def _extract_pytorch_zip(file_path: str):
+        """Extract data from PyTorch zip archive"""
+        import zipfile
+        with zipfile.ZipFile(file_path, 'r') as zf:
+            # Look for pickle files
+            for name in zf.namelist():
+                if name.endswith('.pkl') or 'data' in name.lower():
+                    with zf.open(name) as f:
+                        return pickle.load(f)
+        
+        # If no pickle found, try to read as regular zip
+        with zipfile.ZipFile(file_path, 'r') as zf:
+            data = {}
+            for name in zf.namelist():
+                with zf.open(name) as f:
+                    try:
+                        content = f.read()
+                        # Try to parse as pickle
+                        buffer = BytesIO(content)
+                        data[name] = pickle.load(buffer)
+                    except:
+                        data[name] = content
+            return data
+    
+    @staticmethod
+    def load_pickle_file(file_path: str):
+        """
+        Load pickle file with multiple fallback strategies
+        
+        Args:
+            file_path: Path to pickle file
+            
+        Returns:
+            Loaded data
+        """
+        strategies = [
+            ("Standard pickle", lambda: EnhancedFileLoader._load_pickle_standard(file_path)),
+            ("Joblib", lambda: joblib.load(file_path)),
+            ("Dill", lambda: dill.load(open(file_path, 'rb'))),
+            ("Pickle with protocols", lambda: EnhancedFileLoader._load_pickle_with_protocols(file_path)),
+            ("Text recovery", lambda: EnhancedFileLoader._recover_pickle_text(file_path))
+        ]
+        
+        for strategy_name, strategy_func in strategies:
+            try:
+                data = strategy_func()
+                st.info(f"✅ Loaded using {strategy_name}")
+                return data
+                
+            except Exception as e:
+                st.warning(f"⚠️ {strategy_name} failed: {str(e)}")
+                continue
+        
+        raise ValueError("All pickle loading strategies failed")
+    
+    @staticmethod
+    def _load_pickle_standard(file_path: str):
+        """Standard pickle load"""
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
+    
+    @staticmethod
+    def _load_pickle_with_protocols(file_path: str):
+        """Try pickle with different protocols"""
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        
+        # Try different protocols
+        for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
+            try:
+                buffer = BytesIO(content)
+                return pickle.load(buffer)
+            except:
+                continue
+        
+        raise ValueError("No pickle protocol worked")
+    
+    @staticmethod
+    def _recover_pickle_text(file_path: str):
+        """Attempt to recover data from corrupted pickle"""
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        
+        # Try to decode as text and look for patterns
+        try:
+            text = content.decode('utf-8', errors='ignore')
+            if 'numpy' in text or 'array' in text:
+                st.info("File contains numpy array references")
+                return {'recovered_text': text[:500]}
+        except:
+            pass
+        
+        raise ValueError("Could not recover pickle data")
+    
+    @staticmethod
+    def convert_legacy_data(data: Any) -> Dict[str, Any]:
+        """
+        Convert legacy data formats to standardized format
+        
+        Args:
+            data: Raw loaded data
+            
+        Returns:
+            Standardized simulation data
+        """
+        standardized = {
+            'params': {},
+            'history': [],
+            'metadata': {},
+            'format': 'legacy',
+            'converted': True
+        }
+        
+        if isinstance(data, dict):
+            # Extract from common keys
+            if 'params' in data:
+                standardized['params'] = data['params']
+            elif 'parameters' in data:
+                standardized['params'] = data['parameters']
+            elif 'config' in data:
+                standardized['params'] = data['config']
+            
+            # Extract history
+            if 'history' in data:
+                standardized['history'] = data['history']
+            elif 'frames' in data:
+                standardized['history'] = data['frames']
+            elif 'stress_fields' in data:
+                standardized['history'] = [(0.0, data['stress_fields'])]
+            
+            # Extract metadata
+            if 'metadata' in data:
+                standardized['metadata'] = data['metadata']
+            elif 'info' in data:
+                standardized['metadata'] = data['info']
+            
+            # Direct stress fields
+            stress_keys = ['sigma_hydro', 'sigma_mag', 'von_mises', 'sigma_xx', 'sigma_yy', 'sigma_xy']
+            if any(key in data for key in stress_keys):
+                stress_fields = {}
+                for key in stress_keys:
+                    if key in data:
+                        stress_fields[key] = data[key]
+                standardized['history'] = [(0.0, stress_fields)]
+        
+        elif isinstance(data, np.ndarray):
+            # Single array
+            standardized['history'] = [(0.0, {'stress_field': data})]
+        
+        elif isinstance(data, list) and len(data) > 0:
+            # List of frames
+            standardized['history'] = data
+        
+        return standardized
 
 # =============================================
-# SUNBURST CHART MANAGER
+# ENHANCED NUMERICAL SOLUTIONS MANAGER
 # =============================================
-class SunburstChartManager:
-    """Manager for creating sunburst charts and other hierarchical visualizations"""
-    
-    @staticmethod
-    def get_all_colormaps() -> List[str]:
-        """Get list of all available matplotlib colormaps"""
-        colormaps = sorted([m for m in plt.colormaps() if not m.endswith('_r')])
-        return colormaps
-    
-    @staticmethod
-    def create_sunburst_chart(df: pd.DataFrame, 
-                            path_columns: List[str],
-                            value_column: str,
-                            title: str = "Sunburst Chart",
-                            colormap: str = "viridis") -> go.Figure:
-        """
-        Create a sunburst chart using plotly
-        
-        Args:
-            df: DataFrame containing the data
-            path_columns: List of column names for hierarchical path
-            value_column: Column name for values
-            title: Chart title
-            colormap: Matplotlib colormap name
-            
-        Returns:
-            Plotly Figure object
-        """
-        # Prepare data for sunburst
-        df_plot = df.copy()
-        
-        # Create path string
-        df_plot['path'] = df_plot[path_columns].astype(str).agg(' / '.join, axis=1)
-        
-        # Create sunburst chart
-        fig = px.sunburst(
-            df_plot,
-            path=path_columns,
-            values=value_column,
-            color=value_column,
-            color_continuous_scale=colormap,
-            title=title,
-            hover_data={col: True for col in df.columns if col not in path_columns + [value_column]}
-        )
-        
-        fig.update_traces(
-            textinfo="label+percent entry",
-            hovertemplate="<b>%{label}</b><br>" +
-                         f"{value_column}: %{{value:.3f}}<br>" +
-                         "%{parent}<br>" +
-                         "<extra></extra>"
-        )
-        
-        fig.update_layout(
-            margin=dict(t=50, l=0, r=0, b=0),
-            height=600,
-            title_x=0.5
-        )
-        
-        return fig
-    
-    @staticmethod
-    def create_treemap_chart(df: pd.DataFrame,
-                           path_columns: List[str],
-                           value_column: str,
-                           title: str = "Treemap Chart",
-                           colormap: str = "viridis") -> go.Figure:
-        """
-        Create a treemap chart as alternative to sunburst
-        
-        Args:
-            df: DataFrame containing the data
-            path_columns: List of column names for hierarchical path
-            value_column: Column name for values
-            title: Chart title
-            colormap: Matplotlib colormap name
-            
-        Returns:
-            Plotly Figure object
-        """
-        fig = px.treemap(
-            df,
-            path=path_columns,
-            values=value_column,
-            color=value_column,
-            color_continuous_scale=colormap,
-            title=title,
-            hover_data={col: True for col in df.columns if col not in path_columns + [value_column]}
-        )
-        
-        fig.update_traces(
-            textinfo="label+value+percent entry",
-            hovertemplate="<b>%{label}</b><br>" +
-                         f"{value_column}: %{{value:.3f}}<br>" +
-                         "%{parent}<br>" +
-                         "<extra></extra>"
-        )
-        
-        fig.update_layout(
-            margin=dict(t=50, l=0, r=0, b=0),
-            height=600,
-            title_x=0.5
-        )
-        
-        return fig
-    
-    @staticmethod
-    def create_parallel_categories(df: pd.DataFrame,
-                                 dimensions: List[str],
-                                 color_column: str,
-                                 title: str = "Parallel Categories") -> go.Figure:
-        """
-        Create parallel categories diagram
-        
-        Args:
-            df: DataFrame containing the data
-            dimensions: List of categorical columns to include
-            color_column: Numerical column for coloring
-            title: Chart title
-            
-        Returns:
-            Plotly Figure object
-        """
-        fig = px.parallel_categories(
-            df,
-            dimensions=dimensions,
-            color=df[color_column],
-            color_continuous_scale='viridis',
-            title=title,
-            labels={col: col.replace('_', ' ').title() for col in dimensions}
-        )
-        
-        fig.update_layout(
-            height=500,
-            title_x=0.5
-        )
-        
-        return fig
-    
-    @staticmethod
-    def create_radial_bar_chart(df: pd.DataFrame,
-                              categories: List[str],
-                              values: List[str],
-                              title: str = "Radial Bar Chart") -> go.Figure:
-        """
-        Create radial bar chart for comparison
-        
-        Args:
-            df: DataFrame containing the data
-            categories: Column name for categories
-            values: List of value columns to plot
-            title: Chart title
-            
-        Returns:
-            Plotly Figure object
-        """
-        fig = go.Figure()
-        
-        for i, value_col in enumerate(values):
-            fig.add_trace(go.Barpolar(
-                r=df[value_col].values,
-                theta=df[categories].values,
-                name=value_col,
-                marker_color=px.colors.sequential.Viridis[i/len(values)],
-                opacity=0.8
-            ))
-        
-        fig.update_layout(
-            title=title,
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, df[values].max().max() * 1.1]
-                ),
-                angularaxis=dict(
-                    direction="clockwise",
-                    period=len(df)
-                )
-            ),
-            showlegend=True,
-            height=500
-        )
-        
-        return fig
-
-# =============================================
-# ENHANCED NUMERICAL SOLUTIONS MANAGER WITH ROBUST LOADING
-# =============================================
-class NumericalSolutionsManager:
+class EnhancedNumericalSolutionsManager:
     def __init__(self, solutions_dir: str = NUMERICAL_SOLUTIONS_DIR):
         self.solutions_dir = solutions_dir
         self._ensure_directory()
-        self.loaded_files = {}  # Cache for loaded files
-        self.failed_files = {}  # Track failed files with reasons
+        self.loaded_files_cache = {}
+        self.failed_files = {}
+        self.stats = {
+            'total_attempted': 0,
+            'successful': 0,
+            'failed': 0,
+            'skipped': 0
+        }
     
     def _ensure_directory(self):
         if not os.path.exists(self.solutions_dir):
             os.makedirs(self.solutions_dir, exist_ok=True)
     
-    def scan_directory(self) -> Dict[str, List[str]]:
+    def scan_directory(self, recursive: bool = False) -> Dict[str, List[str]]:
         file_formats = {
             'pkl': [],
             'pt': [],
@@ -546,316 +393,298 @@ class NumericalSolutionsManager:
         ]:
             for ext in extensions:
                 pattern = os.path.join(self.solutions_dir, ext)
-                files = glob.glob(pattern)
+                files = glob.glob(pattern, recursive=recursive)
                 if files:
                     files.sort(key=os.path.getmtime, reverse=True)
                     file_formats[format_type].extend(files)
         
         return file_formats
     
-    def get_all_files(self) -> List[Dict[str, Any]]:
+    def get_all_files(self, max_files: int = 100) -> List[Dict[str, Any]]:
         all_files = []
         file_formats = self.scan_directory()
         
         for format_type, files in file_formats.items():
-            for file_path in files:
-                file_info = {
-                    'path': file_path,
-                    'filename': os.path.basename(file_path),
-                    'format': format_type,
-                    'size': os.path.getsize(file_path),
-                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
-                    'relative_path': os.path.relpath(file_path, self.solutions_dir),
-                    'status': 'unknown'
-                }
-                all_files.append(file_info)
+            for file_path in files[:max_files]:
+                try:
+                    file_info = {
+                        'path': file_path,
+                        'filename': os.path.basename(file_path),
+                        'format': format_type,
+                        'size': os.path.getsize(file_path),
+                        'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                        'relative_path': os.path.relpath(file_path, self.solutions_dir),
+                        'status': 'unknown'
+                    }
+                    all_files.append(file_info)
+                except:
+                    continue
         
         all_files.sort(key=lambda x: x['filename'].lower())
         return all_files
     
-    def get_file_by_name(self, filename: str) -> Optional[str]:
-        for file_info in self.get_all_files():
-            if file_info['filename'] == filename:
-                return file_info['path']
-        return None
-    
-    def check_file_integrity(self, file_path: str) -> Tuple[bool, str]:
+    def analyze_file(self, file_path: str) -> Dict[str, Any]:
         """
-        Check if a file is valid and can be loaded
+        Analyze file without loading it
         
         Args:
             file_path: Path to file
             
         Returns:
-            Tuple of (is_valid, reason)
+            Analysis results
         """
-        if not os.path.exists(file_path):
-            return False, "File does not exist"
+        analysis = {
+            'path': file_path,
+            'filename': os.path.basename(file_path),
+            'exists': os.path.exists(file_path),
+            'size': 0,
+            'valid': False,
+            'issues': [],
+            'recommendation': None
+        }
+        
+        if not analysis['exists']:
+            analysis['issues'].append("File does not exist")
+            return analysis
         
         try:
-            with open(file_path, 'rb') as f:
-                # Quick check for empty or very small files
-                if os.path.getsize(file_path) < 10:
-                    return False, "File is too small (possibly empty)"
-                
-                # Read first few bytes to check magic numbers
-                header = f.read(8)
-                
-                # Check for common file signatures
-                if file_path.endswith('.pt') or file_path.endswith('.pth'):
-                    # PyTorch files start with a specific pickle header
-                    if len(header) < 8:
-                        return False, "File too short for PyTorch format"
-                
-                elif file_path.endswith('.pkl') or file_path.endswith('.pickle'):
-                    # Pickle files have protocol header
-                    if header and header[0] not in [0x80, 0x83, 0x84, 0x85, 0x86, 0x87]:
-                        return False, "Invalid pickle protocol header"
-                
-                elif file_path.endswith('.h5') or file_path.endswith('.hdf5'):
-                    # HDF5 files start with specific signature
-                    if not header.startswith(b'\x89HDF\r\n\x1a\n'):
-                        return False, "Invalid HDF5 header"
-                
-                elif file_path.endswith('.npz'):
-                    # NPZ files are zip files
-                    if not header.startswith(b'PK'):
-                        return False, "Invalid NPZ (not a ZIP file)"
-                
-            return True, "File appears valid"
+            analysis['size'] = os.path.getsize(file_path)
+            
+            # Check file integrity
+            is_valid, reason = EnhancedFileLoader.check_file_integrity(file_path)
+            analysis['valid'] = is_valid
+            if not is_valid:
+                analysis['issues'].append(reason)
+            
+            # Check file extension
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext == '.pt' or ext == '.pth':
+                analysis['format'] = 'pytorch'
+                analysis['recommendation'] = "Try weights_only=False for compatibility"
+            elif ext == '.pkl' or ext == '.pickle':
+                analysis['format'] = 'pickle'
+                analysis['recommendation'] = "Check pickle protocol compatibility"
+            elif ext == '.h5' or ext == '.hdf5':
+                analysis['format'] = 'hdf5'
+                analysis['recommendation'] = "Ensure h5py is installed"
+            elif ext == '.npz':
+                analysis['format'] = 'numpy'
+                analysis['recommendation'] = "Standard numpy format, should load easily"
+            else:
+                analysis['format'] = 'unknown'
+                analysis['issues'].append(f"Unrecognized extension: {ext}")
             
         except Exception as e:
-            return False, f"Error checking file: {str(e)}"
+            analysis['issues'].append(f"Error analyzing file: {str(e)}")
+        
+        return analysis
     
-    def load_simulation(self, file_path: str, interpolator) -> Optional[Dict[str, Any]]:
+    def load_simulation_with_fallbacks(self, file_path: str, interpolator, 
+                                     use_secure_loading: bool = False) -> Optional[Dict[str, Any]]:
         """
-        Load simulation with enhanced error handling and fallbacks
+        Load simulation file with comprehensive fallback strategies
         
         Args:
             file_path: Path to simulation file
             interpolator: SpatialLocalityAttentionInterpolator instance
+            use_secure_loading: Whether to use secure PyTorch loading
             
         Returns:
-            Loaded simulation data or None if failed
+            Loaded simulation data or None
         """
-        # Check cache first
-        if file_path in self.loaded_files:
-            return self.loaded_files[file_path]
-        
-        # Check if file failed before
-        if file_path in self.failed_files:
-            st.warning(f"Skipping previously failed file: {os.path.basename(file_path)}")
-            return None
-        
+        self.stats['total_attempted'] += 1
         filename = os.path.basename(file_path)
-        ext = os.path.splitext(file_path)[1].lower().lstrip('.')
+        
+        # Check cache first
+        if file_path in self.loaded_files_cache:
+            self.stats['successful'] += 1
+            return self.loaded_files_cache[file_path]
+        
+        # Check if previously failed
+        if file_path in self.failed_files:
+            self.stats['skipped'] += 1
+            st.warning(f"⚠️ Skipping previously failed file: {filename}")
+            return None
         
         try:
             # First check file integrity
-            is_valid, reason = self.check_file_integrity(file_path)
+            is_valid, reason = EnhancedFileLoader.check_file_integrity(file_path)
             if not is_valid:
                 self.failed_files[file_path] = f"Invalid file: {reason}"
-                st.warning(f"❌ File integrity check failed for {filename}: {reason}")
+                self.stats['failed'] += 1
+                st.error(f"❌ File integrity check failed for {filename}: {reason}")
                 return None
             
-            # Determine format
-            if ext in ['pkl', 'pickle']:
-                format_type = 'pkl'
-                sim_data = self._load_pkl_with_fallbacks(file_path, interpolator)
-            elif ext in ['pt', 'pth']:
-                format_type = 'pt'
-                sim_data = self._load_pt_with_fallbacks(file_path, interpolator)
-            elif ext in ['h5', 'hdf5']:
-                format_type = 'h5'
-                sim_data = interpolator.read_simulation_file(file_path, format_type)
-            elif ext == 'npz':
-                format_type = 'npz'
-                sim_data = interpolator.read_simulation_file(file_path, format_type)
-            elif ext in ['sql', 'db']:
-                format_type = 'sql'
-                sim_data = interpolator.read_simulation_file(file_path, format_type)
-            elif ext == 'json':
-                format_type = 'json'
-                sim_data = interpolator.read_simulation_file(file_path, format_type)
+            # Determine file format
+            ext = os.path.splitext(file_path)[1].lower()
+            
+            if ext in ['.pt', '.pth']:
+                # PyTorch file
+                st.info(f"Loading PyTorch file: {filename}")
+                with st.spinner(f"Loading {filename}..."):
+                    try:
+                        # Try multiple loading strategies
+                        raw_data = EnhancedFileLoader.load_pytorch_file(file_path, use_secure_loading)
+                        
+                        # Convert to standardized format
+                        if isinstance(raw_data, dict):
+                            sim_data = interpolator._standardize_data(raw_data, 'pt', file_path)
+                        else:
+                            sim_data = EnhancedFileLoader.convert_legacy_data(raw_data)
+                            
+                    except Exception as e:
+                        self.failed_files[file_path] = str(e)
+                        self.stats['failed'] += 1
+                        st.error(f"❌ Failed to load PyTorch file {filename}: {str(e)}")
+                        return None
+            
+            elif ext in ['.pkl', '.pickle']:
+                # Pickle file
+                st.info(f"Loading pickle file: {filename}")
+                with st.spinner(f"Loading {filename}..."):
+                    try:
+                        raw_data = EnhancedFileLoader.load_pickle_file(file_path)
+                        
+                        if isinstance(raw_data, dict):
+                            sim_data = interpolator._standardize_data(raw_data, 'pkl', file_path)
+                        else:
+                            sim_data = EnhancedFileLoader.convert_legacy_data(raw_data)
+                            
+                    except Exception as e:
+                        self.failed_files[file_path] = str(e)
+                        self.stats['failed'] += 1
+                        st.error(f"❌ Failed to load pickle file {filename}: {str(e)}")
+                        return None
+            
             else:
-                st.warning(f"❌ Unknown file format: {filename}")
-                self.failed_files[file_path] = "Unknown format"
-                return None
+                # Other formats
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                if ext in ['.h5', '.hdf5']:
+                    sim_data = interpolator.read_simulation_file(file_content, 'h5')
+                elif ext == '.npz':
+                    sim_data = interpolator.read_simulation_file(file_content, 'npz')
+                elif ext in ['.sql', '.db']:
+                    sim_data = interpolator.read_simulation_file(file_content, 'sql')
+                elif ext == '.json':
+                    sim_data = interpolator.read_simulation_file(file_content, 'json')
+                else:
+                    st.warning(f"⚠️ Unknown file format: {filename}")
+                    self.failed_files[file_path] = "Unknown format"
+                    self.stats['failed'] += 1
+                    return None
             
-            if sim_data:
+            # Validate and cache
+            if sim_data and self._validate_simulation_data(sim_data):
                 sim_data['loaded_from'] = 'numerical_solutions'
                 sim_data['filename'] = filename
-                sim_data['format'] = format_type
+                sim_data['load_timestamp'] = datetime.now().isoformat()
                 
-                # Cache successful load
-                self.loaded_files[file_path] = sim_data
+                self.loaded_files_cache[file_path] = sim_data
+                self.stats['successful'] += 1
                 
-                # Validate data structure
-                if self._validate_simulation_data(sim_data):
-                    st.success(f"✅ Successfully loaded: {filename}")
-                    return sim_data
-                else:
-                    st.warning(f"⚠️ Loaded but invalid data structure: {filename}")
-                    return None
+                st.success(f"✅ Successfully loaded: {filename}")
+                return sim_data
             else:
-                self.failed_files[file_path] = "Loader returned None"
+                self.failed_files[file_path] = "Invalid data structure"
+                self.stats['failed'] += 1
+                st.warning(f"⚠️ Loaded but invalid data structure: {filename}")
                 return None
                 
         except Exception as e:
             error_msg = str(e)
             self.failed_files[file_path] = error_msg
+            self.stats['failed'] += 1
             
-            # Provide specific guidance based on error type
+            # Provide helpful error messages
             if "weights_only" in error_msg or "safe_globals" in error_msg:
-                st.error(f"❌ PyTorch security restriction for {filename}. Try: torch.load(file, weights_only=False)")
+                st.error(f"❌ PyTorch security restriction for {filename}. Try insecure loading.")
             elif "pickle" in error_msg.lower():
                 st.error(f"❌ Pickle error for {filename}. File may be corrupted.")
+            elif "unpickling" in error_msg.lower():
+                st.error(f"❌ Unpickling error for {filename}. Python version mismatch.")
             else:
                 st.error(f"❌ Error loading {filename}: {error_msg}")
             
             return None
-    
-    def _load_pkl_with_fallbacks(self, file_path: str, interpolator) -> Optional[Dict[str, Any]]:
-        """
-        Load pickle file with multiple fallback strategies
-        """
-        filename = os.path.basename(file_path)
-        
-        # Strategy 1: Try standard pickle.load
-        try:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-            return interpolator.read_simulation_file(file_content, 'pkl')
-        except Exception as e1:
-            st.warning(f"⚠️ Standard pickle load failed for {filename}: {str(e1)}")
-        
-        # Strategy 2: Try with different pickle protocols
-        try:
-            with open(file_path, 'rb') as f:
-                # Try with pickle.load with different find_classes
-                import pickle as pkl
-                data = pkl.load(f)
-                return self._convert_legacy_data(data)
-        except Exception as e2:
-            st.warning(f"⚠️ Alternative pickle load failed for {filename}: {str(e2)}")
-        
-        # Strategy 3: Try joblib (handles numpy arrays better)
-        try:
-            import joblib
-            data = joblib.load(file_path)
-            return self._convert_legacy_data(data)
-        except Exception as e3:
-            st.warning(f"⚠️ Joblib load failed for {filename}: {str(e3)}")
-        
-        # Strategy 4: Try to read as text and parse
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(1024)  # Read first 1KB
-                if 'pickle' in content.lower() or 'numpy' in content.lower():
-                    st.info(f"ℹ️ {filename} might be a text file with pickle data")
-        except:
-            pass
-        
-        return None
-    
-    def _load_pt_with_fallbacks(self, file_path: str, interpolator) -> Optional[Dict[str, Any]]:
-        """
-        Load PyTorch file with multiple fallback strategies for compatibility
-        """
-        filename = os.path.basename(file_path)
-        
-        # Strategy 1: Try with weights_only=True (secure mode)
-        try:
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-            return interpolator.read_simulation_file(file_content, 'pt')
-        except Exception as e1:
-            st.warning(f"⚠️ Secure PyTorch load failed for {filename}: {str(e1)}")
-        
-        # Strategy 2: Try with weights_only=False (insecure but compatible)
-        try:
-            buffer = BytesIO()
-            with open(file_path, 'rb') as f:
-                buffer.write(f.read())
-            buffer.seek(0)
-            
-            # Warning about security
-            st.warning(f"⚠️ Using insecure PyTorch load for {filename} (weights_only=False)")
-            
-            data = torch.load(buffer, map_location=torch.device('cpu'), weights_only=False)
-            return self._convert_legacy_data(data)
-        except Exception as e2:
-            st.error(f"❌ Insecure PyTorch load also failed for {filename}: {str(e2)}")
-        
-        # Strategy 3: Try to extract numpy arrays directly
-        try:
-            # Open as zip file (PyTorch files are zip archives)
-            import zipfile
-            with zipfile.ZipFile(file_path, 'r') as zf:
-                # Look for pickle files inside
-                for name in zf.namelist():
-                    if name.endswith('.pkl') or name == 'data.pkl':
-                        with zf.open(name) as f:
-                            import pickle
-                            data = pickle.load(f)
-                            return self._convert_legacy_data(data)
-        except Exception as e3:
-            st.warning(f"⚠️ Zip extraction failed for {filename}: {str(e3)}")
-        
-        return None
-    
-    def _convert_legacy_data(self, data: Any) -> Dict[str, Any]:
-        """
-        Convert legacy data formats to standardized format
-        """
-        standardized = {
-            'params': {},
-            'history': [],
-            'metadata': {},
-            'format': 'legacy'
-        }
-        
-        if isinstance(data, dict):
-            # Try to extract parameters
-            if 'params' in data:
-                standardized['params'] = data['params']
-            elif 'parameters' in data:
-                standardized['params'] = data['parameters']
-            
-            # Try to extract history
-            if 'history' in data:
-                standardized['history'] = data['history']
-            elif 'frames' in data:
-                standardized['history'] = data['frames']
-            
-            # Try to extract metadata
-            if 'metadata' in data:
-                standardized['metadata'] = data['metadata']
-            elif 'info' in data:
-                standardized['metadata'] = data['info']
-            
-            # If it's a stress field directly
-            if 'sigma_hydro' in data or 'von_mises' in data:
-                standardized['history'] = [(0.0, data)]  # Single frame
-            
-        # Handle numpy arrays
-        elif isinstance(data, np.ndarray):
-            standardized['history'] = [(0.0, {'stress_field': data})]
-        
-        return standardized
     
     def _validate_simulation_data(self, sim_data: Dict[str, Any]) -> bool:
         """Validate that simulation data has required structure"""
         if not isinstance(sim_data, dict):
             return False
         
-        # Check for history or params
+        # Check for either history or params
         has_history = 'history' in sim_data and isinstance(sim_data['history'], list)
         has_params = 'params' in sim_data and isinstance(sim_data['params'], dict)
+        has_stress = False
         
-        return has_history or has_params
+        # Check if history contains stress data
+        if has_history:
+            for frame in sim_data['history']:
+                if isinstance(frame, (list, tuple)) and len(frame) == 2:
+                    _, stress_fields = frame
+                    if isinstance(stress_fields, dict) and any('sigma' in key for key in stress_fields.keys()):
+                        has_stress = True
+                        break
+        
+        return has_history or has_params or has_stress
+    
+    def batch_load_simulations(self, file_paths: List[str], interpolator,
+                             max_workers: int = 4, 
+                             use_secure_loading: bool = False) -> List[Dict[str, Any]]:
+        """
+        Batch load multiple simulation files
+        
+        Args:
+            file_paths: List of file paths
+            interpolator: SpatialLocalityAttentionInterpolator instance
+            max_workers: Maximum parallel workers
+            use_secure_loading: Whether to use secure PyTorch loading
+            
+        Returns:
+            List of loaded simulation data
+        """
+        loaded_simulations = []
+        
+        # Create progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for i, file_path in enumerate(file_paths):
+            status_text.text(f"Loading {i+1}/{len(file_paths)}: {os.path.basename(file_path)}")
+            progress_bar.progress((i + 1) / len(file_paths))
+            
+            sim_data = self.load_simulation_with_fallbacks(
+                file_path, interpolator, use_secure_loading
+            )
+            
+            if sim_data:
+                loaded_simulations.append(sim_data)
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        return loaded_simulations
+    
+    def get_loading_stats(self) -> Dict[str, Any]:
+        """Get loading statistics"""
+        return {
+            **self.stats,
+            'cache_size': len(self.loaded_files_cache),
+            'failed_files': len(self.failed_files),
+            'success_rate': self.stats['successful'] / max(self.stats['total_attempted'], 1) * 100
+        }
+    
+    def clear_cache(self):
+        """Clear loaded files cache"""
+        self.loaded_files_cache.clear()
+        self.failed_files.clear()
+        self.stats = {'total_attempted': 0, 'successful': 0, 'failed': 0, 'skipped': 0}
+        st.success("✅ Cache cleared")
     
     def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
+        """Save simulation data to file"""
         if not filename.endswith(f'.{format_type}'):
             filename = f"{filename}.{format_type}"
         
@@ -863,12 +692,10 @@ class NumericalSolutionsManager:
         
         try:
             if format_type == 'pkl':
-                # Use highest protocol for compatibility
                 with open(file_path, 'wb') as f:
                     pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
             
             elif format_type == 'pt':
-                # Use PyTorch with secure settings
                 torch.save(data, file_path)
             
             elif format_type == 'json':
@@ -893,8 +720,8 @@ class NumericalSolutionsManager:
                 return False
             
             # Clear cache for this file
-            if file_path in self.loaded_files:
-                del self.loaded_files[file_path]
+            if file_path in self.loaded_files_cache:
+                del self.loaded_files_cache[file_path]
             if file_path in self.failed_files:
                 del self.failed_files[file_path]
             
@@ -904,145 +731,12 @@ class NumericalSolutionsManager:
         except Exception as e:
             st.error(f"Error saving file: {str(e)}")
             return False
-    
-    def get_loading_stats(self) -> Dict[str, Any]:
-        """Get statistics about loading success/failure"""
-        return {
-            'loaded': len(self.loaded_files),
-            'failed': len(self.failed_files),
-            'total_files': len(self.get_all_files()),
-            'failed_details': self.failed_files.copy()
-        }
-
-# =============================================
-# MULTI-TARGET PREDICTION MANAGER
-# =============================================
-class MultiTargetPredictionManager:
-    """Manager for handling multiple target predictions"""
-    
-    @staticmethod
-    def create_parameter_grid(base_params, ranges_config):
-        """
-        Create a grid of parameter combinations based on ranges
-        
-        Args:
-            base_params: Base parameter dictionary
-            ranges_config: Dictionary with range specifications
-                Example: {
-                    'eps0': {'min': 0.5, 'max': 2.0, 'steps': 10},
-                    'kappa': {'min': 0.2, 'max': 1.0, 'steps': 5},
-                    'theta': {'values': [0, np.pi/6, np.pi/3, np.pi/2]}
-                }
-        
-        Returns:
-            List of parameter dictionaries
-        """
-        param_grid = []
-        
-        # Prepare parameter value lists
-        param_values = {}
-        
-        for param_name, config in ranges_config.items():
-            if 'values' in config:
-                # Specific values provided
-                param_values[param_name] = config['values']
-            elif 'min' in config and 'max' in config:
-                # Range with steps
-                steps = config.get('steps', 10)
-                param_values[param_name] = np.linspace(
-                    config['min'], config['max'], steps
-                ).tolist()
-            else:
-                # Single value
-                param_values[param_name] = [config.get('value', base_params.get(param_name))]
-        
-        # Generate all combinations
-        param_names = list(param_values.keys())
-        value_arrays = [param_values[name] for name in param_names]
-        
-        for combination in product(*value_arrays):
-            param_dict = base_params.copy()
-            for name, value in zip(param_names, combination):
-                param_dict[name] = float(value) if isinstance(value, (int, float, np.number)) else value
-            
-            param_grid.append(param_dict)
-        
-        return param_grid
-    
-    @staticmethod
-    def batch_predict(source_simulations, target_params_list, interpolator):
-        """
-        Perform batch predictions for multiple targets
-        
-        Args:
-            source_simulations: List of source simulation data
-            target_params_list: List of target parameter dictionaries
-            interpolator: SpatialLocalityAttentionInterpolator instance
-        
-        Returns:
-            Dictionary with predictions for each target
-        """
-        predictions = {}
-        
-        # Prepare source data
-        source_param_vectors = []
-        source_stress_data = []
-        
-        for sim_data in source_simulations:
-            param_vector, _ = interpolator.compute_parameter_vector(sim_data)
-            source_param_vectors.append(param_vector)
-            
-            # Get stress from final frame
-            history = sim_data.get('history', [])
-            if history:
-                eta, stress_fields = history[-1]
-                stress_components = np.stack([
-                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                    stress_fields.get('von_mises', np.zeros_like(eta))
-                ], axis=0)
-                source_stress_data.append(stress_components)
-        
-        source_param_vectors = np.array(source_param_vectors)
-        source_stress_data = np.array(source_stress_data)
-        
-        # Predict for each target
-        for idx, target_params in enumerate(target_params_list):
-            # Compute target parameter vector
-            target_vector, _ = interpolator.compute_parameter_vector(
-                {'params': target_params}
-            )
-            
-            # Calculate distances and weights
-            distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
-            weights = weights / (np.sum(weights) + 1e-8)
-            
-            # Weighted combination
-            weighted_stress = np.sum(
-                source_stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis], 
-                axis=0
-            )
-            
-            predicted_stress = {
-                'sigma_hydro': weighted_stress[0],
-                'sigma_mag': weighted_stress[1],
-                'von_mises': weighted_stress[2],
-                'predicted': True,
-                'target_params': target_params,
-                'attention_weights': weights,
-                'target_index': idx
-            }
-            
-            predictions[f"target_{idx:03d}"] = predicted_stress
-        
-        return predictions
 
 # =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
 # =============================================
-class SpatialLocalityAttentionInterpolator:
-    """Enhanced attention-based interpolator with spatial locality regularization"""
+class EnhancedSpatialLocalityAttentionInterpolator:
+    """Enhanced attention-based interpolator with robust file loading"""
     
     def __init__(self, input_dim=15, num_heads=4, d_model=32, output_dim=3, 
                  sigma_spatial=0.2, sigma_param=0.2, use_gaussian=True):
@@ -1055,10 +749,7 @@ class SpatialLocalityAttentionInterpolator:
         self.use_gaussian = use_gaussian
         
         self.model = self._build_model()
-        
-        # Initialize stress analysis manager
-        self.stress_analyzer = StressAnalysisManager()
-        self.sunburst_manager = SunburstChartManager()
+        self.file_loader = EnhancedFileLoader()
         
         self.readers = {
             'pkl': self._read_pkl,
@@ -1103,69 +794,60 @@ class SpatialLocalityAttentionInterpolator:
         })
         return model
     
-    # =============================================
-    # ENHANCED READER METHODS WITH COMPATIBILITY FIXES
-    # =============================================
     def _read_pkl(self, file_content):
         buffer = BytesIO(file_content)
         try:
-            # Try standard pickle load
             return pickle.load(buffer)
-        except (pickle.UnpicklingError, KeyError, ValueError) as e:
+        except Exception as e:
             # Try with different protocols
             buffer.seek(0)
             try:
-                # Try with protocol 4 (Python 3.4-3.7)
-                return pickle.load(buffer)
+                return pickle.load(buffer, encoding='latin1')
             except:
                 buffer.seek(0)
                 try:
-                    # Try with protocol 5 (Python 3.8+)
-                    return pickle.load(buffer)
-                except Exception as e2:
-                    raise ValueError(f"Failed to unpickle file: {str(e2)}")
+                    return pickle.load(buffer, fix_imports=True)
+                except:
+                    raise ValueError(f"Failed to unpickle: {str(e)}")
     
     def _read_pt(self, file_content):
         buffer = BytesIO(file_content)
         
-        # First try with weights_only=True (secure mode)
+        # Strategy 1: Try secure loading first
         try:
             return torch.load(buffer, map_location=torch.device('cpu'), weights_only=True)
         except Exception as e1:
             st.warning(f"⚠️ Secure PyTorch load failed: {str(e1)}")
-            
-            # Fallback: try with weights_only=False
+        
+        # Strategy 2: Try insecure loading
+        buffer.seek(0)
+        try:
+            st.warning("⚠️ Trying insecure PyTorch load (weights_only=False)")
+            return torch.load(buffer, map_location=torch.device('cpu'), weights_only=False)
+        except Exception as e2:
+            # Strategy 3: Try to extract manually
             buffer.seek(0)
             try:
-                st.warning("⚠️ Trying insecure PyTorch load (weights_only=False)")
-                return torch.load(buffer, map_location=torch.device('cpu'), weights_only=False)
-            except Exception as e2:
-                # Last resort: try to extract data manually
+                import zipfile
+                import io
+                
+                # Check if it's a zip file
                 buffer.seek(0)
-                try:
-                    # PyTorch files are zip archives
-                    import zipfile
-                    import io
-                    import struct
-                    
-                    # Check if it's a zip file
-                    buffer.seek(0)
-                    magic = buffer.read(4)
-                    buffer.seek(0)
-                    
-                    if magic.startswith(b'PK'):
-                        # It's a zip file, try to extract pickle
-                        with zipfile.ZipFile(buffer, 'r') as zf:
-                            # Look for data.pkl or similar
-                            for name in zf.namelist():
-                                if 'pkl' in name.lower():
-                                    with zf.open(name) as f:
-                                        data = pickle.load(f)
-                                        return data
-                    
-                    raise ValueError(f"Could not load PyTorch file: {str(e2)}")
-                except Exception as e3:
-                    raise ValueError(f"All PyTorch loading strategies failed: {str(e3)}")
+                magic = buffer.read(4)
+                buffer.seek(0)
+                
+                if magic.startswith(b'PK'):
+                    # It's a zip file
+                    with zipfile.ZipFile(buffer, 'r') as zf:
+                        # Look for pickle files
+                        for name in zf.namelist():
+                            if name.endswith('.pkl') or 'data' in name.lower():
+                                with zf.open(name) as f:
+                                    return pickle.load(f)
+                
+                raise ValueError(f"Could not load PyTorch file: {str(e2)}")
+            except Exception as e3:
+                raise ValueError(f"All PyTorch loading strategies failed: {str(e3)}")
     
     def _read_h5(self, file_content):
         buffer = BytesIO(file_content)
@@ -1176,7 +858,6 @@ class SpatialLocalityAttentionInterpolator:
                     try:
                         data[name] = obj[()]
                     except:
-                        # Try to read as attribute
                         data[name] = str(obj)
                 elif isinstance(obj, h5py.Group):
                     data[name] = {}
@@ -1189,16 +870,9 @@ class SpatialLocalityAttentionInterpolator:
     def _read_npz(self, file_content):
         buffer = BytesIO(file_content)
         data = np.load(buffer, allow_pickle=True)
-        result = {}
-        for key in data.files:
-            try:
-                result[key] = data[key]
-            except:
-                result[key] = str(data[key])
-        return result
+        return {key: data[key] for key in data.files}
     
     def _read_sql(self, file_content):
-        # SQLite databases need to be saved to a temporary file
         with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
             tmp.write(file_content)
             tmp_path = tmp.name
@@ -1207,7 +881,6 @@ class SpatialLocalityAttentionInterpolator:
             conn = sqlite3.connect(tmp_path)
             cursor = conn.cursor()
             
-            # Get all tables
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = cursor.fetchall()
             
@@ -1235,29 +908,26 @@ class SpatialLocalityAttentionInterpolator:
         try:
             return json.loads(file_content.decode('utf-8'))
         except UnicodeDecodeError:
-            # Try other encodings
             try:
                 return json.loads(file_content.decode('latin-1'))
             except:
                 raise ValueError("Could not decode JSON file")
     
     def read_simulation_file(self, file_content, format_type='auto'):
-        """Read simulation file from content with enhanced error handling"""
+        """Read simulation file with enhanced error handling"""
         
         if format_type == 'auto':
-            # Default to pkl if we can't determine
-            format_type = 'pkl'
+            format_type = 'pkl'  # Default
         
         if format_type in self.readers:
             try:
                 data = self.readers[format_type](file_content)
                 return self._standardize_data(data, format_type, "uploaded_file")
             except Exception as e:
-                # Try to provide more helpful error messages
                 if "weights_only" in str(e):
                     raise ValueError(
                         f"PyTorch security restriction. "
-                        f"Try: torch.load(file, weights_only=False) or update file format. "
+                        f"Try using weights_only=False or update file format. "
                         f"Error: {str(e)}"
                     )
                 elif "pickle" in str(e).lower():
@@ -1277,11 +947,9 @@ class SpatialLocalityAttentionInterpolator:
             'metadata': {},
             'format': format_type,
             'file_path': file_path,
-            'filename': os.path.basename(file_path) if isinstance(file_path, str) else "uploaded",
-            'load_timestamp': datetime.now().isoformat()
+            'filename': os.path.basename(file_path) if isinstance(file_path, str) else "uploaded"
         }
         
-        # Handle different formats
         if format_type == 'pkl':
             if isinstance(data, dict):
                 standardized['params'] = data.get('params', {})
@@ -1295,7 +963,6 @@ class SpatialLocalityAttentionInterpolator:
                             stresses = frame.get('stresses', {})
                             standardized['history'].append((eta, stresses))
                         elif isinstance(frame, (list, tuple)) and len(frame) == 2:
-                            # Assume (eta, stresses) format
                             standardized['history'].append(frame)
         
         elif format_type == 'pt':
@@ -1321,13 +988,11 @@ class SpatialLocalityAttentionInterpolator:
                         standardized['history'].append((eta, stress_dict))
         
         elif format_type == 'h5':
-            # Extract from H5 structure
             if 'params' in data:
                 standardized['params'] = data['params']
             if 'metadata' in data:
                 standardized['metadata'] = data['metadata']
             
-            # Try to find history data
             for key, value in data.items():
                 if 'history' in key.lower():
                     if isinstance(value, (list, np.ndarray)):
@@ -1335,7 +1000,6 @@ class SpatialLocalityAttentionInterpolator:
                         break
         
         elif format_type == 'npz':
-            # NPZ files are similar to dict
             if 'params' in data:
                 standardized['params'] = data['params']
             if 'metadata' in data:
@@ -1348,10 +1012,6 @@ class SpatialLocalityAttentionInterpolator:
                 standardized['params'] = data.get('params', {})
                 standardized['metadata'] = data.get('metadata', {})
                 standardized['history'] = data.get('history', [])
-        
-        # Ensure history is a list
-        if not isinstance(standardized['history'], list):
-            standardized['history'] = []
         
         return standardized
     
@@ -1401,7 +1061,7 @@ class SpatialLocalityAttentionInterpolator:
         param_vector.append(theta_norm)
         param_names.append('theta_norm')
         
-        # 4. Orientation encoding - handle custom angles
+        # 4. Orientation encoding
         orientation = params.get('orientation', 'Horizontal {111} (0°)')
         orientation_encoding = {
             'Horizontal {111} (0°)': [1, 0, 0, 0],
@@ -1410,11 +1070,8 @@ class SpatialLocalityAttentionInterpolator:
             'Vertical {111} (90°)': [0, 0, 0, 1]
         }
         
-        # Check if orientation is a custom angle string like "Custom (15°)"
         if orientation.startswith('Custom ('):
-            # For custom angles, we don't use one-hot encoding
-            # Instead we rely on theta_norm for the angle information
-            param_vector.extend([0, 0, 0, 0])  # All zeros for custom
+            param_vector.extend([0, 0, 0, 0])
         else:
             param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
             
@@ -1424,7 +1081,7 @@ class SpatialLocalityAttentionInterpolator:
     
     @staticmethod
     def get_orientation_from_angle(angle_deg: float) -> str:
-        """Convert angle in degrees to orientation string with custom support"""
+        """Convert angle in degrees to orientation string"""
         if 0 <= angle_deg <= 15:
             return 'Horizontal {111} (0°)'
         elif 15 < angle_deg <= 45:
@@ -1434,581 +1091,544 @@ class SpatialLocalityAttentionInterpolator:
         elif 75 < angle_deg <= 90:
             return 'Vertical {111} (90°)'
         else:
-            # Handle angles outside 0-90 by wrapping
             angle_deg = angle_deg % 90
             return f"Custom ({angle_deg:.1f}°)"
 
 # =============================================
-# GRID AND EXTENT CONFIGURATION
+# ENHANCED STRESS ANALYSIS DASHBOARD
 # =============================================
-def get_grid_extent(N=128, dx=0.1):
-    """Get grid extent for visualization"""
-    return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
-
-# =============================================
-# ENHANCED ATTENTION INTERFACE WITH STRESS ANALYSIS
-# =============================================
-def create_attention_interface():
-    """Create the attention interpolation interface with enhanced stress analysis"""
+def create_stress_analysis_dashboard():
+    """Create enhanced stress analysis dashboard with robust file loading"""
     
-    st.header("🤖 Spatial-Attention Stress Interpolation with Analysis")
+    st.title("📊 Enhanced Stress Analysis Dashboard")
     
-    # Initialize interpolator in session state
-    if 'interpolator' not in st.session_state:
-        st.session_state.interpolator = SpatialLocalityAttentionInterpolator(
-            num_heads=4,
-            sigma_spatial=0.2,
-            sigma_param=0.3
-        )
+    # Initialize managers
+    if 'enhanced_solutions_manager' not in st.session_state:
+        st.session_state.enhanced_solutions_manager = EnhancedNumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
     
-    # Initialize numerical solutions manager
-    if 'solutions_manager' not in st.session_state:
-        st.session_state.solutions_manager = NumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
+    if 'enhanced_interpolator' not in st.session_state:
+        st.session_state.enhanced_interpolator = EnhancedSpatialLocalityAttentionInterpolator()
     
-    # Initialize multi-target manager
-    if 'multi_target_manager' not in st.session_state:
-        st.session_state.multi_target_manager = MultiTargetPredictionManager()
-    
-    # Initialize stress analysis manager
     if 'stress_analyzer' not in st.session_state:
+        from StressAnalysisManager import StressAnalysisManager
         st.session_state.stress_analyzer = StressAnalysisManager()
     
-    # Initialize sunburst chart manager
     if 'sunburst_manager' not in st.session_state:
+        from SunburstChartManager import SunburstChartManager
         st.session_state.sunburst_manager = SunburstChartManager()
     
-    # Initialize source simulations list
-    if 'source_simulations' not in st.session_state:
-        st.session_state.source_simulations = []
-        st.session_state.uploaded_files = {}
-        st.session_state.loaded_from_numerical = []
+    # Initialize data structures
+    if 'dashboard_simulations' not in st.session_state:
+        st.session_state.dashboard_simulations = []
     
-    # Initialize multi-target predictions
-    if 'multi_target_predictions' not in st.session_state:
-        st.session_state.multi_target_predictions = {}
-        st.session_state.multi_target_params = []
-    
-    # Initialize stress summary DataFrame
-    if 'stress_summary_df' not in st.session_state:
-        st.session_state.stress_summary_df = pd.DataFrame()
-    
-    # Get grid extent for visualization
-    extent = get_grid_extent()
+    if 'dashboard_stress_summary' not in st.session_state:
+        st.session_state.dashboard_stress_summary = pd.DataFrame()
     
     # Sidebar configuration
-    st.sidebar.header("🔮 Attention Interpolator Settings")
+    st.sidebar.header("🔧 Dashboard Settings")
     
-    with st.sidebar.expander("⚙️ Model Parameters", expanded=False):
-        num_heads = st.slider("Number of Attention Heads", 1, 8, 4, 1)
-        sigma_spatial = st.slider("Spatial Sigma (σ_spatial)", 0.05, 1.0, 0.2, 0.05)
-        sigma_param = st.slider("Parameter Sigma (σ_param)", 0.05, 1.0, 0.3, 0.05)
-        use_gaussian = st.checkbox("Use Gaussian Spatial Regularization", True)
+    with st.sidebar.expander("📁 File Loading Settings", expanded=True):
+        max_files = st.slider("Maximum files to load", 10, 200, 50, 10)
+        use_secure_loading = st.checkbox("Use secure PyTorch loading", value=False,
+                                        help="If checked, uses weights_only=True. Uncheck for compatibility with older files.")
+        skip_corrupted = st.checkbox("Skip corrupted files", value=True)
+        retry_failed = st.checkbox("Retry previously failed files", value=False)
         
-        if st.button("🔄 Update Model Parameters"):
-            st.session_state.interpolator = SpatialLocalityAttentionInterpolator(
-                num_heads=num_heads,
-                sigma_spatial=sigma_spatial,
-                sigma_param=sigma_param,
-                use_gaussian=use_gaussian
-            )
-            st.success("Model parameters updated!")
+        # File type filters
+        st.subheader("File Type Filters")
+        col1, col2 = st.columns(2)
+        with col1:
+            load_pt = st.checkbox(".pt files", value=True)
+            load_pkl = st.checkbox(".pkl files", value=True)
+            load_h5 = st.checkbox(".h5 files", value=True)
+        with col2:
+            load_npz = st.checkbox(".npz files", value=True)
+            load_json = st.checkbox(".json files", value=True)
     
-    # Main interface tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "📤 Load Source Data", 
-        "🎯 Configure Target", 
-        "🎯 Configure Multiple Targets",
-        "🚀 Train & Predict", 
-        "📊 Results & Export",
-        "📁 Manage Files",
-        "📈 Stress Analysis & Sunburst"
+    # Main dashboard tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📁 File Management",
+        "📊 Stress Analysis",
+        "📈 Visualizations",
+        "🔧 Diagnostics"
     ])
     
-    # Tab 1: Load Source Data (keeping existing code)
+    # Tab 1: File Management
     with tab1:
-        st.subheader("Load Source Simulation Files")
+        st.header("📁 File Management and Loading")
         
-        col1, col2 = st.columns([1, 1])
+        # Directory info
+        st.info(f"**Directory:** `{NUMERICAL_SOLUTIONS_DIR}`")
         
-        with col1:
-            st.markdown("### 📂 From Numerical Solutions Directory")
-            st.info(f"Loading from: `{NUMERICAL_SOLUTIONS_DIR}`")
-            
-            file_formats = st.session_state.solutions_manager.scan_directory()
-            all_files_info = st.session_state.solutions_manager.get_all_files()
-            
-            if not all_files_info:
-                st.warning(f"No simulation files found in `{NUMERICAL_SOLUTIONS_DIR}`")
-            else:
-                file_groups = {}
-                for file_info in all_files_info:
-                    format_type = file_info['format']
-                    if format_type not in file_groups:
-                        file_groups[format_type] = []
-                    file_groups[format_type].append(file_info)
-                
-                for format_type, files in file_groups.items():
-                    with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
-                        file_options = {}
-                        for file_info in files:
-                            display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
-                            file_options[display_name] = file_info['path']
-                        
-                        selected_files = st.multiselect(
-                            f"Select {format_type} files",
-                            options=list(file_options.keys()),
-                            key=f"select_{format_type}"
-                        )
-                        
-                        if selected_files:
-                            if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
-                                with st.spinner(f"Loading {len(selected_files)} files..."):
-                                    loaded_count = 0
-                                    for display_name in selected_files:
-                                        file_path = file_options[display_name]
-                                        try:
-                                            sim_data = st.session_state.solutions_manager.load_simulation(
-                                                file_path, 
-                                                st.session_state.interpolator
-                                            )
-                                            
-                                            if sim_data and file_path not in st.session_state.loaded_from_numerical:
-                                                st.session_state.source_simulations.append(sim_data)
-                                                st.session_state.loaded_from_numerical.append(file_path)
-                                                loaded_count += 1
-                                                st.success(f"✅ Loaded: {os.path.basename(file_path)}")
-                                            elif file_path in st.session_state.loaded_from_numerical:
-                                                st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
-                                            else:
-                                                st.error(f"❌ Failed to load: {os.path.basename(file_path)}")
-                                                
-                                        except Exception as e:
-                                            st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
-                                    
-                                    if loaded_count > 0:
-                                        st.success(f"Successfully loaded {loaded_count} new files!")
-                                        st.rerun()
+        # Scan directory
+        if st.button("🔄 Scan Directory", type="secondary"):
+            st.rerun()
         
-        with col2:
-            st.markdown("### 📤 Upload Local Files")
-            
-            uploaded_files = st.file_uploader(
-                "Upload simulation files (PKL, PT, H5, NPZ, SQL, JSON)",
-                type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json'],
-                accept_multiple_files=True
-            )
-            
-            format_type = st.selectbox(
-                "File Format (for upload)",
-                ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON"],
-                index=0
-            )
-            
-            if uploaded_files and st.button("📥 Load Uploaded Files", type="primary"):
-                with st.spinner("Loading uploaded files..."):
-                    loaded_sims = []
-                    for uploaded_file in uploaded_files:
-                        try:
-                            file_content = uploaded_file.getvalue()
-                            actual_format = format_type.lower() if format_type != "Auto Detect" else "auto"
-                            if actual_format == "auto":
-                                filename = uploaded_file.name.lower()
-                                if filename.endswith('.pkl'):
-                                    actual_format = 'pkl'
-                                elif filename.endswith('.pt'):
-                                    actual_format = 'pt'
-                                elif filename.endswith('.h5') or filename.endswith('.hdf5'):
-                                    actual_format = 'h5'
-                                elif filename.endswith('.npz'):
-                                    actual_format = 'npz'
-                                elif filename.endswith('.sql') or filename.endswith('.db'):
-                                    actual_format = 'sql'
-                                elif filename.endswith('.json'):
-                                    actual_format = 'json'
-                            
-                            sim_data = st.session_state.interpolator.read_simulation_file(
-                                file_content, actual_format
-                            )
-                            sim_data['loaded_from'] = 'upload'
-                            
-                            file_id = f"{uploaded_file.name}_{hashlib.md5(file_content).hexdigest()[:8]}"
-                            st.session_state.uploaded_files[file_id] = {
-                                'filename': uploaded_file.name,
-                                'data': sim_data,
-                                'format': actual_format
-                            }
-                            
-                            st.session_state.source_simulations.append(sim_data)
-                            loaded_sims.append(uploaded_file.name)
-                            
-                        except Exception as e:
-                            st.error(f"Error loading {uploaded_file.name}: {str(e)}")
-                    
-                    if loaded_sims:
-                        st.success(f"Successfully loaded {len(loaded_sims)} uploaded files!")
+        all_files = st.session_state.enhanced_solutions_manager.get_all_files(max_files)
         
-        # Display loaded simulations
-        if st.session_state.source_simulations:
-            st.subheader("📋 Loaded Source Simulations")
-            
-            summary_data = []
-            for i, sim_data in enumerate(st.session_state.source_simulations):
-                params = sim_data.get('params', {})
-                metadata = sim_data.get('metadata', {})
-                source = sim_data.get('loaded_from', 'unknown')
-                
-                summary_data.append({
-                    'ID': i+1,
-                    'Source': source,
-                    'Defect Type': params.get('defect_type', 'Unknown'),
-                    'Shape': params.get('shape', 'Unknown'),
-                    'Orientation': params.get('orientation', 'Unknown'),
-                    'ε*': params.get('eps0', 'Unknown'),
-                    'κ': params.get('kappa', 'Unknown'),
-                    'Frames': len(sim_data.get('history', [])),
-                    'Format': sim_data.get('format', 'Unknown')
-                })
-            
-            if summary_data:
-                df_summary = pd.DataFrame(summary_data)
-                st.dataframe(df_summary, use_container_width=True)
-                
-                # Clear button
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    if st.button("🗑️ Clear All Source Simulations", type="secondary"):
-                        st.session_state.source_simulations = []
-                        st.session_state.uploaded_files = {}
-                        st.session_state.loaded_from_numerical = []
-                        st.session_state.solutions_manager.loaded_files.clear()
-                        st.session_state.solutions_manager.failed_files.clear()
-                        st.success("All source simulations cleared!")
-                        st.rerun()
-                with col2:
-                    st.info(f"**Total loaded simulations:** {len(st.session_state.source_simulations)}")
-    
-    # Tabs 2-6: Keep existing code as before...
-    # (Keeping the same implementation for tabs 2-6 as in the previous code)
-    
-    # =============================================
-    # ENHANCED TAB 7: STRESS ANALYSIS WITH BETTER LOADING
-    # =============================================
-    with tab7:
-        st.header("📈 Stress Analysis and Sunburst Visualization")
-        
-        # Show loading statistics
-        if hasattr(st.session_state.solutions_manager, 'get_loading_stats'):
-            stats = st.session_state.solutions_manager.get_loading_stats()
-            
+        if not all_files:
+            st.warning(f"No files found in `{NUMERICAL_SOLUTIONS_DIR}`")
+        else:
+            # File statistics
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Files", stats['total_files'])
+                st.metric("Total Files", len(all_files))
             with col2:
-                st.metric("Successfully Loaded", stats['loaded'])
+                pt_count = len([f for f in all_files if f['format'] == 'pt'])
+                st.metric(".pt Files", pt_count)
             with col3:
-                st.metric("Failed to Load", stats['failed'])
+                pkl_count = len([f for f in all_files if f['format'] == 'pkl'])
+                st.metric(".pkl Files", pkl_count)
             with col4:
-                success_rate = (stats['loaded'] / max(stats['total_files'], 1)) * 100
-                st.metric("Success Rate", f"{success_rate:.1f}%")
-        
-        # Update stress summary DataFrame
-        if st.button("🔄 Update Stress Summary", type="primary"):
-            with st.spinner("Computing stress statistics..."):
-                st.session_state.stress_summary_df = (
-                    st.session_state.stress_analyzer.create_stress_summary_dataframe(
-                        st.session_state.source_simulations,
-                        st.session_state.multi_target_predictions
-                    )
-                )
-                if not st.session_state.stress_summary_df.empty:
-                    st.success(f"✅ Stress summary updated with {len(st.session_state.stress_summary_df)} entries")
-                else:
-                    st.warning("No data available for stress analysis")
-        
-        # Advanced loading options
-        with st.expander("🔧 Advanced Loading Options", expanded=False):
-            col1, col2 = st.columns(2)
+                total_size = sum(f['size'] for f in all_files) / (1024 * 1024)
+                st.metric("Total Size", f"{total_size:.1f} MB")
             
-            with col1:
-                max_files = st.number_input("Maximum files to load", 1, 1000, 50, 10)
-                load_pt = st.checkbox("Load .pt files", value=True)
-                load_pkl = st.checkbox("Load .pkl files", value=True)
-                load_h5 = st.checkbox("Load .h5 files", value=True)
-            
-            with col2:
-                use_weights_only = st.checkbox("Use secure PyTorch loading", value=False, 
-                                             help="If checked, uses weights_only=True. Uncheck for compatibility with older files.")
-                skip_corrupted = st.checkbox("Skip corrupted files", value=True)
-                retry_failed = st.checkbox("Retry previously failed files", value=False)
-            
-            if st.button("🔄 Bulk Load All Compatible Files", type="secondary"):
-                all_files_info = st.session_state.solutions_manager.get_all_files()
-                loaded_count = 0
-                failed_count = 0
-                
-                # Filter files by format
-                filtered_files = []
-                for file_info in all_files_info[:max_files]:
-                    format_type = file_info['format']
-                    if (format_type == 'pt' and not load_pt) or \
-                       (format_type == 'pkl' and not load_pkl) or \
-                       (format_type == 'h5' and not load_h5):
-                        continue
-                    
-                    # Skip if previously failed and not retrying
-                    if file_info['path'] in st.session_state.solutions_manager.failed_files and not retry_failed:
-                        continue
-                    
-                    filtered_files.append(file_info)
-                
-                # Load files
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, file_info in enumerate(filtered_files):
-                    status_text.text(f"Loading {i+1}/{len(filtered_files)}: {file_info['filename']}")
-                    progress_bar.progress((i + 1) / len(filtered_files))
-                    
-                    try:
-                        sim_data = st.session_state.solutions_manager.load_simulation(
-                            file_info['path'],
-                            st.session_state.interpolator
-                        )
-                        
-                        if sim_data:
-                            # Check if already loaded
-                            if file_info['path'] not in st.session_state.loaded_from_numerical:
-                                st.session_state.source_simulations.append(sim_data)
-                                st.session_state.loaded_from_numerical.append(file_info['path'])
-                                loaded_count += 1
-                        else:
-                            failed_count += 1
-                            
-                    except Exception as e:
-                        if not skip_corrupted:
-                            st.error(f"❌ Error loading {file_info['filename']}: {str(e)}")
-                        failed_count += 1
-                
-                progress_bar.empty()
-                status_text.empty()
-                
-                if loaded_count > 0:
-                    st.success(f"✅ Successfully loaded {loaded_count} new files!")
-                    if failed_count > 0:
-                        st.warning(f"⚠️ Failed to load {failed_count} files")
-                else:
-                    st.warning("No new files were loaded")
-        
-        # Display stress summary if available
-        if not st.session_state.stress_summary_df.empty:
-            st.subheader("📋 Stress Summary Statistics")
-            
-            # Show DataFrame
-            st.dataframe(
-                st.session_state.stress_summary_df.style.format({
-                    col: "{:.3f}" for col in st.session_state.stress_summary_df.select_dtypes(include=[np.number]).columns
-                }),
-                use_container_width=True,
-                height=400
-            )
-            
-            # Download stress summary
-            csv_buffer = BytesIO()
-            st.session_state.stress_summary_df.to_csv(csv_buffer, index=False)
-            csv_buffer.seek(0)
-            
-            st.download_button(
-                label="📥 Download Stress Summary CSV",
-                data=csv_buffer,
-                file_name=f"stress_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv"
-            )
-            
-            # SUNBURST CHART CONFIGURATION
-            st.subheader("🌀 Sunburst Chart Configuration")
+            # Loading strategies
+            st.subheader("🚀 Loading Strategies")
             
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                # Select hierarchical levels
-                available_columns = list(st.session_state.stress_summary_df.columns)
+                if st.button("📥 Quick Load All", type="primary"):
+                    with st.spinner("Loading all compatible files..."):
+                        filtered_files = []
+                        for file_info in all_files:
+                            format_type = file_info['format']
+                            if (format_type == 'pt' and not load_pt) or \
+                               (format_type == 'pkl' and not load_pkl) or \
+                               (format_type == 'h5' and not load_h5) or \
+                               (format_type == 'npz' and not load_npz) or \
+                               (format_type == 'json' and not load_json):
+                                continue
+                            
+                            if file_info['path'] in st.session_state.enhanced_solutions_manager.failed_files and not retry_failed:
+                                continue
+                            
+                            filtered_files.append(file_info['path'])
+                        
+                        loaded = st.session_state.enhanced_solutions_manager.batch_load_simulations(
+                            filtered_files,
+                            st.session_state.enhanced_interpolator,
+                            use_secure_loading=use_secure_loading
+                        )
+                        
+                        st.session_state.dashboard_simulations = loaded
+                        
+                        if loaded:
+                            st.success(f"✅ Successfully loaded {len(loaded)} simulations")
+                        else:
+                            st.warning("No simulations were loaded")
+            
+            with col2:
+                if st.button("🧹 Clear Cache", type="secondary"):
+                    st.session_state.enhanced_solutions_manager.clear_cache()
+                    st.session_state.dashboard_simulations = []
+                    st.session_state.dashboard_stress_summary = pd.DataFrame()
+                    st.success("✅ Cache cleared")
+                    st.rerun()
+            
+            with col3:
+                if st.button("📊 Update Stress Summary", type="secondary"):
+                    if st.session_state.dashboard_simulations:
+                        st.session_state.dashboard_stress_summary = (
+                            st.session_state.stress_analyzer.create_stress_summary_dataframe(
+                                st.session_state.dashboard_simulations, {}
+                            )
+                        )
+                        if not st.session_state.dashboard_stress_summary.empty:
+                            st.success(f"✅ Stress summary updated with {len(st.session_state.dashboard_stress_summary)} entries")
+                        else:
+                            st.warning("No stress data found in loaded simulations")
+                    else:
+                        st.warning("No simulations loaded")
+            
+            # File list with analysis
+            st.subheader("📋 File List")
+            
+            for file_info in all_files[:20]:  # Show first 20 files
+                with st.expander(f"{file_info['filename']} ({file_info['format'].upper()}, {file_info['size']//1024}KB)"):
+                    col1, col2, col3 = st.columns([2, 1, 1])
+                    
+                    with col1:
+                        st.write(f"**Path:** `{file_info['relative_path']}`")
+                        st.write(f"**Size:** {file_info['size']:,} bytes")
+                        st.write(f"**Modified:** {file_info['modified'][:19]}")
+                        
+                        # Quick analysis
+                        if st.button("🔍 Analyze", key=f"analyze_{file_info['filename']}"):
+                            analysis = st.session_state.enhanced_solutions_manager.analyze_file(file_info['path'])
+                            
+                            if analysis['valid']:
+                                st.success("✅ File appears valid")
+                            else:
+                                st.error(f"❌ File issues: {', '.join(analysis['issues'])}")
+                            
+                            if analysis['recommendation']:
+                                st.info(f"💡 Recommendation: {analysis['recommendation']}")
+                    
+                    with col2:
+                        if st.button("📂 Load", key=f"load_{file_info['filename']}"):
+                            try:
+                                sim_data = st.session_state.enhanced_solutions_manager.load_simulation_with_fallbacks(
+                                    file_info['path'],
+                                    st.session_state.enhanced_interpolator,
+                                    use_secure_loading
+                                )
+                                
+                                if sim_data:
+                                    # Check if already loaded
+                                    if not any(s['filename'] == file_info['filename'] for s in st.session_state.dashboard_simulations):
+                                        st.session_state.dashboard_simulations.append(sim_data)
+                                        st.success(f"✅ Added: {file_info['filename']}")
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"⚠️ Already loaded: {file_info['filename']}")
+                                else:
+                                    st.error(f"❌ Failed to load: {file_info['filename']}")
+                                    
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
+                    
+                    with col3:
+                        if st.button("🗑️ Delete", key=f"delete_{file_info['filename']}"):
+                            if st.checkbox(f"Confirm delete {file_info['filename']}", key=f"confirm_{file_info['filename']}"):
+                                try:
+                                    os.remove(file_info['path'])
+                                    st.success(f"✅ Deleted: {file_info['filename']}")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ Error deleting: {str(e)}")
+    
+    # Tab 2: Stress Analysis
+    with tab2:
+        st.header("📊 Stress Analysis")
+        
+        if not st.session_state.dashboard_simulations:
+            st.info("👈 Please load simulations first")
+        else:
+            # Show loading statistics
+            stats = st.session_state.enhanced_solutions_manager.get_loading_stats()
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Loaded Simulations", len(st.session_state.dashboard_simulations))
+            with col2:
+                st.metric("Loading Success Rate", f"{stats['success_rate']:.1f}%")
+            with col3:
+                st.metric("Cache Size", stats['cache_size'])
+            with col4:
+                st.metric("Failed Files", stats['failed_files'])
+            
+            # Stress summary
+            if not st.session_state.dashboard_stress_summary.empty:
+                st.subheader("📋 Stress Summary")
+                
+                # Quick stats
+                st.dataframe(
+                    st.session_state.dashboard_stress_summary.style.format({
+                        col: "{:.3f}" for col in st.session_state.dashboard_stress_summary.select_dtypes(include=[np.number]).columns
+                    }),
+                    use_container_width=True,
+                    height=300
+                )
+                
+                # Export options
+                csv_buffer = BytesIO()
+                st.session_state.dashboard_stress_summary.to_csv(csv_buffer, index=False)
+                csv_buffer.seek(0)
+                
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv_buffer,
+                    file_name=f"stress_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+                
+                # Detailed analysis
+                st.subheader("🔬 Detailed Analysis")
+                
+                analysis_tabs = st.tabs(["Statistics", "Correlations", "Distributions"])
+                
+                with analysis_tabs[0]:
+                    # Basic statistics
+                    numeric_cols = st.session_state.dashboard_stress_summary.select_dtypes(include=[np.number]).columns
+                    selected_metric = st.selectbox("Select metric", numeric_cols, index=0)
+                    
+                    if selected_metric in st.session_state.dashboard_stress_summary.columns:
+                        data = st.session_state.dashboard_stress_summary[selected_metric].dropna()
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Mean", f"{data.mean():.3f}")
+                        with col2:
+                            st.metric("Std Dev", f"{data.std():.3f}")
+                        with col3:
+                            st.metric("Min", f"{data.min():.3f}")
+                        with col4:
+                            st.metric("Max", f"{data.max():.3f}")
+                        
+                        # Histogram
+                        fig, ax = plt.subplots(figsize=(10, 4))
+                        ax.hist(data, bins=30, alpha=0.7, color='steelblue', edgecolor='black')
+                        ax.set_xlabel(selected_metric.replace('_', ' ').title())
+                        ax.set_ylabel('Frequency')
+                        ax.set_title(f'Distribution of {selected_metric.replace("_", " ").title()}')
+                        ax.grid(True, alpha=0.3)
+                        st.pyplot(fig)
+                
+                with analysis_tabs[1]:
+                    # Correlation matrix
+                    if len(numeric_cols) > 1:
+                        corr_matrix = st.session_state.dashboard_stress_summary[numeric_cols].corr()
+                        
+                        fig, ax = plt.subplots(figsize=(12, 10))
+                        im = ax.imshow(corr_matrix, cmap='coolwarm', vmin=-1, vmax=1)
+                        ax.set_xticks(range(len(numeric_cols)))
+                        ax.set_yticks(range(len(numeric_cols)))
+                        ax.set_xticklabels(numeric_cols, rotation=45, ha='right')
+                        ax.set_yticklabels(numeric_cols)
+                        
+                        # Add text annotations
+                        for i in range(len(numeric_cols)):
+                            for j in range(len(numeric_cols)):
+                                text = ax.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}',
+                                             ha="center", va="center", color="black", fontsize=8)
+                        
+                        plt.colorbar(im, ax=ax)
+                        ax.set_title('Correlation Matrix of Stress Metrics')
+                        st.pyplot(fig)
+                
+                with analysis_tabs[2]:
+                    # Box plots by category
+                    categorical_cols = ['defect_type', 'shape', 'orientation', 'type']
+                    categorical_cols = [c for c in categorical_cols if c in st.session_state.dashboard_stress_summary.columns]
+                    
+                    if categorical_cols:
+                        group_by = st.selectbox("Group by", categorical_cols, index=0)
+                        metric = st.selectbox("Metric for box plot", numeric_cols, index=0)
+                        
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        group_data = []
+                        group_labels = []
+                        
+                        for group in st.session_state.dashboard_stress_summary[group_by].unique():
+                            group_values = st.session_state.dashboard_stress_summary[
+                                st.session_state.dashboard_stress_summary[group_by] == group
+                            ][metric].dropna()
+                            
+                            if len(group_values) > 0:
+                                group_data.append(group_values)
+                                group_labels.append(str(group))
+                        
+                        ax.boxplot(group_data, labels=group_labels)
+                        ax.set_xlabel(group_by.replace('_', ' ').title())
+                        ax.set_ylabel(metric.replace('_', ' ').title())
+                        ax.set_title(f'{metric.replace("_", " ").title()} by {group_by.replace("_", " ").title()}')
+                        ax.tick_params(axis='x', rotation=45)
+                        ax.grid(True, alpha=0.3)
+                        st.pyplot(fig)
+    
+    # Tab 3: Visualizations
+    with tab3:
+        st.header("📈 Advanced Visualizations")
+        
+        if st.session_state.dashboard_stress_summary.empty:
+            st.info("👈 Please load simulations and update stress summary first")
+        else:
+            # Sunburst chart configuration
+            st.subheader("🌀 Sunburst Chart")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                available_columns = list(st.session_state.dashboard_stress_summary.columns)
                 categorical_cols = ['defect_type', 'shape', 'orientation', 'type']
                 categorical_cols = [c for c in categorical_cols if c in available_columns]
                 
                 level1 = st.selectbox(
-                    "First Level (Center)",
+                    "First Level",
                     categorical_cols,
-                    index=0 if 'type' in categorical_cols else 0
+                    index=0 if 'type' in categorical_cols else 0,
+                    key="sunburst_level1"
                 )
                 
                 level2_options = [c for c in categorical_cols if c != level1]
                 level2 = st.selectbox(
                     "Second Level",
                     ['None'] + level2_options,
-                    index=0
+                    index=0,
+                    key="sunburst_level2"
                 )
                 
                 level3_options = [c for c in level2_options if c != level2 and level2 != 'None']
                 level3 = st.selectbox(
                     "Third Level",
                     ['None'] + level3_options,
-                    index=0
+                    index=0,
+                    key="sunburst_level3"
                 )
             
             with col2:
-                # Select value column for sizing
-                numeric_cols = st.session_state.stress_summary_df.select_dtypes(include=[np.number]).columns.tolist()
+                numeric_cols = st.session_state.dashboard_stress_summary.select_dtypes(include=[np.number]).columns.tolist()
                 stress_value_cols = [c for c in numeric_cols if 'max' in c or 'mean' in c]
                 
                 value_column = st.selectbox(
                     "Value Metric",
                     stress_value_cols,
-                    index=0 if 'max_von_mises' in stress_value_cols else 0
+                    index=0 if 'max_von_mises' in stress_value_cols else 0,
+                    key="sunburst_value"
                 )
             
             with col3:
-                # Select colormap
                 colormaps = st.session_state.sunburst_manager.get_all_colormaps()
                 selected_colormap = st.selectbox(
                     "Colormap",
                     colormaps,
-                    index=colormaps.index('viridis') if 'viridis' in colormaps else 0
-                )
-                
-                # Chart type selection
-                chart_type = st.radio(
-                    "Chart Type",
-                    ["Sunburst", "Treemap", "Parallel Categories", "Radial Bar"],
-                    horizontal=True
+                    index=colormaps.index('viridis') if 'viridis' in colormaps else 0,
+                    key="sunburst_colormap"
                 )
             
-            # Build path columns list
+            # Build path columns
             path_columns = [level1]
             if level2 != 'None':
                 path_columns.append(level2)
             if level3 != 'None':
                 path_columns.append(level3)
             
-            # Additional filters
-            st.subheader("🔍 Filter Options")
-            
-            filter_col1, filter_col2, filter_col3 = st.columns(3)
-            
-            with filter_col1:
-                # Filter by defect type
-                defect_types = st.session_state.stress_summary_df['defect_type'].unique() if 'defect_type' in st.session_state.stress_summary_df.columns else []
-                selected_defects = st.multiselect(
-                    "Filter by Defect Type",
-                    defect_types,
-                    default=defect_types.tolist() if len(defect_types) > 0 else []
-                )
-            
-            with filter_col2:
-                # Filter by shape
-                shapes = st.session_state.stress_summary_df['shape'].unique() if 'shape' in st.session_state.stress_summary_df.columns else []
-                selected_shapes = st.multiselect(
-                    "Filter by Shape",
-                    shapes,
-                    default=shapes.tolist() if len(shapes) > 0 else []
-                )
-            
-            with filter_col3:
-                # Filter by simulation type
-                sim_types = st.session_state.stress_summary_df['type'].unique() if 'type' in st.session_state.stress_summary_df.columns else []
-                selected_types = st.multiselect(
-                    "Filter by Simulation Type",
-                    sim_types,
-                    default=sim_types.tolist() if len(sim_types) > 0 else []
-                )
-            
-            # Apply filters
-            df_filtered = st.session_state.stress_summary_df.copy()
-            
-            if len(selected_defects) > 0:
-                df_filtered = df_filtered[df_filtered['defect_type'].isin(selected_defects)]
-            
-            if len(selected_shapes) > 0:
-                df_filtered = df_filtered[df_filtered['shape'].isin(selected_shapes)]
-            
-            if len(selected_types) > 0:
-                df_filtered = df_filtered[df_filtered['type'].isin(selected_types)]
-            
-            # Generate chart button
-            if st.button("🌀 Generate Visualization", type="primary"):
-                if len(df_filtered) == 0:
-                    st.warning("No data available after filtering")
-                elif len(path_columns) == 0:
-                    st.warning("Please select at least one hierarchical level")
-                elif value_column not in df_filtered.columns:
-                    st.warning(f"Value column '{value_column}' not found in data")
+            if st.button("Generate Sunburst", type="primary"):
+                if len(path_columns) > 0 and value_column in st.session_state.dashboard_stress_summary.columns:
+                    fig = st.session_state.sunburst_manager.create_sunburst_chart(
+                        df=st.session_state.dashboard_stress_summary,
+                        path_columns=path_columns,
+                        value_column=value_column,
+                        title=f"Stress Analysis: {value_column.replace('_', ' ').title()}",
+                        colormap=selected_colormap
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
                 else:
-                    with st.spinner("Generating visualization..."):
+                    st.warning("Please configure sunburst parameters")
+            
+            # Additional visualizations
+            st.subheader("📊 Other Visualizations")
+            
+            viz_type = st.selectbox(
+                "Visualization Type",
+                ["3D Scatter", "Heatmap", "Parallel Coordinates", "Radial Bar"],
+                index=0
+            )
+            
+            if viz_type == "3D Scatter" and len(stress_value_cols) >= 3:
+                col_x, col_y, col_z = st.columns(3)
+                with col_x:
+                    x_col = st.selectbox("X-axis", stress_value_cols, index=0)
+                with col_y:
+                    y_col = st.selectbox("Y-axis", stress_value_cols, index=1)
+                with col_z:
+                    z_col = st.selectbox("Z-axis", stress_value_cols, index=2)
+                
+                color_by = st.selectbox(
+                    "Color by",
+                    categorical_cols + stress_value_cols,
+                    index=0
+                )
+                
+                if st.button("Generate 3D Scatter"):
+                    fig = px.scatter_3d(
+                        st.session_state.dashboard_stress_summary,
+                        x=x_col,
+                        y=y_col,
+                        z=z_col,
+                        color=color_by if color_by in st.session_state.dashboard_stress_summary.columns else None,
+                        hover_name='id',
+                        title="3D Stress Metric Visualization",
+                        color_continuous_scale=selected_colormap,
+                        opacity=0.7
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    # Tab 4: Diagnostics
+    with tab4:
+        st.header("🔧 System Diagnostics")
+        
+        # Environment info
+        st.subheader("🌍 Environment Information")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Python Environment:**")
+            st.write(f"- Python: {sys.version.split()[0]}")
+            st.write(f"- NumPy: {np.__version__}")
+            st.write(f"- PyTorch: {torch.__version__}")
+            st.write(f"- Streamlit: {st.__version__}")
+        
+        with col2:
+            st.write("**File System:**")
+            st.write(f"- Solutions Directory: `{NUMERICAL_SOLUTIONS_DIR}`")
+            st.write(f"- Directory Exists: {os.path.exists(NUMERICAL_SOLUTIONS_DIR)}")
+            if os.path.exists(NUMERICAL_SOLUTIONS_DIR):
+                st.write(f"- File Count: {len(glob.glob(os.path.join(NUMERICAL_SOLUTIONS_DIR, '*')))}")
+        
+        # PyTorch compatibility
+        st.subheader("🔧 PyTorch Compatibility")
+        
+        st.info(f"""
+        **Current PyTorch Version:** {torch.__version__}
+        
+        **Compatibility Notes:**
+        - PyTorch 2.6+ uses `weights_only=True` by default for security
+        - This blocks loading of files with NumPy scalar objects
+        - Use `weights_only=False` for compatibility with older files
+        
+        **Recommendations:**
+        1. **For .pt files:** Use `weights_only=False` or add safe globals
+        2. **For corrupted .pkl:** Skip or attempt recovery
+        3. **Best practice:** Convert old files to .npz format
+        """)
+        
+        # File conversion tool
+        st.subheader("🔄 File Conversion Tool")
+        
+        if st.button("Convert .pt files to .npz"):
+            all_files = st.session_state.enhanced_solutions_manager.get_all_files()
+            pt_files = [f for f in all_files if f['format'] == 'pt']
+            
+            if pt_files:
+                with st.spinner(f"Converting {len(pt_files)} .pt files..."):
+                    converted = 0
+                    for file_info in pt_files[:10]:  # Limit to 10 files
                         try:
-                            if chart_type == "Sunburst":
-                                fig = st.session_state.sunburst_manager.create_sunburst_chart(
-                                    df=df_filtered,
-                                    path_columns=path_columns,
-                                    value_column=value_column,
-                                    title=f"Stress Analysis: {value_column.replace('_', ' ').title()}",
-                                    colormap=selected_colormap
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                            elif chart_type == "Treemap":
-                                fig = st.session_state.sunburst_manager.create_treemap_chart(
-                                    df=df_filtered,
-                                    path_columns=path_columns,
-                                    value_column=value_column,
-                                    title=f"Stress Analysis: {value_column.replace('_', ' ').title()}",
-                                    colormap=selected_colormap
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                                
-                            elif chart_type == "Parallel Categories":
-                                if len(path_columns) >= 2:
-                                    dimensions = path_columns[:min(4, len(path_columns))]
-                                    fig = st.session_state.sunburst_manager.create_parallel_categories(
-                                        df=df_filtered,
-                                        dimensions=dimensions,
-                                        color_column=value_column,
-                                        title=f"Stress Analysis: {value_column.replace('_', ' ').title()}"
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                else:
-                                    st.warning("Parallel Categories requires at least 2 dimensions")
+                            # Load the file
+                            sim_data = st.session_state.enhanced_solutions_manager.load_simulation_with_fallbacks(
+                                file_info['path'],
+                                st.session_state.enhanced_interpolator,
+                                use_secure_loading=False
+                            )
                             
-                            elif chart_type == "Radial Bar":
-                                if len(path_columns) > 0:
-                                    category_col = path_columns[0]
-                                    selected_values = st.multiselect(
-                                        "Select Value Columns for Radial Bar",
-                                        stress_value_cols,
-                                        default=stress_value_cols[:min(3, len(stress_value_cols))]
-                                    )
+                            if sim_data:
+                                # Save as .npz
+                                npz_filename = file_info['filename'].replace('.pt', '.npz').replace('.pth', '.npz')
+                                npz_path = os.path.join(NUMERICAL_SOLUTIONS_DIR, npz_filename)
+                                
+                                # Extract stress data
+                                if 'history' in sim_data and sim_data['history']:
+                                    _, stress_fields = sim_data['history'][-1]
+                                    np.savez_compressed(npz_path, **stress_fields)
+                                    converted += 1
+                                    st.success(f"✅ Converted: {file_info['filename']}")
                                     
-                                    if len(selected_values) > 0:
-                                        fig = st.session_state.sunburst_manager.create_radial_bar_chart(
-                                            df=df_filtered,
-                                            categories=category_col,
-                                            values=selected_values,
-                                            title="Stress Component Comparison"
-                                        )
-                                        st.plotly_chart(fig, use_container_width=True)
-                                    else:
-                                        st.warning("Please select at least one value column")
-                                else:
-                                    st.warning("Please select at least one category column")
-                        
                         except Exception as e:
-                            st.error(f"Error generating chart: {str(e)}")
-        else:
-            st.info("👈 Please load simulations first to enable stress analysis")
+                            st.error(f"❌ Failed to convert {file_info['filename']}: {str(e)}")
+                    
+                    st.success(f"✅ Converted {converted} files to .npz format")
+            else:
+                st.warning("No .pt files found to convert")
 
 # =============================================
-# ENHANCED MAIN APPLICATION WITH FILE DIAGNOSTICS
+# MAIN APPLICATION
 # =============================================
 def main():
-    """Main application with enhanced stress analysis and file diagnostics"""
+    """Main application with enhanced stress dashboard"""
     
     st.sidebar.header("📁 Directory Information")
     st.sidebar.write(f"**App Directory:** `{SCRIPT_DIR}`")
@@ -2030,338 +1650,210 @@ def main():
     )
     
     if operation_mode == "Attention Interpolation":
+        # Import and use the existing attention interface
+        from mechanical_stress_attention_interpolator_r3 import create_attention_interface
         create_attention_interface()
-    
+        
     elif operation_mode == "Stress Analysis Dashboard":
-        st.header("📊 Stress Analysis Dashboard")
+        create_stress_analysis_dashboard()
         
-        # Initialize managers
-        if 'stress_analyzer' not in st.session_state:
-            st.session_state.stress_analyzer = StressAnalysisManager()
-        if 'sunburst_manager' not in st.session_state:
-            st.session_state.sunburst_manager = SunburstChartManager()
+    else:  # File Diagnostics
+        st.header("🔧 File Diagnostics")
         
-        if 'solutions_manager' not in st.session_state:
-            st.session_state.solutions_manager = NumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
+        if 'enhanced_solutions_manager' not in st.session_state:
+            st.session_state.enhanced_solutions_manager = EnhancedNumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
         
-        if 'interpolator' not in st.session_state:
-            st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
-        
-        # File diagnostics section
-        st.subheader("📋 File Diagnostics")
-        
-        all_files = st.session_state.solutions_manager.get_all_files()
+        all_files = st.session_state.enhanced_solutions_manager.get_all_files()
         
         if not all_files:
             st.warning(f"No files found in {NUMERICAL_SOLUTIONS_DIR}")
         else:
-            # File statistics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Files", len(all_files))
-            with col2:
-                pt_files = len([f for f in all_files if f['format'] == 'pt'])
-                st.metric(".pt Files", pt_files)
-            with col3:
-                pkl_files = len([f for f in all_files if f['format'] == 'pkl'])
-                st.metric(".pkl Files", pkl_files)
-            with col4:
-                total_size = sum(f['size'] for f in all_files) / (1024 * 1024)
-                st.metric("Total Size", f"{total_size:.1f} MB")
+            # File format analysis
+            st.subheader("📊 File Format Analysis")
             
-            # Quick load button
-            if st.button("📥 Quick Load All Compatible Files", type="primary"):
-                with st.spinner("Loading compatible files..."):
-                    all_simulations = []
-                    loaded_files = []
-                    failed_files = []
+            format_counts = {}
+            for file_info in all_files:
+                fmt = file_info['format']
+                format_counts[fmt] = format_counts.get(fmt, 0) + 1
+            
+            # Display format distribution
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig, ax = plt.subplots(figsize=(8, 6))
+                ax.pie(format_counts.values(), labels=format_counts.keys(), autopct='%1.1f%%')
+                ax.set_title('File Format Distribution')
+                st.pyplot(fig)
+            
+            with col2:
+                for fmt, count in format_counts.items():
+                    st.write(f"**{fmt.upper()}:** {count} files")
+            
+            # File size analysis
+            st.subheader("📈 File Size Analysis")
+            
+            sizes = [f['size'] / (1024 * 1024) for f in all_files]  # MB
+            
+            fig, ax = plt.subplots(figsize=(10, 4))
+            ax.hist(sizes, bins=20, alpha=0.7, color='steelblue', edgecolor='black')
+            ax.set_xlabel('File Size (MB)')
+            ax.set_ylabel('Count')
+            ax.set_title('File Size Distribution')
+            ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+            
+            # Individual file analysis
+            st.subheader("🔍 Individual File Analysis")
+            
+            selected_file = st.selectbox(
+                "Select file for detailed analysis",
+                [f"{f['filename']} ({f['format']}, {f['size']//1024}KB)" for f in all_files[:20]],
+                index=0
+            )
+            
+            if selected_file:
+                filename = selected_file.split(" (")[0]
+                file_info = next(f for f in all_files if f['filename'] == filename)
+                
+                analysis = st.session_state.enhanced_solutions_manager.analyze_file(file_info['path'])
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**File Information:**")
+                    st.write(f"- Path: `{analysis['path']}`")
+                    st.write(f"- Size: {analysis['size']:,} bytes")
+                    st.write(f"- Format: {analysis.get('format', 'unknown')}")
+                    st.write(f"- Valid: {'✅ Yes' if analysis['valid'] else '❌ No'}")
+                
+                with col2:
+                    if analysis['issues']:
+                        st.write("**Issues:**")
+                        for issue in analysis['issues']:
+                            st.write(f"- {issue}")
                     
-                    progress_bar = st.progress(0)
-                    
-                    for i, file_info in enumerate(all_files[:100]):  # Limit to 100 files
-                        progress_bar.progress((i + 1) / min(len(all_files), 100))
-                        
+                    if analysis['recommendation']:
+                        st.write("**Recommendation:**")
+                        st.info(analysis['recommendation'])
+                
+                # Test loading
+                if st.button("🧪 Test Load This File"):
+                    with st.spinner("Testing file load..."):
                         try:
-                            # Skip files over 100MB
-                            if file_info['size'] > 100 * 1024 * 1024:
-                                st.warning(f"Skipping large file: {file_info['filename']} ({file_info['size'] // (1024*1024)}MB)")
-                                continue
+                            if 'enhanced_interpolator' not in st.session_state:
+                                st.session_state.enhanced_interpolator = EnhancedSpatialLocalityAttentionInterpolator()
                             
-                            sim_data = st.session_state.solutions_manager.load_simulation(
+                            sim_data = st.session_state.enhanced_solutions_manager.load_simulation_with_fallbacks(
                                 file_info['path'],
-                                st.session_state.interpolator
+                                st.session_state.enhanced_interpolator,
+                                use_secure_loading=False
                             )
                             
                             if sim_data:
-                                all_simulations.append(sim_data)
-                                loaded_files.append(file_info['filename'])
+                                st.success("✅ File loaded successfully!")
+                                
+                                # Show basic info
+                                st.write("**Loaded Data:**")
+                                st.write(f"- History frames: {len(sim_data.get('history', []))}")
+                                st.write(f"- Parameters: {len(sim_data.get('params', {}))}")
+                                st.write(f"- Metadata: {len(sim_data.get('metadata', {}))}")
+                                
+                                # Show sample stress data
+                                if sim_data.get('history'):
+                                    _, stress_fields = sim_data['history'][-1]
+                                    st.write("**Stress Fields:**")
+                                    for key, value in stress_fields.items():
+                                        if isinstance(value, np.ndarray):
+                                            st.write(f"- {key}: {value.shape}, {value.dtype}")
                             else:
-                                failed_files.append(file_info['filename'])
+                                st.error("❌ Failed to load file")
                                 
                         except Exception as e:
-                            failed_files.append(file_info['filename'])
-                    
-                    progress_bar.empty()
-                    
-                    if all_simulations:
-                        # Create comprehensive stress summary
-                        stress_df = st.session_state.stress_analyzer.create_stress_summary_dataframe(
-                            all_simulations, {}
-                        )
-                        
-                        if not stress_df.empty:
-                            st.session_state.stress_summary_df = stress_df
-                            st.session_state.source_simulations = all_simulations
-                            st.success(f"✅ Loaded {len(loaded_files)} simulations for analysis")
-                            
-                            if failed_files:
-                                with st.expander(f"⚠️ {len(failed_files)} files failed to load"):
-                                    for f in failed_files[:10]:  # Show first 10
-                                        st.write(f"- {f}")
-                                    if len(failed_files) > 10:
-                                        st.write(f"... and {len(failed_files) - 10} more")
-                        else:
-                            st.warning("No stress data found in loaded simulations")
-                    else:
-                        st.error("No simulations could be loaded. Check file formats and compatibility.")
-            
-            # Manual file inspection
-            with st.expander("🔍 Inspect Individual Files", expanded=False):
-                selected_file = st.selectbox(
-                    "Select file to inspect",
-                    [f"{f['filename']} ({f['format']}, {f['size']//1024}KB)" for f in all_files],
-                    index=0
-                )
-                
-                if selected_file and st.button("Inspect File"):
-                    # Extract filename from selection
-                    filename = selected_file.split(" (")[0]
-                    file_info = next(f for f in all_files if f['filename'] == filename)
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("**File Information:**")
-                        st.write(f"Path: `{file_info['path']}`")
-                        st.write(f"Format: {file_info['format']}")
-                        st.write(f"Size: {file_info['size']} bytes")
-                        st.write(f"Modified: {file_info['modified']}")
-                        
-                        # Check integrity
-                        is_valid, reason = st.session_state.solutions_manager.check_file_integrity(file_info['path'])
-                        if is_valid:
-                            st.success("✅ File appears valid")
-                        else:
-                            st.error(f"❌ File may be corrupted: {reason}")
-                    
-                    with col2:
-                        if st.button("Try to Load This File"):
-                            try:
-                                sim_data = st.session_state.solutions_manager.load_simulation(
-                                    file_info['path'],
-                                    st.session_state.interpolator
-                                )
-                                
-                                if sim_data:
-                                    st.success("✅ File loaded successfully!")
-                                    st.write("**Contents:**")
-                                    st.json(sim_data, expanded=False)
-                                else:
-                                    st.error("❌ Failed to load file")
-                                    
-                            except Exception as e:
-                                st.error(f"❌ Error loading file: {str(e)}")
-        
-        # Show the stress analysis tab interface if we have data
-        if not st.session_state.stress_summary_df.empty:
-            st.subheader("📊 Analysis Dashboard")
-            
-            # Quick stats
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Simulations", len(st.session_state.stress_summary_df))
-            with col2:
-                max_vm = st.session_state.stress_summary_df['max_von_mises'].max() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
-                st.metric("Max Von Mises", f"{max_vm:.2f} GPa")
-            with col3:
-                mean_vm = st.session_state.stress_summary_df['max_von_mises'].mean() if 'max_von_mises' in st.session_state.stress_summary_df.columns else 0
-                st.metric("Avg Max Von Mises", f"{mean_vm:.2f} GPa")
-            with col4:
-                defect_counts = st.session_state.stress_summary_df['defect_type'].value_counts().to_dict() if 'defect_type' in st.session_state.stress_summary_df.columns else {}
-                st.metric("Unique Defect Types", len(defect_counts))
-            
-            # Show the stress analysis tab interface
-            create_attention_interface()
-        else:
-            st.info("Please load simulations first to enable the stress analysis dashboard")
-    
-    elif operation_mode == "File Diagnostics":
-        st.header("🔧 File Diagnostics and Repair Tools")
-        
-        if 'solutions_manager' not in st.session_state:
-            st.session_state.solutions_manager = NumericalSolutionsManager(NUMERICAL_SOLUTIONS_DIR)
-        
-        all_files = st.session_state.solutions_manager.get_all_files()
-        
-        if not all_files:
-            st.warning(f"No files found in {NUMERICAL_SOLUTIONS_DIR}")
-            return
-        
-        st.subheader("📊 File Statistics")
-        
-        # File format breakdown
-        format_counts = {}
-        for file_info in all_files:
-            fmt = file_info['format']
-            format_counts[fmt] = format_counts.get(fmt, 0) + 1
-        
-        fig_format, ax = plt.subplots(figsize=(8, 4))
-        ax.bar(format_counts.keys(), format_counts.values())
-        ax.set_xlabel('File Format')
-        ax.set_ylabel('Count')
-        ax.set_title('File Format Distribution')
-        ax.tick_params(axis='x', rotation=45)
-        st.pyplot(fig_format)
-        
-        # File size distribution
-        sizes = [f['size'] / (1024 * 1024) for f in all_files]  # Convert to MB
-        
-        fig_size, ax = plt.subplots(figsize=(8, 4))
-        ax.hist(sizes, bins=20, alpha=0.7, color='steelblue')
-        ax.set_xlabel('File Size (MB)')
-        ax.set_ylabel('Count')
-        ax.set_title('File Size Distribution')
-        st.pyplot(fig_size)
-        
-        # File repair tools
-        st.subheader("🛠️ File Repair Tools")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("🔍 Check All File Integrity"):
-                with st.spinner("Checking file integrity..."):
-                    results = []
-                    for file_info in all_files[:50]:  # Limit to 50 files
-                        is_valid, reason = st.session_state.solutions_manager.check_file_integrity(file_info['path'])
-                        results.append({
-                            'File': file_info['filename'],
-                            'Valid': '✅' if is_valid else '❌',
-                            'Status': reason
-                        })
-                    
-                    if results:
-                        df_results = pd.DataFrame(results)
-                        st.dataframe(df_results, use_container_width=True)
-        
-        with col2:
-            if st.button("🧹 Clear Loading Cache"):
-                if hasattr(st.session_state.solutions_manager, 'loaded_files'):
-                    st.session_state.solutions_manager.loaded_files.clear()
-                if hasattr(st.session_state.solutions_manager, 'failed_files'):
-                    st.session_state.solutions_manager.failed_files.clear()
-                st.success("✅ Loading cache cleared")
-        
-        # PyTorch compatibility information
-        st.subheader("ℹ️ PyTorch Compatibility Information")
-        
-        st.info(f"""
-        **Current Environment:**
-        - PyTorch Version: {torch.__version__}
-        - NumPy Version: {np.__version__}
-        - Python Version: {sys.version.split()[0]}
-        
-        **Common Issues and Solutions:**
-        
-        1. **PyTorch 2.6+ Security Changes:**
-           - Files created with older PyTorch versions may not load with `weights_only=True`
-           - **Solution:** Use `weights_only=False` or add safe globals for NumPy objects
-        
-        2. **NumPy Version Incompatibility:**
-           - Files created with NumPy 1.x may not load with NumPy 2.0+
-           - **Solution:** Use `torch.serialization.add_safe_globals()` to add missing types
-        
-        3. **Corrupted Files:**
-           - Incomplete downloads or disk errors can corrupt files
-           - **Solution:** Recreate files from source or download again
-        
-        **Recommendations for Your Files:**
-        - Consider converting old .pt files to .npz format for better compatibility
-        - Use PyTorch's `torch.save(data, file, pickle_protocol=4)` for better compatibility
-        - For critical data, store in multiple formats (.npz and .h5)
-        """)
+                            st.error(f"❌ Error: {str(e)}")
 
 # =============================================
 # THEORETICAL ANALYSIS
 # =============================================
-with st.expander("🔬 Enhanced Theoretical Analysis: Stress Metrics and Visualization", expanded=False):
+with st.expander("🔬 Enhanced File Loading and Stress Analysis", expanded=False):
     st.markdown(f"""
-    ## 📊 **Enhanced Stress Analysis and Visualization**
+    ## 🚀 **Enhanced Stress Analysis Dashboard**
     
-    ### **🏔️ Maximum Stress Value Capture**
+    ### **📁 Robust File Loading**
     
-    **New Stress Metrics:**
-    1. **Hydrostatic Stress (σ_hydro):**
-       - Max Absolute Value: `max_abs_hydrostatic`
-       - Maximum Value: `max_hydrostatic`
-       - Minimum Value: `min_hydrostatic`
-       - Mean Absolute Value: `mean_abs_hydrostatic`
-       - Standard Deviation: `hydro_std`
-       - Skewness: `hydro_skewness`
-       - Kurtosis: `hydro_kurtosis`
+    **Multiple Loading Strategies:**
+    1. **PyTorch Files (.pt):**
+       - Secure loading (weights_only=True) with safe globals
+       - Insecure loading (weights_only=False) for compatibility
+       - Buffer-based loading for corrupted files
+       - Zip extraction as last resort
     
-    2. **Stress Magnitude:**
-       - Maximum: `max_stress_magnitude`
-       - Mean: `mean_stress_magnitude`
+    2. **Pickle Files (.pkl):**
+       - Standard pickle load with protocol detection
+       - Joblib loading for numpy arrays
+       - Dill loading for complex objects
+       - Text recovery for corrupted files
     
-    3. **Von Mises Stress (σ_vM):**
-       - Maximum: `max_von_mises`
-       - Mean: `mean_von_mises`
-       - Minimum: `min_von_mises`
-       - 95th Percentile: `von_mises_p95`
-       - 99th Percentile: `von_mises_p99`
-       - 99.9th Percentile: `von_mises_p99_9`
+    3. **Other Formats:**
+       - HDF5 (.h5) with recursive traversal
+       - NumPy (.npz) with compression support
+       - SQLite (.sql, .db) with table extraction
+       - JSON with encoding fallbacks
     
-    ### **🌀 Sunburst Chart Features**
+    ### **🔧 File Integrity Checking**
     
-    **Hierarchical Visualization:**
-    1. **Multi-level Hierarchy:**
-       - First Level (Center): Defect type, Shape, or Simulation type
-       - Second Level: Orientation, ε*, κ, etc.
-       - Third Level: Additional parameters or categories
+    **Pre-load Validation:**
+    1. **File Existence and Size:** Check if file exists and has content
+    2. **Header Validation:** Verify file signatures and magic numbers
+    3. **Format Detection:** Auto-detect file format from content
+    4. **Corruption Detection:** Identify corrupted files before loading
     
-    2. **Value Metrics:** Any stress metric can be used for:
-       - Area sizing in sunburst
-       - Color mapping
-       - Value display
+    ### **📊 Stress Analysis Features**
     
-    3. **50+ Colormaps:** Full matplotlib colormap support
+    **Maximum Stress Capture:**
+    1. **Hydrostatic Stress:** Absolute maximum, mean absolute, statistics
+    2. **Stress Magnitude:** Maximum, mean, distribution analysis
+    3. **Von Mises Stress:** Maximum, percentiles (95th, 99th, 99.9th)
+    4. **Principal Stresses:** Max values, Tresca shear stress
     
-    **Advanced Chart Types:**
-    1. **Sunburst Chart:** Radial hierarchical visualization
-    2. **Treemap Chart:** Rectangular hierarchical visualization
-    3. **Parallel Categories:** Multi-dimensional categorical visualization
-    4. **Radial Bar Chart:** Circular bar chart for comparisons
+    **Advanced Visualization:**
+    1. **Sunburst Charts:** Hierarchical visualization with 50+ colormaps
+    2. **3D Scatter Plots:** Interactive 3D exploration of stress metrics
+    3. **Heatmaps:** Parameter-stress relationships
+    4. **Box Plots:** Distribution analysis across categories
+    5. **Parallel Coordinates:** Multi-dimensional analysis
     
-    ### **🔧 File Compatibility Fixes**
+    ### **🛠️ Diagnostic Tools**
     
-    **PyTorch 2.6+ Compatibility:**
-    1. **Safe Globals Registration:** Automatically registers NumPy scalar types
-    2. **Multiple Loading Strategies:** Tries secure mode first, falls back to insecure
-    3. **File Integrity Checks:** Validates files before attempting to load
+    **File Analysis:**
+    1. **Format Distribution:** Pie charts of file types
+    2. **Size Analysis:** Histograms of file sizes
+    3. **Individual File Inspection:** Detailed analysis of each file
+    4. **Loading Statistics:** Success rates and failure analysis
     
-    **Corrupted File Handling:**
-    1. **Graceful Degradation:** Skips corrupted files instead of crashing
-    2. **Detailed Error Messages:** Provides specific guidance for each error type
-    3. **Cache Management:** Tracks successful and failed loads to avoid retries
+    **Compatibility Fixes:**
+    1. **PyTorch 2.6+ Support:** Safe globals for NumPy objects
+    2. **Legacy Format Conversion:** Convert old .pt files to .npz
+    3. **Corrupted File Recovery:** Multiple recovery strategies
+    4. **Encoding Fallbacks:** Handle different text encodings
     
-    **Enhanced Diagnostics:**
-    1. **File Statistics:** Shows distribution of file formats and sizes
-    2. **Integrity Checking:** Validates file headers and structure
-    3. **Loading Statistics:** Tracks success rates and provides feedback
+    ### **🚀 Performance Optimizations**
+    
+    1. **Caching:** Memoize loaded files to avoid redundant loading
+    2. **Batch Processing:** Parallel loading of multiple files
+    3. **Progress Indicators:** Real-time loading feedback
+    4. **Memory Management:** Efficient handling of large files
+    
+    ### **🔒 Security Considerations**
+    
+    1. **Secure Loading Default:** weights_only=True for untrusted files
+    2. **Insecure Fallback:** weights_only=False for trusted legacy files
+    3. **Safe Globals:** Whitelist specific NumPy types
+    4. **File Validation:** Check files before unpickling
+    
+    **This enhanced dashboard provides comprehensive stress analysis with robust file loading capabilities, making it suitable for handling large collections of simulation files with varying formats and compatibility issues.**
     """)
 
 if __name__ == "__main__":
     main()
 
-st.caption(f"🔬 Enhanced Multi-Target Spatial-Attention Stress Interpolation • Stress Analysis Dashboard • File Compatibility Fixes • 2025")
+st.caption(f"🔬 Enhanced Stress Analysis Dashboard • Robust File Loading • PyTorch Compatibility • 2025")
