@@ -22,12 +22,17 @@ from itertools import product
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import requests
-import base64
+import h5py  # Added for H5 support
+import re  # For filename sanitization
 warnings.filterwarnings('ignore')
+
 # =============================================
-# PATH CONFIGURATION - Removed local dir, using GitHub
+# PATH CONFIGURATION
 # =============================================
+SCRIPT_DIR = Path.cwd()
+NUMERICAL_SOLUTIONS_DIR = SCRIPT_DIR / "numerical_solutions"
+NUMERICAL_SOLUTIONS_DIR.mkdir(parents=True, exist_ok=True)
+
 # =============================================
 # PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
 # =============================================
@@ -283,7 +288,7 @@ For more information, see the documentation.
                     'orientation': target_params.get('orientation', 'Unknown'),
                     'eps0': float(target_params.get('eps0', 0)),
                     'kappa': float(target_params.get('kappa', 0)),
-                    'theta_deg': float(np.deg2rad(target_params.get('theta', 0)))
+                    'theta_deg': float(np.rad2deg(target_params.get('theta', 0)))  # Fixed: np.deg2rad -> np.rad2deg
                 }
               
                 # Add stress metrics
@@ -320,14 +325,14 @@ For more information, see the documentation.
     @staticmethod
     def save_prediction_to_numerical_solutions(prediction_data: Dict[str, Any],
                                              filename: str,
-                                             solutions_manager: 'GitHubSolutionsManager') -> bool:
+                                             solutions_manager: 'NumericalSolutionsManager') -> bool:
         """
-        Save prediction to GitHub repository
+        Save prediction to numerical_solutions directory
       
         Args:
             prediction_data: Prediction data to save
             filename: Base filename (without extension)
-            solutions_manager: GitHubSolutionsManager instance
+            solutions_manager: NumericalSolutionsManager instance
           
         Returns:
             Success status
@@ -346,20 +351,17 @@ For more information, see the documentation.
         except Exception as e:
             st.error(f"Error saving prediction: {str(e)}")
             return False
+
 # =============================================
-# GITHUB SOLUTIONS MANAGER (REPLACED LOCAL WITH GITHUB)
+# NUMERICAL SOLUTIONS MANAGER (UPDATED FOR NUMERICAL_SOLUTIONS)
 # =============================================
-class GitHubSolutionsManager:
-    def __init__(self, token: str, owner: str, repo: str, base_path: str = "numerical_solutions"):
-        self.token = token
-        self.owner = owner
-        self.repo = repo
-        self.base_path = base_path
-        self.api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
-        self.headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
+class NumericalSolutionsManager:
+    def __init__(self, solutions_dir: Path = NUMERICAL_SOLUTIONS_DIR):
+        self.solutions_dir = solutions_dir
+        self._ensure_directory()
+  
+    def _ensure_directory(self):
+        self.solutions_dir.mkdir(parents=True, exist_ok=True)
   
     def scan_directory(self) -> Dict[str, List[str]]:
         file_formats = {
@@ -371,33 +373,20 @@ class GitHubSolutionsManager:
             'json': []
         }
       
-        try:
-            response = requests.get(f"{self.api_url}/{self.base_path}", headers=self.headers)
-            if response.status_code == 200:
-                contents = response.json()
-                for item in contents:
-                    if item['type'] == 'file':
-                        name = item['name']
-                        path = item['path']
-                        ext = name.split('.')[-1].lower()
-                        if ext in ['pkl', 'pickle']:
-                            file_formats['pkl'].append(path)
-                        elif ext in ['pt', 'pth']:
-                            file_formats['pt'].append(path)
-                        elif ext in ['h5', 'hdf5']:
-                            file_formats['h5'].append(path)
-                        elif ext == 'npz':
-                            file_formats['npz'].append(path)
-                        elif ext in ['sql', 'db']:
-                            file_formats['sql'].append(path)
-                        elif ext == 'json':
-                            file_formats['json'].append(path)
-      
-                # Sort by name
-                for fmt in file_formats:
-                    file_formats[fmt].sort()
-        except Exception as e:
-            st.error(f"Error scanning GitHub repo: {str(e)}")
+        for format_type, extensions in [
+            ('pkl', ['*.pkl', '*.pickle']),
+            ('pt', ['*.pt', '*.pth']),
+            ('h5', ['*.h5', '*.hdf5']),
+            ('npz', ['*.npz']),
+            ('sql', ['*.sql', '*.db']),
+            ('json', ['*.json'])
+        ]:
+            for ext in extensions:
+                pattern = self.solutions_dir / ext
+                files = glob.glob(str(pattern))
+                if files:
+                    files.sort(key=os.path.getmtime, reverse=True)
+                    file_formats[format_type].extend(files)
       
         return file_formats
   
@@ -405,21 +394,17 @@ class GitHubSolutionsManager:
         all_files = []
         file_formats = self.scan_directory()
       
-        for format_type, paths in file_formats.items():
-            for path in paths:
-                # Fetch size and other info
-                response = requests.get(f"{self.api_url}/{path}", headers=self.headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    file_info = {
-                        'path': path,
-                        'filename': os.path.basename(path),
-                        'format': format_type,
-                        'size': data.get('size', 0),
-                        'modified': datetime.now().isoformat(),  # GitHub doesn't provide modified easily, use now
-                        'relative_path': path.replace(f"{self.base_path}/", "")
-                    }
-                    all_files.append(file_info)
+        for format_type, files in file_formats.items():
+            for file_path in files:
+                file_info = {
+                    'path': file_path,
+                    'filename': os.path.basename(file_path),
+                    'format': format_type,
+                    'size': os.path.getsize(file_path),
+                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                    'relative_path': os.path.relpath(file_path, self.solutions_dir)
+                }
+                all_files.append(file_info)
       
         all_files.sort(key=lambda x: x['filename'].lower())
         return all_files
@@ -432,14 +417,7 @@ class GitHubSolutionsManager:
   
     def load_simulation(self, file_path: str, interpolator) -> Dict[str, Any]:
         try:
-            response = requests.get(f"{self.api_url}/{file_path}", headers=self.headers)
-            if response.status_code != 200:
-                raise ValueError(f"Failed to fetch file: {response.json().get('message')}")
-          
-            data = response.json()
-            file_content = base64.b64decode(data['content'])
-          
-            ext = file_path.split('.')[-1].lower()
+            ext = Path(file_path).suffix.lower().lstrip('.')
             if ext in ['pkl', 'pickle']:
                 format_type = 'pkl'
             elif ext in ['pt', 'pth']:
@@ -455,29 +433,31 @@ class GitHubSolutionsManager:
             else:
                 format_type = 'auto'
           
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+          
             sim_data = interpolator.read_simulation_file(file_content, format_type)
-            sim_data['loaded_from'] = 'github'
+            sim_data['loaded_from'] = 'numerical_solutions'
             return sim_data
           
         except Exception as e:
-            st.error(f"Error loading {file_path} from GitHub: {str(e)}")
+            st.error(f"Error loading {file_path}: {str(e)}")
             raise
   
     def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
         if not filename.endswith(f'.{format_type}'):
             filename = f"{filename}.{format_type}"
       
-        file_path = f"{self.base_path}/{filename}"
+        file_path = self.solutions_dir / filename
       
         try:
-            # Serialize data
             if format_type == 'pkl':
-                raw_data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+                with open(file_path, 'wb') as f:
+                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+          
             elif format_type == 'pt':
-                buffer = BytesIO()
-                torch.save(data, buffer)
-                buffer.seek(0)
-                raw_data = buffer.read()
+                torch.save(data, file_path)
+          
             elif format_type == 'json':
                 def convert_for_json(obj):
                     if isinstance(obj, np.ndarray):
@@ -492,37 +472,20 @@ class GitHubSolutionsManager:
                         return obj
               
                 json_data = convert_for_json(data)
-                raw_data = json.dumps(json_data, indent=2).encode('utf-8')
+                with open(file_path, 'w') as f:
+                    json.dump(json_data, f, indent=2)
+          
             else:
                 st.warning(f"Format {format_type} not supported for saving")
                 return False
           
-            content = base64.b64encode(raw_data).decode('utf-8')
-          
-            # Check if file exists to get SHA
-            response = requests.get(f"{self.api_url}/{file_path}", headers=self.headers)
-            sha = None
-            if response.status_code == 200:
-                sha = response.json()['sha']
-          
-            payload = {
-                "message": f"Save simulation file: {filename}",
-                "content": content
-            }
-            if sha:
-                payload["sha"] = sha
-          
-            response = requests.put(f"{self.api_url}/{file_path}", headers=self.headers, json=payload)
-            if response.status_code in [200, 201]:
-                st.success(f"✅ Saved simulation to GitHub: {filename}")
-                return True
-            else:
-                st.error(f"Error saving to GitHub: {response.json().get('message')}")
-                return False
+            st.success(f"✅ Saved simulation to: {filename}")
+            return True
           
         except Exception as e:
-            st.error(f"Error saving file to GitHub: {str(e)}")
+            st.error(f"Error saving file: {str(e)}")
             return False
+
 # =============================================
 # MULTI-TARGET PREDICTION MANAGER
 # =============================================
@@ -615,6 +578,10 @@ class MultiTargetPredictionManager:
         source_param_vectors = np.array(source_param_vectors)
         source_stress_data = np.array(source_stress_data)
       
+        # Progress bar for batch
+        progress_bar = st.progress(0)
+        num_targets = len(target_params_list)
+        
         # Predict for each target
         for idx, target_params in enumerate(target_params_list):
             # Compute target parameter vector
@@ -622,9 +589,9 @@ class MultiTargetPredictionManager:
                 {'params': target_params}
             )
           
-            # Calculate distances and weights
+            # Calculate distances and weights (use interpolator.sigma_param)
             distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
+            weights = np.exp(-0.5 * (distances / interpolator.sigma_param) ** 2)
             weights = weights / (np.sum(weights) + 1e-8)
           
             # Weighted combination
@@ -644,8 +611,12 @@ class MultiTargetPredictionManager:
             }
           
             predictions[f"target_{idx:03d}"] = predicted_stress
+            
+            # Update progress
+            progress_bar.progress((idx + 1) / num_targets)
       
         return predictions
+
 # =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
 # =============================================
@@ -921,12 +892,27 @@ class SpatialLocalityAttentionInterpolator:
         else:
             angle_deg = angle_deg % 90
             return f"Custom ({angle_deg:.1f}°)"
+    
+    # Optional: Actual prediction using the model (replace RBF if desired)
+    # def predict_with_model(self, source_param_vectors, source_stress, target_vector):
+    #     with torch.no_grad():
+    #         query = torch.tensor(target_vector).unsqueeze(0).unsqueeze(0)  # [1,1,d]
+    #         keys = torch.tensor(source_param_vectors).unsqueeze(0)        # [1,N,d]
+    #         
+    #         q_emb = self.model['param_embedding'](query)
+    #         k_emb = self.model['param_embedding'](keys)
+    #         
+    #         attn_output, attn_weights = self.model['attention'](q_emb, k_emb, k_emb)
+    #         # Add norm, FFN, etc.
+    #         # Return weighted stress based on attn_weights
+
 # =============================================
 # GRID AND EXTENT CONFIGURATION
 # =============================================
 def get_grid_extent(N=128, dx=0.1):
     """Get grid extent for visualization"""
     return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+
 # =============================================
 # ATTENTION INTERFACE
 # =============================================
@@ -938,6 +924,10 @@ def create_attention_interface():
     # Initialize interpolator in session state
     if 'interpolator' not in st.session_state:
         st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
+  
+    # Initialize numerical solutions manager
+    if 'solutions_manager' not in st.session_state:
+        st.session_state.solutions_manager = NumericalSolutionsManager()
   
     # Initialize multi-target manager
     if 'multi_target_manager' not in st.session_state:
@@ -971,12 +961,12 @@ def create_attention_interface():
     st.sidebar.header("🔮 Attention Interpolator Settings")
   
     with st.sidebar.expander("⚙️ Model Parameters", expanded=False):
-        num_heads = st.slider("Number of Attention Heads", 1, 8, 4, 1)
-        sigma_spatial = st.slider("Spatial Sigma (σ_spatial)", 0.05, 1.0, 0.2, 0.05)
-        sigma_param = st.slider("Parameter Sigma (σ_param)", 0.05, 1.0, 0.3, 0.05)
-        use_gaussian = st.checkbox("Use Gaussian Spatial Regularization", True)
+        num_heads = st.slider("Number of Attention Heads", 1, 8, 4, 1, key="num_heads_slider")
+        sigma_spatial = st.slider("Spatial Sigma (σ_spatial)", 0.05, 1.0, 0.2, 0.05, key="sigma_spatial_slider")
+        sigma_param = st.slider("Parameter Sigma (σ_param)", 0.05, 1.0, 0.3, 0.05, key="sigma_param_slider")
+        use_gaussian = st.checkbox("Use Gaussian Spatial Regularization", True, key="use_gaussian_checkbox")
       
-        if st.button("🔄 Update Model Parameters"):
+        if st.button("🔄 Update Model Parameters", key="update_model_btn"):
             st.session_state.interpolator = SpatialLocalityAttentionInterpolator(
                 num_heads=num_heads,
                 sigma_spatial=sigma_spatial,
@@ -994,24 +984,23 @@ def create_attention_interface():
         )
       
         st.session_state.save_to_directory = st.checkbox(
-            "Save to GitHub repository",
+            "Save to numerical_solutions directory",
             value=True,
             key="save_to_dir_checkbox"
         )
       
         if st.session_state.save_to_directory:
-            st.info("Files will be saved to GitHub repository")
-  
-    st.sidebar.header("GitHub Configuration")
-    github_token = st.sidebar.text_input("GitHub Personal Access Token", type="password", key="github_token")
-    github_owner = st.sidebar.text_input("GitHub Owner/Username", key="github_owner")
-    github_repo = st.sidebar.text_input("GitHub Repository Name", key="github_repo")
-  
-    if github_token and github_owner and github_repo:
-        st.session_state.solutions_manager = GitHubSolutionsManager(github_token, github_owner, github_repo)
-        st.sidebar.success("GitHub configured!")
-    else:
-        st.sidebar.warning("Please configure GitHub credentials to load/save simulations.")
+            st.info(f"Files will be saved to: `{NUMERICAL_SOLUTIONS_DIR}`")
+    
+    # Clear cache button
+    if st.sidebar.button("🗑️ Clear cache & reset", key="clear_cache_btn"):
+        st.session_state.clear()
+        st.rerun()
+    
+    # Model summary
+    interp = st.session_state.interpolator
+    st.sidebar.markdown(f"**Model:** {interp.num_heads} heads, d_model={interp.d_model}")
+    st.sidebar.markdown(f"**Sources loaded:** {len(st.session_state.source_simulations)}")
   
     # Main interface tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -1030,64 +1019,61 @@ def create_attention_interface():
         col1, col2 = st.columns([1, 1])
       
         with col1:
-            st.markdown("### 📂 From GitHub Repository")
-            st.info(f"Loading from GitHub repo: {github_repo if 'github_repo' in st.session_state else 'Not configured'}")
+            st.markdown("### 📂 From numerical_solutions Directory")
+            st.info(f"Loading from: `{NUMERICAL_SOLUTIONS_DIR}`")
           
-            if 'solutions_manager' in st.session_state:
-                file_formats = st.session_state.solutions_manager.scan_directory()
-                all_files_info = st.session_state.solutions_manager.get_all_files()
+            file_formats = st.session_state.solutions_manager.scan_directory()
+            all_files_info = st.session_state.solutions_manager.get_all_files()
           
-                if not all_files_info:
-                    st.warning("No simulation files found in GitHub repo")
-                else:
-                    file_groups = {}
-                    for file_info in all_files_info:
-                        format_type = file_info['format']
-                        if format_type not in file_groups:
-                            file_groups[format_type] = []
-                        file_groups[format_type].append(file_info)
-              
-                    for format_type, files in file_groups.items():
-                        with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
-                            file_options = {}
-                            for file_info in files:
-                                display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
-                                file_options[display_name] = file_info['path']
-                      
-                            selected_files = st.multiselect(
-                                f"Select {format_type} files",
-                                options=list(file_options.keys()),
-                                key=f"select_{format_type}"
-                            )
-                      
-                            if selected_files:
-                                if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
-                                    with st.spinner(f"Loading {len(selected_files)} files..."):
-                                        loaded_count = 0
-                                        for display_name in selected_files:
-                                            file_path = file_options[display_name]
-                                            try:
-                                                sim_data = st.session_state.solutions_manager.load_simulation(
-                                                    file_path,
-                                                    st.session_state.interpolator
-                                                )
-                                          
-                                                if file_path not in st.session_state.loaded_from_numerical:
-                                                    st.session_state.source_simulations.append(sim_data)
-                                                    st.session_state.loaded_from_numerical.append(file_path)
-                                                    loaded_count += 1
-                                                    st.success(f"✅ Loaded: {os.path.basename(file_path)} from GitHub")
-                                                else:
-                                                    st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
-                                              
-                                            except Exception as e:
-                                                st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
-                                  
-                                        if loaded_count > 0:
-                                            st.success(f"Successfully loaded {loaded_count} new files!")
-                                            st.rerun()
+            if not all_files_info:
+                st.warning(f"No simulation files found in `{NUMERICAL_SOLUTIONS_DIR}`")
             else:
-                st.warning("GitHub not configured")
+                file_groups = {}
+                for file_info in all_files_info:
+                    format_type = file_info['format']
+                    if format_type not in file_groups:
+                        file_groups[format_type] = []
+                    file_groups[format_type].append(file_info)
+              
+                for format_type, files in file_groups.items():
+                    with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
+                        file_options = {}
+                        for file_info in files:
+                            display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
+                            file_options[display_name] = file_info['path']
+                      
+                        selected_files = st.multiselect(
+                            f"Select {format_type} files",
+                            options=list(file_options.keys()),
+                            key=f"select_{format_type}"
+                        )
+                      
+                        if selected_files:
+                            if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
+                                with st.spinner(f"Loading {len(selected_files)} files..."):
+                                    loaded_count = 0
+                                    for display_name in selected_files:
+                                        file_path = file_options[display_name]
+                                        try:
+                                            sim_data = st.session_state.solutions_manager.load_simulation(
+                                                file_path,
+                                                st.session_state.interpolator
+                                            )
+                                          
+                                            if file_path not in st.session_state.loaded_from_numerical:
+                                                st.session_state.source_simulations.append(sim_data)
+                                                st.session_state.loaded_from_numerical.append(file_path)
+                                                loaded_count += 1
+                                                st.success(f"✅ Loaded: {os.path.basename(file_path)}")
+                                            else:
+                                                st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
+                                              
+                                        except Exception as e:
+                                            st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
+                                  
+                                    if loaded_count > 0:
+                                        st.success(f"Successfully loaded {loaded_count} new files!")
+                                        st.rerun()
       
         with col2:
             st.markdown("### 📤 Upload Local Files")
@@ -1095,16 +1081,18 @@ def create_attention_interface():
             uploaded_files = st.file_uploader(
                 "Upload simulation files (PKL, PT, H5, NPZ, SQL, JSON)",
                 type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json'],
-                accept_multiple_files=True
+                accept_multiple_files=True,
+                key="file_uploader"
             )
           
             format_type = st.selectbox(
                 "File Format (for upload)",
                 ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON"],
-                index=0
+                index=0,
+                key="upload_format_select"
             )
           
-            if uploaded_files and st.button("📥 Load Uploaded Files", type="primary"):
+            if uploaded_files and st.button("📥 Load Uploaded Files", type="primary", key="load_uploaded_btn"):
                 with st.spinner("Loading uploaded files..."):
                     loaded_sims = []
                     for uploaded_file in uploaded_files:
@@ -1176,7 +1164,7 @@ def create_attention_interface():
                 # Clear button
                 col1, col2 = st.columns([1, 3])
                 with col1:
-                    if st.button("🗑️ Clear All Source Simulations", type="secondary"):
+                    if st.button("🗑️ Clear All Source Simulations", type="secondary", key="clear_sources_btn"):
                         st.session_state.source_simulations = []
                         st.session_state.uploaded_files = {}
                         st.session_state.loaded_from_numerical = []
@@ -1387,7 +1375,7 @@ def create_attention_interface():
                         angle_steps = st.number_input("Steps", 2, 20, 5, 1, key="angle_steps")
           
             # Generate parameter grid
-            if st.button("🔄 Generate Parameter Grid", type="primary"):
+            if st.button("🔄 Generate Parameter Grid", type="primary", key="generate_grid_btn"):
                 ranges_config = {}
               
                 if eps0_max > eps0_min:
@@ -1472,7 +1460,7 @@ def create_attention_interface():
                     df_grid = pd.DataFrame(grid_data)
                     st.dataframe(df_grid, use_container_width=True)
                   
-                    if st.button("🗑️ Clear Parameter Grid", type="secondary"):
+                    if st.button("🗑️ Clear Parameter Grid", type="secondary", key="clear_grid_btn"):
                         st.session_state.multi_target_params = []
                         st.session_state.multi_target_predictions = {}
                         st.success("Parameter grid cleared!")
@@ -1493,21 +1481,21 @@ def create_attention_interface():
             st.warning("⚠️ Please load at least 2 source simulations first")
         elif prediction_mode == "Single Target" and 'target_params' not in st.session_state:
             st.warning("⚠️ Please configure single target parameters first")
-        elif prediction_mode == "Multiple Targets" and not st.session_state.multi_target_params:
+        elif prediction_mode == "Multiple Targets (Batch)" and not st.session_state.multi_target_params:
             st.warning("⚠️ Please generate a parameter grid first")
         else:
             col1, col2 = st.columns(2)
           
             with col1:
-                epochs = st.slider("Training Epochs", 10, 200, 50, 10)
-                learning_rate = st.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001)
+                epochs = st.slider("Training Epochs", 10, 200, 50, 10, key="epochs_slider")
+                learning_rate = st.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001, key="lr_slider")
           
             with col2:
-                batch_size = st.slider("Batch Size", 1, 16, 4, 1)
-                validation_split = st.slider("Validation Split", 0.0, 0.5, 0.2, 0.05)
+                batch_size = st.slider("Batch Size", 1, 16, 4, 1, key="batch_size_slider")
+                validation_split = st.slider("Validation Split", 0.0, 0.5, 0.2, 0.05, key="val_split_slider")
           
             if prediction_mode == "Single Target":
-                if st.button("🚀 Train & Predict (Single Target)", type="primary"):
+                if st.button("🚀 Train & Predict (Single Target)", type="primary", key="predict_single_btn"):
                     with st.spinner("Training attention model and predicting..."):
                         try:
                             param_vectors = []
@@ -1565,7 +1553,7 @@ def create_attention_interface():
                             st.error(f"❌ Error during training/prediction: {str(e)}")
           
             else:
-                if st.button("🚀 Train & Predict (Multiple Targets)", type="primary"):
+                if st.button("🚀 Train & Predict (Multiple Targets)", type="primary", key="predict_multi_btn"):
                     with st.spinner(f"Running batch predictions for {len(st.session_state.multi_target_params)} targets..."):
                         try:
                             predictions = st.session_state.multi_target_manager.batch_predict(
@@ -1603,26 +1591,38 @@ def create_attention_interface():
         else:
             results = st.session_state.prediction_results
           
+            if results.get('mode') == 'multi':
+                target_ids = list(st.session_state.multi_target_predictions.keys())
+                selected_target = st.selectbox("Select target to visualize", target_ids, key="multi_target_select")
+                current_pred = st.session_state.multi_target_predictions[selected_target]
+                stress_fields = current_pred
+                attention_weights = current_pred['attention_weights']
+            else:
+                stress_fields = results.get('stress_fields', {})
+                attention_weights = results.get('attention_weights', [])
+          
             # Visualization controls
             col_viz1, col_viz2, col_viz3 = st.columns(3)
             with col_viz1:
                 stress_component = st.selectbox(
                     "Select Stress Component",
                     ['von_mises', 'sigma_hydro', 'sigma_mag'],
-                    index=0
+                    index=0,
+                    key="stress_component_select"
                 )
             with col_viz2:
                 colormap = st.selectbox(
                     "Colormap",
                     ['viridis', 'plasma', 'coolwarm', 'RdBu', 'Spectral'],
-                    index=0
+                    index=0,
+                    key="colormap_select"
                 )
             with col_viz3:
-                show_contour = st.checkbox("Show Contour Lines", value=True)
+                show_contour = st.checkbox("Show Contour Lines", value=True, key="show_contour_checkbox")
           
             # Plot stress field
-            if stress_component in results.get('stress_fields', {}):
-                stress_data = results['stress_fields'][stress_component]
+            if stress_component in stress_fields:
+                stress_data = stress_fields[stress_component]
               
                 fig, ax = plt.subplots(figsize=(10, 8))
                 im = ax.imshow(stress_data, extent=extent, cmap=colormap,
@@ -1647,8 +1647,8 @@ def create_attention_interface():
             # Attention weights visualization
             st.subheader("🔍 Attention Weights")
           
-            if 'attention_weights' in results:
-                weights = results['attention_weights']
+            if attention_weights is not None:
+                weights = attention_weights
                 source_names = [f'S{i+1}' for i in range(len(st.session_state.source_simulations))]
               
                 fig_weights, ax_weights = plt.subplots(figsize=(10, 4))
@@ -1656,7 +1656,7 @@ def create_attention_interface():
                 ax_weights.set_xlabel('Source Simulations')
                 ax_weights.set_ylabel('Attention Weight')
                 ax_weights.set_title('Attention Weights Distribution')
-                ax_weights.set_ylim(0, max(weights) * 1.2)
+                ax_weights.set_ylim(0, max(weights) * 1.2 if len(weights) > 0 else 1.0)
               
                 # Add value labels on bars
                 for bar, weight in zip(bars, weights):
@@ -1669,9 +1669,9 @@ def create_attention_interface():
             # Statistics table
             st.subheader("📊 Stress Statistics")
           
-            if 'stress_fields' in results:
+            if stress_fields:
                 stats_data = []
-                for comp_name, comp_data in results['stress_fields'].items():
+                for comp_name, comp_data in stress_fields.items():
                     if isinstance(comp_data, np.ndarray):
                         stats_data.append({
                             'Component': comp_name.replace('_', ' ').title(),
@@ -1697,7 +1697,7 @@ def create_attention_interface():
         st.subheader("💾 Save and Export Prediction Results")
       
         # Check if we have predictions to save
-        has_single_prediction = 'prediction_results' in st.session_state
+        has_single_prediction = 'prediction_results' in st.session_state and st.session_state.prediction_results.get('mode') == 'single'
         has_multi_predictions = ('multi_target_predictions' in st.session_state and
                                 len(st.session_state.multi_target_predictions) > 0)
       
@@ -1729,7 +1729,8 @@ def create_attention_interface():
                     "Select results to save",
                     ["Current Single Prediction", "All Multiple Predictions", "Both"],
                     index=0 if has_single_prediction else 1,
-                    disabled=not has_single_prediction and not has_multi_predictions
+                    disabled=not has_single_prediction and not has_multi_predictions,
+                    key="save_mode_radio"
                 )
           
             with save_col2:
@@ -1737,12 +1738,15 @@ def create_attention_interface():
                 base_filename = st.text_input(
                     "Base filename",
                     value=f"prediction_{timestamp}",
-                    help="Files will be saved with this base name plus appropriate extensions"
+                    help="Files will be saved with this base name plus appropriate extensions",
+                    key="base_filename_input"
                 )
+                # Sanitize filename
+                safe_base_filename = re.sub(r'[<>:"/\\|?*]', '_', base_filename)
           
             with save_col3:
-                include_source_info = st.checkbox("Include source simulations info", value=True)
-                include_visualizations = st.checkbox("Include visualization data", value=True)
+                include_source_info = st.checkbox("Include source simulations info", value=True, key="include_source_checkbox")
+                include_visualizations = st.checkbox("Include visualization data", value=True, key="include_viz_checkbox")
           
             st.divider()
           
@@ -1753,7 +1757,7 @@ def create_attention_interface():
           
             with dl_col1:
                 # Save as PKL
-                if st.button("💾 Save as PKL", type="secondary", use_container_width=True):
+                if st.button("💾 Save as PKL", type="secondary", use_container_width=True, key="save_pkl_btn"):
                     with st.spinner("Preparing PKL file..."):
                         try:
                             if save_mode in ["Current Single Prediction", "Both"] and has_single_prediction:
@@ -1778,27 +1782,27 @@ def create_attention_interface():
                                 st.download_button(
                                     label="📥 Download PKL",
                                     data=pkl_buffer,
-                                    file_name=f"{base_filename}.pkl",
+                                    file_name=f"{safe_base_filename}.pkl",
                                     mime="application/octet-stream",
                                     key="download_pkl_single"
                                 )
                               
-                                # Save to GitHub if enabled
-                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                # Save to directory if enabled
+                                if st.session_state.save_to_directory:
                                     save_success = st.session_state.prediction_results_manager.save_prediction_to_numerical_solutions(
                                         save_data,
-                                        base_filename,
+                                        safe_base_filename,
                                         st.session_state.solutions_manager
                                     )
                                     if save_success:
-                                        st.success("✅ Saved to GitHub")
+                                        st.success(f"✅ Saved to {NUMERICAL_SOLUTIONS_DIR}")
                           
                         except Exception as e:
                             st.error(f"❌ Error saving PKL: {str(e)}")
           
             with dl_col2:
                 # Save as PT (PyTorch)
-                if st.button("💾 Save as PT", type="secondary", use_container_width=True):
+                if st.button("💾 Save as PT", type="secondary", use_container_width=True, key="save_pt_btn"):
                     with st.spinner("Preparing PT file..."):
                         try:
                             if save_mode in ["Current Single Prediction", "Both"] and has_single_prediction:
@@ -1823,28 +1827,28 @@ def create_attention_interface():
                                 st.download_button(
                                     label="📥 Download PT",
                                     data=pt_buffer,
-                                    file_name=f"{base_filename}.pt",
+                                    file_name=f"{safe_base_filename}.pt",
                                     mime="application/octet-stream",
                                     key="download_pt_single"
                                 )
                               
-                                # Save to GitHub if enabled
-                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                # Save to directory if enabled
+                                if st.session_state.save_to_directory:
                                     # For PT format, use a different filename
-                                    pt_filename = f"{base_filename}.pt"
+                                    pt_filename = f"{safe_base_filename}.pt"
                                     pt_save_data = {'pt_data': save_data}
                                     pt_success = st.session_state.solutions_manager.save_simulation(
                                         pt_save_data, pt_filename, 'pt'
                                     )
                                     if pt_success:
-                                        st.success("✅ PT saved to GitHub")
+                                        st.success(f"✅ PT saved to {NUMERICAL_SOLUTIONS_DIR}")
                           
                         except Exception as e:
                             st.error(f"❌ Error saving PT: {str(e)}")
           
             with dl_col3:
                 # Save as ZIP Archive
-                if st.button("📦 Save as ZIP Archive", type="primary", use_container_width=True):
+                if st.button("📦 Save as ZIP Archive", type="primary", use_container_width=True, key="save_zip_btn"):
                     with st.spinner("Creating comprehensive archive..."):
                         try:
                             if save_mode == "Current Single Prediction" and has_single_prediction:
@@ -1857,7 +1861,7 @@ def create_attention_interface():
                                 st.download_button(
                                     label="📥 Download ZIP Archive",
                                     data=zip_buffer,
-                                    file_name=f"{base_filename}_complete.zip",
+                                    file_name=f"{safe_base_filename}_complete.zip",
                                     mime="application/zip",
                                     key="download_zip_single"
                                 )
@@ -1872,17 +1876,21 @@ def create_attention_interface():
                                 st.download_button(
                                     label="📥 Download Multi-Prediction ZIP",
                                     data=zip_buffer,
-                                    file_name=f"{base_filename}_multi_predictions.zip",
+                                    file_name=f"{safe_base_filename}_multi_predictions.zip",
                                     mime="application/zip",
                                     key="download_zip_multi"
                                 )
+                              
+                            elif save_mode == "Both":
+                                # Handle both if needed (e.g., combine archives)
+                                st.warning("Both mode: Download single and multi separately.")
                           
                         except Exception as e:
                             st.error(f"❌ Error creating archive: {str(e)}")
           
             with dl_col4:
                 # Save all formats
-                if st.button("💾 Save All Formats", type="secondary", use_container_width=True):
+                if st.button("💾 Save All Formats", type="secondary", use_container_width=True, key="save_all_btn"):
                     with st.spinner("Saving in all formats..."):
                         try:
                             if has_single_prediction:
@@ -1915,7 +1923,7 @@ def create_attention_interface():
                                     st.download_button(
                                         label="📥 Download PKL",
                                         data=pkl_buffer,
-                                        file_name=f"{base_filename}.pkl",
+                                        file_name=f"{safe_base_filename}.pkl",
                                         mime="application/octet-stream",
                                         key="download_all_pkl"
                                     )
@@ -1924,7 +1932,7 @@ def create_attention_interface():
                                     st.download_button(
                                         label="📥 Download PT",
                                         data=pt_buffer,
-                                        file_name=f"{base_filename}.pt",
+                                        file_name=f"{safe_base_filename}.pt",
                                         mime="application/octet-stream",
                                         key="download_all_pt"
                                     )
@@ -1933,13 +1941,13 @@ def create_attention_interface():
                                     st.download_button(
                                         label="📥 Download ZIP",
                                         data=zip_buffer,
-                                        file_name=f"{base_filename}_all_formats.zip",
+                                        file_name=f"{safe_base_filename}_all_formats.zip",
                                         mime="application/zip",
                                         key="download_all_zip"
                                     )
                               
-                                # Save to GitHub
-                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                # Save to directory
+                                if st.session_state.save_to_directory:
                                     st.success(f"✅ Ready to download all formats!")
                           
                         except Exception as e:
@@ -1953,7 +1961,7 @@ def create_attention_interface():
               
                 with col_adv1:
                     # Save stress fields as separate files
-                    save_separate = st.checkbox("Save stress fields as separate NPZ files", value=False)
+                    save_separate = st.checkbox("Save stress fields as separate NPZ files", value=False, key="save_separate_checkbox")
                   
                     if save_separate and has_single_prediction:
                         stress_fields = st.session_state.prediction_results.get('stress_fields', {})
@@ -1966,15 +1974,15 @@ def create_attention_interface():
                                 st.download_button(
                                     label=f"📥 Download {field_name}.npz",
                                     data=npz_buffer,
-                                    file_name=f"{base_filename}_{field_name}.npz",
+                                    file_name=f"{safe_base_filename}_{field_name}.npz",
                                     mime="application/octet-stream",
                                     key=f"download_npz_{field_name}"
                                 )
               
                 with col_adv2:
                     # Export to other formats
-                    export_json = st.checkbox("Export parameters to JSON", value=False)
-                    export_csv = st.checkbox("Export statistics to CSV", value=False)
+                    export_json = st.checkbox("Export parameters to JSON", value=False, key="export_json_checkbox")
+                    export_csv = st.checkbox("Export statistics to CSV", value=False, key="export_csv_checkbox")
                   
                     if export_json and has_single_prediction:
                         target_params = st.session_state.prediction_results.get('target_params', {})
@@ -1983,7 +1991,7 @@ def create_attention_interface():
                             st.download_button(
                                 label="📥 Download JSON",
                                 data=json_str,
-                                file_name=f"{base_filename}_params.json",
+                                file_name=f"{safe_base_filename}_params.json",
                                 mime="application/json",
                                 key="download_json"
                             )
@@ -2007,26 +2015,31 @@ def create_attention_interface():
                                 st.download_button(
                                     label="📥 Download CSV",
                                     data=csv_data,
-                                    file_name=f"{base_filename}_stats.csv",
+                                    file_name=f"{safe_base_filename}_stats.csv",
                                     mime="text/csv",
                                     key="download_csv"
                                 )
           
-            # Display saved files in GitHub
+            # Display saved files in directory
             st.divider()
             st.subheader("📁 Saved Files Preview")
           
-            if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
-                saved_files = st.session_state.solutions_manager.get_all_files()
+            if st.session_state.save_to_directory:
+                saved_files = []
+                for ext in ['pkl', 'pt', 'zip']:
+                    pattern = str(NUMERICAL_SOLUTIONS_DIR / f"*{safe_base_filename}*.{ext}")
+                    files = glob.glob(pattern)
+                    saved_files.extend([os.path.basename(f) for f in files])
+              
                 if saved_files:
-                    st.write("**Files in GitHub repo:**")
-                    for file in saved_files:
-                        st.code(file['filename'])
+                    st.write("**Recently saved files:**")
+                    for file in saved_files[:5]:  # Show last 5
+                        st.code(file)
                 else:
-                    st.info("No files in GitHub repo yet.")
+                    st.info("No files saved yet for this session.")
             else:
-                st.info("Enable 'Save to GitHub' to persist files in cloud.")
-  
+                st.info("Enable 'Save to directory' to persist files locally.")
+
 if __name__ == "__main__":
     create_attention_interface()
 st.caption(f"🔬 Attention Interpolation • PKL/PT/ZIP Support • {datetime.now().year}")
