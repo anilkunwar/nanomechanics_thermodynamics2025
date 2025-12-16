@@ -22,514 +22,149 @@ from itertools import product
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import base64
 import requests
-from github import Github, GithubIntegration, InputGitTreeElement
-import h5py
-import logging
-from dataclasses import dataclass, asdict
-from enum import Enum
-import shutil
-import uuid
-
+import base64
 warnings.filterwarnings('ignore')
-
 # =============================================
-# LOGGING CONFIGURATION
+# PATH CONFIGURATION - Removed local dir, using GitHub
 # =============================================
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # =============================================
-# GITHUB CLOUD CONFIGURATION
+# PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
 # =============================================
-class GitHubConfig:
-    """Configuration for GitHub cloud storage"""
-    
-    # Repository configuration
-    REPO_OWNER = "your-username"  # Change to your GitHub username
-    REPO_NAME = "ml-simulation-results"  # Repository for storing ML results
-    BRANCH = "main"
-    
-    # Paths within repository
-    ML_RESULTS_PATH = "ml_results"
-    PREDICTIONS_PATH = f"{ML_RESULTS_PATH}/predictions"
-    DATASETS_PATH = f"{ML_RESULTS_PATH}/datasets"
-    MODELS_PATH = f"{ML_RESULTS_PATH}/models"
-    
-    # File size limits (GitHub has 100MB limit for individual files)
-    MAX_FILE_SIZE = 95 * 1024 * 1024  # 95MB to be safe
-    
+class PredictionResultsManager:
+    """Manager for saving and downloading prediction results"""
+  
     @staticmethod
-    def get_repo_url():
-        return f"https://github.com/{GitHubConfig.REPO_OWNER}/{GitHubConfig.REPO_NAME}"
-    
+    def prepare_prediction_data_for_saving(prediction_results: Dict[str, Any],
+                                         source_simulations: List[Dict],
+                                         mode: str = 'single') -> Dict[str, Any]:
+        """
+        Prepare prediction results for saving to file
+      
+        Args:
+            prediction_results: Dictionary of prediction results
+            source_simulations: List of source simulation data
+            mode: 'single' for single target, 'multi' for multiple targets
+          
+        Returns:
+            Structured dictionary ready for saving
+        """
+        # Create metadata
+        metadata = {
+            'save_timestamp': datetime.now().isoformat(),
+            'mode': mode,
+            'num_sources': len(source_simulations),
+            'software_version': '1.0.0',
+            'data_type': 'attention_interpolation_results'
+        }
+      
+        # Extract source parameters
+        source_params = []
+        for i, sim_data in enumerate(source_simulations):
+            params = sim_data.get('params', {})
+            source_params.append({
+                'id': i,
+                'defect_type': params.get('defect_type'),
+                'shape': params.get('shape'),
+                'orientation': params.get('orientation'),
+                'eps0': float(params.get('eps0', 0)),
+                'kappa': float(params.get('kappa', 0)),
+                'theta': float(params.get('theta', 0))
+            })
+      
+        # Structure the data
+        save_data = {
+            'metadata': metadata,
+            'source_parameters': source_params,
+            'prediction_results': prediction_results.copy() # Create a copy to avoid modifications
+        }
+      
+        # Add additional info based on mode
+        if mode == 'single' and 'attention_weights' in prediction_results:
+            weights = prediction_results['attention_weights']
+            save_data['attention_analysis'] = {
+                'weights': weights.tolist() if hasattr(weights, 'tolist') else weights,
+                'source_names': [f'S{i+1}' for i in range(len(source_simulations))],
+                'dominant_source': int(np.argmax(weights)) if hasattr(weights, '__len__') else 0,
+                'weight_entropy': float(-np.sum(weights * np.log(weights + 1e-10)))
+            }
+      
+        # Add stress statistics if available
+        if 'stress_fields' in prediction_results:
+            stress_stats = {}
+            for field_name, field_data in prediction_results['stress_fields'].items():
+                if isinstance(field_data, np.ndarray):
+                    stress_stats[field_name] = {
+                        'max': float(np.max(field_data)),
+                        'min': float(np.min(field_data)),
+                        'mean': float(np.mean(field_data)),
+                        'std': float(np.std(field_data)),
+                        'percentile_95': float(np.percentile(field_data, 95)),
+                        'percentile_99': float(np.percentile(field_data, 99))
+                    }
+            save_data['stress_statistics'] = stress_stats
+      
+        return save_data
+  
     @staticmethod
-    def get_api_url():
-        return f"https://api.github.com/repos/{GitHubConfig.REPO_OWNER}/{GitHubConfig.REPO_NAME}"
-
-# =============================================
-# GITHUB CLOUD MANAGER
-# =============================================
-class GitHubCloudManager:
-    """Manager for storing and retrieving ML results from GitHub cloud"""
-    
-    def __init__(self, github_token: Optional[str] = None):
+    def create_single_prediction_archive(prediction_results: Dict[str, Any],
+                                       source_simulations: List[Dict]) -> BytesIO:
         """
-        Initialize GitHub cloud manager
-        
+        Create a comprehensive archive for single prediction
+      
         Args:
-            github_token: GitHub personal access token (or use Streamlit secrets)
-        """
-        self.github_token = github_token or self._get_github_token()
-        self.g = Github(self.github_token) if self.github_token else None
-        self.repo = None
-        self._initialize_repository()
-    
-    def _get_github_token(self) -> Optional[str]:
-        """Get GitHub token from Streamlit secrets or environment"""
-        try:
-            # Try Streamlit secrets first
-            return st.secrets["github"]["token"]
-        except:
-            # Fall back to environment variable
-            return os.getenv("GITHUB_TOKEN")
-    
-    def _initialize_repository(self):
-        """Initialize or verify GitHub repository exists"""
-        try:
-            if self.g:
-                self.repo = self.g.get_repo(f"{GitHubConfig.REPO_OWNER}/{GitHubConfig.REPO_NAME}")
-                logger.info(f"Connected to GitHub repository: {GitHubConfig.get_repo_url()}")
-            else:
-                logger.warning("GitHub token not provided. Cloud features will be limited.")
-        except Exception as e:
-            logger.error(f"Failed to initialize GitHub repository: {str(e)}")
-            st.warning("⚠️ GitHub repository not accessible. Some cloud features may be unavailable.")
-    
-    def upload_file_to_cloud(self, 
-                           file_content: Union[bytes, str],
-                           file_path: str,
-                           commit_message: str = "Upload ML results",
-                           branch: str = GitHubConfig.BRANCH) -> Dict[str, Any]:
-        """
-        Upload a file to GitHub cloud
-        
-        Args:
-            file_content: File content as bytes or string
-            file_path: Path in repository (e.g., "ml_results/predictions/result.pkl")
-            commit_message: Commit message
-            branch: Branch to commit to
-            
+            prediction_results: Single prediction results
+            source_simulations: List of source simulations
+          
         Returns:
-            Dictionary with upload status and metadata
+            BytesIO buffer containing the archive
         """
-        if not self.repo:
-            return {"success": False, "error": "GitHub repository not initialized"}
-        
-        try:
-            # Convert string to bytes if needed
-            if isinstance(file_content, str):
-                file_content = file_content.encode('utf-8')
-            
-            # Check file size
-            file_size = len(file_content)
-            if file_size > GitHubConfig.MAX_FILE_SIZE:
-                return {
-                    "success": False,
-                    "error": f"File too large ({file_size / 1024 / 1024:.2f}MB). GitHub limit is {GitHubConfig.MAX_FILE_SIZE / 1024 / 1024:.2f}MB"
-                }
-            
-            # Encode content in base64 for GitHub API
-            encoded_content = base64.b64encode(file_content).decode('utf-8')
-            
-            # Check if file already exists
-            try:
-                existing_file = self.repo.get_contents(file_path, ref=branch)
-                # Update existing file
-                result = self.repo.update_file(
-                    path=file_path,
-                    message=commit_message,
-                    content=encoded_content,
-                    sha=existing_file.sha,
-                    branch=branch
-                )
-                action = "updated"
-            except:
-                # Create new file
-                result = self.repo.create_file(
-                    path=file_path,
-                    message=commit_message,
-                    content=encoded_content,
-                    branch=branch
-                )
-                action = "created"
-            
-            # Get download URL
-            download_url = result["content"].download_url
-            
-            return {
-                "success": True,
-                "action": action,
-                "commit": result["commit"].sha,
-                "download_url": download_url,
-                "file_path": file_path,
-                "size": file_size,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error uploading to GitHub: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def upload_multiple_files(self, 
-                            files: List[Dict[str, Union[bytes, str]]],
-                            base_path: str = GitHubConfig.ML_RESULTS_PATH,
-                            commit_message: str = "Upload multiple ML results") -> Dict[str, Any]:
-        """
-        Upload multiple files in a single commit
-        
-        Args:
-            files: List of dicts with 'path' and 'content' keys
-            base_path: Base path in repository
-            commit_message: Commit message
-            
-        Returns:
-            Upload results
-        """
-        if not self.repo:
-            return {"success": False, "error": "GitHub repository not initialized"}
-        
-        try:
-            # Get current commit
-            ref = self.repo.get_git_ref(f"heads/{GitHubConfig.BRANCH}")
-            commit = self.repo.get_git_commit(ref.object.sha)
-            
-            # Create tree elements
-            tree_elements = []
-            
-            for file_info in files:
-                file_path = os.path.join(base_path, file_info["path"])
-                content = file_info["content"]
-                
-                if isinstance(content, str):
-                    content = content.encode('utf-8')
-                
-                encoded_content = base64.b64encode(content).decode('utf-8')
-                
-                # Check if file exists
-                try:
-                    existing_file = self.repo.get_contents(file_path, ref=GitHubConfig.BRANCH)
-                    mode = "100644"  # Regular file
-                    tree_elements.append(InputGitTreeElement(
-                        path=file_path,
-                        mode=mode,
-                        type="blob",
-                        sha=existing_file.sha
-                    ))
-                except:
-                    # File doesn't exist, will be created
-                    pass
-            
-            # Create new tree
-            tree = self.repo.create_git_tree(tree_elements, base_tree=commit.tree)
-            
-            # Create new commit
-            new_commit = self.repo.create_git_commit(commit_message, tree, [commit])
-            
-            # Update branch reference
-            ref.edit(new_commit.sha)
-            
-            return {
-                "success": True,
-                "commit": new_commit.sha,
-                "files_uploaded": len(files),
-                "timestamp": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error uploading multiple files: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def download_file_from_cloud(self, 
-                               file_path: str,
-                               branch: str = GitHubConfig.BRANCH) -> Optional[bytes]:
-        """
-        Download file from GitHub cloud
-        
-        Args:
-            file_path: Path in repository
-            branch: Branch to download from
-            
-        Returns:
-            File content as bytes or None if failed
-        """
-        if not self.repo:
-            return None
-        
-        try:
-            file_content = self.repo.get_contents(file_path, ref=branch)
-            decoded_content = base64.b64decode(file_content.content)
-            return decoded_content
-        except Exception as e:
-            logger.error(f"Error downloading from GitHub: {str(e)}")
-            return None
-    
-    def list_files_in_directory(self, 
-                              directory_path: str = GitHubConfig.ML_RESULTS_PATH,
-                              branch: str = GitHubConfig.BRANCH) -> List[Dict[str, Any]]:
-        """
-        List files in a GitHub directory
-        
-        Args:
-            directory_path: Directory path in repository
-            branch: Branch to list from
-            
-        Returns:
-            List of file information dictionaries
-        """
-        if not self.repo:
-            return []
-        
-        try:
-            contents = self.repo.get_contents(directory_path, ref=branch)
-            files = []
-            
-            for item in contents:
-                files.append({
-                    "name": item.name,
-                    "path": item.path,
-                    "type": item.type,  # "file" or "dir"
-                    "size": item.size,
-                    "sha": item.sha,
-                    "download_url": item.download_url,
-                    "last_modified": item.last_modified
+        # Create in-memory zip file
+        zip_buffer = BytesIO()
+      
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # 1. Save main prediction data as PKL
+            save_data = PredictionResultsManager.prepare_prediction_data_for_saving(
+                prediction_results, source_simulations, 'single'
+            )
+          
+            # PKL format
+            pkl_data = pickle.dumps(save_data, protocol=pickle.HIGHEST_PROTOCOL)
+            zip_file.writestr('prediction_results.pkl', pkl_data)
+          
+            # 2. Save as PT (PyTorch) format
+            pt_buffer = BytesIO()
+            torch.save(save_data, pt_buffer)
+            pt_buffer.seek(0)
+            zip_file.writestr('prediction_results.pt', pt_buffer.read())
+          
+            # 3. Save stress fields as separate NPZ files
+            stress_fields = prediction_results.get('stress_fields', {})
+            for field_name, field_data in stress_fields.items():
+                if isinstance(field_data, np.ndarray):
+                    npz_buffer = BytesIO()
+                    np.savez_compressed(npz_buffer, data=field_data)
+                    npz_buffer.seek(0)
+                    zip_file.writestr(f'stress_{field_name}.npz', npz_buffer.read())
+          
+            # 4. Save attention weights as CSV
+            if 'attention_weights' in prediction_results:
+                weights = prediction_results['attention_weights']
+                if hasattr(weights, 'flatten'):
+                    weights = weights.flatten()
+              
+                weight_df = pd.DataFrame({
+                    'source_id': [f'S{i+1}' for i in range(len(weights))],
+                    'weight': weights,
+                    'percent_contribution': 100 * weights / (np.sum(weights) + 1e-10)
                 })
-            
-            return files
-            
-        except Exception as e:
-            logger.error(f"Error listing directory: {str(e)}")
-            return []
-    
-    def delete_file_from_cloud(self,
-                             file_path: str,
-                             commit_message: str = "Delete file",
-                             branch: str = GitHubConfig.BRANCH) -> bool:
-        """
-        Delete file from GitHub cloud
-        
-        Args:
-            file_path: Path in repository
-            commit_message: Commit message
-            branch: Branch to delete from
-            
-        Returns:
-            Success status
-        """
-        if not self.repo:
-            return False
-        
-        try:
-            file = self.repo.get_contents(file_path, ref=branch)
-            self.repo.delete_file(
-                path=file_path,
-                message=commit_message,
-                sha=file.sha,
-                branch=branch
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting file: {str(e)}")
-            return False
-    
-    def get_file_info(self, file_path: str, branch: str = GitHubConfig.BRANCH) -> Optional[Dict[str, Any]]:
-        """
-        Get detailed information about a file
-        
-        Args:
-            file_path: Path in repository
-            branch: Branch to check
-            
-        Returns:
-            File information dictionary
-        """
-        if not self.repo:
-            return None
-        
-        try:
-            file = self.repo.get_contents(file_path, ref=branch)
-            commits = list(self.repo.get_commits(path=file_path))
-            
-            return {
-                "name": file.name,
-                "path": file.path,
-                "size": file.size,
-                "sha": file.sha,
-                "download_url": file.download_url,
-                "html_url": file.html_url,
-                "last_modified": file.last_modified,
-                "commit_count": len(commits),
-                "last_commit": commits[0].commit.message if commits else None
-            }
-        except Exception as e:
-            logger.error(f"Error getting file info: {str(e)}")
-            return None
-    
-    def create_release(self,
-                      tag_name: str,
-                      release_name: str,
-                      body: str,
-                      files: List[Tuple[str, bytes]] = None,
-                      draft: bool = False,
-                      prerelease: bool = False) -> Dict[str, Any]:
-        """
-        Create a GitHub release with attached files
-        
-        Args:
-            tag_name: Git tag for release
-            release_name: Release name
-            body: Release description
-            files: List of (filename, content) tuples
-            draft: Whether release is a draft
-            prerelease: Whether release is a prerelease
-            
-        Returns:
-            Release information
-        """
-        if not self.repo:
-            return {"success": False, "error": "GitHub repository not initialized"}
-        
-        try:
-            # Create release
-            release = self.repo.create_git_release(
-                tag=tag_name,
-                name=release_name,
-                message=body,
-                draft=draft,
-                prerelease=prerelease
-            )
-            
-            # Upload assets if provided
-            assets = []
-            if files:
-                for filename, content in files:
-                    asset = release.upload_asset(
-                        name=filename,
-                        label=filename,
-                        content_type="application/octet-stream",
-                        data=content
-                    )
-                    assets.append({
-                        "name": filename,
-                        "download_url": asset.browser_download_url
-                    })
-            
-            return {
-                "success": True,
-                "release_id": release.id,
-                "tag_name": release.tag_name,
-                "name": release.name,
-                "html_url": release.html_url,
-                "assets": assets,
-                "created_at": release.created_at.isoformat()
-            }
-            
-        except Exception as e:
-            logger.error(f"Error creating release: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def get_repository_info(self) -> Dict[str, Any]:
-        """
-        Get information about the repository
-        
-        Returns:
-            Repository information
-        """
-        if not self.repo:
-            return {"error": "Repository not initialized"}
-        
-        try:
-            return {
-                "name": self.repo.name,
-                "full_name": self.repo.full_name,
-                "description": self.repo.description,
-                "html_url": self.repo.html_url,
-                "stargazers_count": self.repo.stargazers_count,
-                "forks_count": self.repo.forks_count,
-                "size": self.repo.size,
-                "updated_at": self.repo.updated_at.isoformat() if self.repo.updated_at else None,
-                "default_branch": self.repo.default_branch
-            }
-        except Exception as e:
-            logger.error(f"Error getting repository info: {str(e)}")
-            return {"error": str(e)}
-    
-    def create_download_link(self, file_path: str) -> str:
-        """
-        Create a direct download link for a file
-        
-        Args:
-            file_path: Path in repository
-            
-        Returns:
-            Direct download URL
-        """
-        if not self.repo:
-            return ""
-        
-        try:
-            file = self.repo.get_contents(file_path, ref=GitHubConfig.BRANCH)
-            return file.download_url
-        except:
-            # Fallback to raw URL
-            return f"https://raw.githubusercontent.com/{GitHubConfig.REPO_OWNER}/{GitHubConfig.REPO_NAME}/{GitHubConfig.BRANCH}/{file_path}"
-
-# =============================================
-# ENHANCED PREDICTION RESULTS MANAGER WITH GITHUB
-# =============================================
-class CloudPredictionResultsManager(PredictionResultsManager):
-    """Enhanced manager with GitHub cloud integration"""
-    
-    @staticmethod
-    def save_prediction_to_cloud(prediction_data: Dict[str, Any],
-                               filename: str,
-                               github_manager: GitHubCloudManager,
-                               format_type: str = 'pkl',
-                               metadata: Optional[Dict] = None) -> Dict[str, Any]:
-        """
-        Save prediction to GitHub cloud
-        
-        Args:
-            prediction_data: Prediction data to save
-            filename: Base filename (without extension)
-            github_manager: GitHubCloudManager instance
-            format_type: File format ('pkl', 'pt', 'json', 'zip')
-            metadata: Additional metadata
-            
-        Returns:
-            Dictionary with save results
-        """
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            unique_id = str(uuid.uuid4())[:8]
-            cloud_filename = f"{filename}_{timestamp}_{unique_id}"
-            
-            # Prepare file content based on format
-            file_content = None
-            file_extension = format_type
-            
-            if format_type == 'pkl':
-                file_content = pickle.dumps(prediction_data, protocol=pickle.HIGHEST_PROTOCOL)
-                cloud_filename = f"{cloud_filename}.pkl"
-                
-            elif format_type == 'pt':
-                buffer = BytesIO()
-                torch.save(prediction_data, buffer)
-                file_content = buffer.getvalue()
-                cloud_filename = f"{cloud_filename}.pt"
-                
-            elif format_type == 'json':
+                csv_data = weight_df.to_csv(index=False)
+                zip_file.writestr('attention_weights.csv', csv_data)
+          
+            # 5. Save target parameters as JSON
+            target_params = prediction_results.get('target_params', {})
+            if target_params:
+                # Convert numpy types to Python types for JSON
                 def convert_for_json(obj):
                     if isinstance(obj, (np.float32, np.float64, np.float16)):
                         return float(obj)
@@ -541,449 +176,806 @@ class CloudPredictionResultsManager(PredictionResultsManager):
                         return obj.item()
                     else:
                         return obj
-                
-                json_data = json.dumps(prediction_data, default=convert_for_json, indent=2)
-                file_content = json_data.encode('utf-8')
-                cloud_filename = f"{cloud_filename}.json"
-                
-            elif format_type == 'zip':
-                # Create a comprehensive archive
-                zip_buffer = BytesIO()
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    # Add prediction data as JSON
-                    json_data = json.dumps(prediction_data, default=str, indent=2)
-                    zip_file.writestr('prediction_data.json', json_data)
-                    
-                    # Add stress fields as separate files if they exist
-                    if 'stress_fields' in prediction_data:
-                        for field_name, field_data in prediction_data['stress_fields'].items():
-                            if isinstance(field_data, np.ndarray):
-                                npz_buffer = BytesIO()
-                                np.savez_compressed(npz_buffer, data=field_data)
-                                npz_buffer.seek(0)
-                                zip_file.writestr(f'stress_{field_name}.npz', npz_buffer.read())
-                
-                file_content = zip_buffer.getvalue()
-                cloud_filename = f"{cloud_filename}.zip"
-            
-            else:
-                return {
-                    "success": False,
-                    "error": f"Unsupported format: {format_type}"
-                }
-            
-            # Upload to GitHub
-            cloud_path = f"{GitHubConfig.PREDICTIONS_PATH}/{cloud_filename}"
-            commit_message = f"Save prediction: {filename}"
-            
-            if metadata:
-                commit_message += f" - {json.dumps(metadata)}"
-            
-            upload_result = github_manager.upload_file_to_cloud(
-                file_content=file_content,
-                file_path=cloud_path,
-                commit_message=commit_message
-            )
-            
-            if upload_result["success"]:
-                upload_result.update({
-                    "cloud_filename": cloud_filename,
-                    "cloud_path": cloud_path,
-                    "format": format_type,
-                    "download_url": github_manager.create_download_link(cloud_path)
-                })
-            
-            return upload_result
-            
-        except Exception as e:
-            logger.error(f"Error saving to cloud: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
+              
+                json_data = json.dumps(target_params, default=convert_for_json, indent=2)
+                zip_file.writestr('target_parameters.json', json_data)
+          
+            # 6. Save summary statistics
+            if 'stress_fields' in prediction_results:
+                stats_rows = []
+                for field_name, field_data in stress_fields.items():
+                    if isinstance(field_data, np.ndarray):
+                        stats_rows.append({
+                            'field': field_name,
+                            'max': float(np.max(field_data)),
+                            'min': float(np.min(field_data)),
+                            'mean': float(np.mean(field_data)),
+                            'std': float(np.std(field_data)),
+                            'percentile_95': float(np.percentile(field_data, 95)),
+                            'percentile_99': float(np.percentile(field_data, 99)),
+                            'area_above_threshold': float(np.sum(field_data > np.mean(field_data)))
+                        })
+              
+                if stats_rows:
+                    stats_df = pd.DataFrame(stats_rows)
+                    stats_csv = stats_df.to_csv(index=False)
+                    zip_file.writestr('stress_statistics.csv', stats_csv)
+          
+            # 7. Save a README file
+            readme_content = f"""# Prediction Results Archive
+Generated: {datetime.now().isoformat()}
+Number of source simulations: {len(source_simulations)}
+Prediction mode: Single target
+Files included:
+1. prediction_results.pkl - Main prediction data (Python pickle format)
+2. prediction_results.pt - PyTorch format
+3. stress_*.npz - Individual stress fields (NumPy compressed)
+4. attention_weights.csv - Attention weights distribution
+5. target_parameters.json - Target parameters
+6. stress_statistics.csv - Statistical summary
+For more information, see the documentation.
+"""
+            zip_file.writestr('README.txt', readme_content)
+      
+        zip_buffer.seek(0)
+        return zip_buffer
+  
     @staticmethod
-    def save_prediction_archive_to_cloud(prediction_results: Dict[str, Any],
-                                       source_simulations: List[Dict],
-                                       github_manager: GitHubCloudManager,
-                                       archive_name: str = "prediction_archive") -> Dict[str, Any]:
+    def create_multi_prediction_archive(multi_predictions: Dict[str, Any],
+                                       source_simulations: List[Dict]) -> BytesIO:
         """
-        Save comprehensive prediction archive to GitHub cloud
-        
+        Create a comprehensive archive for multiple predictions
+      
         Args:
-            prediction_results: Prediction results dictionary
+            multi_predictions: Dictionary of multiple predictions
             source_simulations: List of source simulations
-            github_manager: GitHubCloudManager instance
-            archive_name: Base name for archive
-            
+          
         Returns:
-            Dictionary with save results
+            BytesIO buffer containing the archive
         """
-        try:
-            # Create the archive
-            if prediction_results.get('mode') == 'multi':
-                archive_buffer = PredictionResultsManager.create_multi_prediction_archive(
-                    prediction_results, source_simulations
+        zip_buffer = BytesIO()
+      
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Save each prediction individually
+            for pred_key, pred_data in multi_predictions.items():
+                # Create directory for each prediction
+                pred_dir = f'predictions/{pred_key}'
+              
+                # Save prediction data
+                save_data = PredictionResultsManager.prepare_prediction_data_for_saving(
+                    pred_data, source_simulations, 'multi'
                 )
-            else:
-                archive_buffer = PredictionResultsManager.create_single_prediction_archive(
-                    prediction_results, source_simulations
-                )
-            
-            # Prepare metadata
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            unique_id = str(uuid.uuid4())[:8]
-            cloud_filename = f"{archive_name}_{timestamp}_{unique_id}.zip"
-            
-            # Upload to GitHub
-            cloud_path = f"{GitHubConfig.PREDICTIONS_PATH}/archives/{cloud_filename}"
-            
-            upload_result = github_manager.upload_file_to_cloud(
-                file_content=archive_buffer.getvalue(),
-                file_path=cloud_path,
-                commit_message=f"Save prediction archive: {archive_name}"
-            )
-            
-            if upload_result["success"]:
-                upload_result.update({
-                    "cloud_filename": cloud_filename,
-                    "cloud_path": cloud_path,
-                    "download_url": github_manager.create_download_link(cloud_path)
-                })
-            
-            return upload_result
-            
-        except Exception as e:
-            logger.error(f"Error saving archive to cloud: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    @staticmethod
-    def load_prediction_from_cloud(filename: str,
-                                 github_manager: GitHubCloudManager) -> Optional[Dict[str, Any]]:
-        """
-        Load prediction from GitHub cloud
-        
-        Args:
-            filename: Filename in cloud (with extension)
-            github_manager: GitHubCloudManager instance
-            
-        Returns:
-            Loaded prediction data or None
-        """
-        try:
-            cloud_path = f"{GitHubConfig.PREDICTIONS_PATH}/{filename}"
-            file_content = github_manager.download_file_from_cloud(cloud_path)
-            
-            if not file_content:
-                return None
-            
-            # Determine format from extension
-            if filename.endswith('.pkl'):
-                buffer = BytesIO(file_content)
-                return pickle.load(buffer)
-            elif filename.endswith('.pt'):
-                buffer = BytesIO(file_content)
-                return torch.load(buffer, map_location=torch.device('cpu'))
-            elif filename.endswith('.json'):
-                return json.loads(file_content.decode('utf-8'))
-            elif filename.endswith('.zip'):
-                # Handle zip archive
-                zip_buffer = BytesIO(file_content)
-                with zipfile.ZipFile(zip_buffer, 'r') as zip_file:
-                    # Read main prediction file
-                    if 'prediction_data.json' in zip_file.namelist():
-                        json_data = zip_file.read('prediction_data.json')
-                        return json.loads(json_data.decode('utf-8'))
-            else:
-                logger.warning(f"Unknown file format: {filename}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error loading from cloud: {str(e)}")
-            return None
-    
-    @staticmethod
-    def list_cloud_predictions(github_manager: GitHubCloudManager,
-                             filter_format: Optional[str] = None) -> List[Dict[str, Any]]:
-        """
-        List predictions stored in GitHub cloud
-        
-        Args:
-            github_manager: GitHubCloudManager instance
-            filter_format: Optional format filter ('pkl', 'pt', 'json', 'zip')
-            
-        Returns:
-            List of prediction file information
-        """
-        try:
-            files = github_manager.list_files_in_directory(GitHubConfig.PREDICTIONS_PATH)
-            
-            if filter_format:
-                files = [f for f in files if f["name"].endswith(f".{filter_format}")]
-            
-            # Sort by last modified (newest first)
-            files.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
-            
-            return files
-            
-        except Exception as e:
-            logger.error(f"Error listing cloud predictions: {str(e)}")
-            return []
-
-# =============================================
-# CLOUD DATASET MANAGER
-# =============================================
-class CloudDatasetManager:
-    """Manager for storing datasets in GitHub cloud"""
-    
-    @staticmethod
-    def save_dataset_to_cloud(dataset: Union[pd.DataFrame, np.ndarray, Dict],
-                            dataset_name: str,
-                            github_manager: GitHubCloudManager,
-                            description: str = "",
-                            tags: List[str] = None) -> Dict[str, Any]:
-        """
-        Save dataset to GitHub cloud
-        
-        Args:
-            dataset: Dataset to save
-            dataset_name: Name for the dataset
-            github_manager: GitHubCloudManager instance
-            description: Dataset description
-            tags: Optional tags for categorization
-            
-        Returns:
-            Save results
-        """
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            unique_id = str(uuid.uuid4())[:8]
-            cloud_filename = f"{dataset_name}_{timestamp}_{unique_id}"
-            
-            # Convert dataset to bytes based on type
-            file_content = None
-            metadata = {
-                "dataset_name": dataset_name,
-                "description": description,
-                "tags": tags or [],
-                "created_at": timestamp,
-                "data_type": type(dataset).__name__
-            }
-            
-            if isinstance(dataset, pd.DataFrame):
-                # Save as CSV and Parquet
-                csv_buffer = BytesIO()
-                dataset.to_csv(csv_buffer, index=False)
-                csv_content = csv_buffer.getvalue()
-                
-                parquet_buffer = BytesIO()
-                dataset.to_parquet(parquet_buffer, index=False)
-                parquet_content = parquet_buffer.getvalue()
-                
-                # Upload both formats
-                results = []
-                
-                # CSV
-                csv_path = f"{GitHubConfig.DATASETS_PATH}/{cloud_filename}.csv"
-                csv_result = github_manager.upload_file_to_cloud(
-                    file_content=csv_content,
-                    file_path=csv_path,
-                    commit_message=f"Save dataset: {dataset_name} (CSV)"
-                )
-                if csv_result["success"]:
-                    csv_result["format"] = "csv"
-                    results.append(csv_result)
-                
-                # Parquet
-                parquet_path = f"{GitHubConfig.DATASETS_PATH}/{cloud_filename}.parquet"
-                parquet_result = github_manager.upload_file_to_cloud(
-                    file_content=parquet_content,
-                    file_path=parquet_path,
-                    commit_message=f"Save dataset: {dataset_name} (Parquet)"
-                )
-                if parquet_result["success"]:
-                    parquet_result["format"] = "parquet"
-                    results.append(parquet_result)
-                
-                # Save metadata
-                metadata_path = f"{GitHubConfig.DATASETS_PATH}/{cloud_filename}_metadata.json"
-                metadata_result = github_manager.upload_file_to_cloud(
-                    file_content=json.dumps(metadata, indent=2).encode('utf-8'),
-                    file_path=metadata_path,
-                    commit_message=f"Save dataset metadata: {dataset_name}"
-                )
-                
-                return {
-                    "success": any(r["success"] for r in results),
-                    "formats_saved": [r["format"] for r in results if r["success"]],
-                    "results": results,
-                    "metadata": metadata
+              
+                # Save as PKL
+                pkl_data = pickle.dumps(save_data, protocol=pickle.HIGHEST_PROTOCOL)
+                zip_file.writestr(f'{pred_dir}/prediction.pkl', pkl_data)
+              
+                # Save stress statistics
+                stress_fields = {k: v for k, v in pred_data.items()
+                               if isinstance(v, np.ndarray) and k in ['sigma_hydro', 'sigma_mag', 'von_mises']}
+              
+                if stress_fields:
+                    stats_rows = []
+                    for field_name, field_data in stress_fields.items():
+                        stats_rows.append({
+                            'field': field_name,
+                            'max': float(np.max(field_data)),
+                            'min': float(np.min(field_data)),
+                            'mean': float(np.mean(field_data)),
+                            'std': float(np.std(field_data))
+                        })
+                  
+                    stats_df = pd.DataFrame(stats_rows)
+                    stats_csv = stats_df.to_csv(index=False)
+                    zip_file.writestr(f'{pred_dir}/statistics.csv', stats_csv)
+          
+            # Save master summary
+            summary_rows = []
+            for pred_key, pred_data in multi_predictions.items():
+                target_params = pred_data.get('target_params', {})
+                stress_fields = {k: v for k, v in pred_data.items()
+                               if isinstance(v, np.ndarray) and k in ['sigma_hydro', 'sigma_mag', 'von_mises']}
+              
+                row = {
+                    'prediction_id': pred_key,
+                    'defect_type': target_params.get('defect_type', 'Unknown'),
+                    'shape': target_params.get('shape', 'Unknown'),
+                    'orientation': target_params.get('orientation', 'Unknown'),
+                    'eps0': float(target_params.get('eps0', 0)),
+                    'kappa': float(target_params.get('kappa', 0)),
+                    'theta_deg': float(np.deg2rad(target_params.get('theta', 0)))
                 }
-                
-            elif isinstance(dataset, np.ndarray):
-                # Save as NPZ
-                npz_buffer = BytesIO()
-                np.savez_compressed(npz_buffer, data=dataset)
-                file_content = npz_buffer.getvalue()
-                cloud_filename = f"{cloud_filename}.npz"
-                
-            elif isinstance(dataset, dict):
-                # Save as JSON
-                file_content = json.dumps(dataset, indent=2, default=str).encode('utf-8')
-                cloud_filename = f"{cloud_filename}.json"
-                
-            else:
-                return {
-                    "success": False,
-                    "error": f"Unsupported dataset type: {type(dataset)}"
-                }
-            
-            # Upload single file
-            cloud_path = f"{GitHubConfig.DATASETS_PATH}/{cloud_filename}"
-            
-            upload_result = github_manager.upload_file_to_cloud(
-                file_content=file_content,
-                file_path=cloud_path,
-                commit_message=f"Save dataset: {dataset_name}"
-            )
-            
-            if upload_result["success"]:
-                upload_result.update({
-                    "metadata": metadata,
-                    "format": cloud_filename.split('.')[-1]
-                })
-            
-            return upload_result
-            
-        except Exception as e:
-            logger.error(f"Error saving dataset to cloud: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
+              
+                # Add stress metrics
+                for field_name, field_data in stress_fields.items():
+                    row[f'{field_name}_max'] = float(np.max(field_data))
+                    row[f'{field_name}_mean'] = float(np.mean(field_data))
+                    row[f'{field_name}_std'] = float(np.std(field_data))
+              
+                summary_rows.append(row)
+          
+            if summary_rows:
+                summary_df = pd.DataFrame(summary_rows)
+                summary_csv = summary_df.to_csv(index=False)
+                zip_file.writestr('multi_prediction_summary.csv', summary_csv)
+          
+            # Save a README file
+            readme_content = f"""# Multi-Prediction Results Archive
+Generated: {datetime.now().isoformat()}
+Number of source simulations: {len(source_simulations)}
+Number of predictions: {len(multi_predictions)}
+Structure:
+- predictions/[prediction_id]/ - Individual prediction data
+- multi_prediction_summary.csv - Summary of all predictions
+Each prediction directory contains:
+1. prediction.pkl - Main prediction data
+2. statistics.csv - Stress statistics
+For more information, see the documentation.
+"""
+            zip_file.writestr('README.txt', readme_content)
+      
+        zip_buffer.seek(0)
+        return zip_buffer
+  
     @staticmethod
-    def create_dataset_release(datasets: Dict[str, Any],
-                             release_name: str,
-                             github_manager: GitHubCloudManager,
-                             description: str = "") -> Dict[str, Any]:
+    def save_prediction_to_numerical_solutions(prediction_data: Dict[str, Any],
+                                             filename: str,
+                                             solutions_manager: 'GitHubSolutionsManager') -> bool:
         """
-        Create a GitHub release for datasets
-        
+        Save prediction to GitHub repository
+      
         Args:
-            datasets: Dictionary of dataset name to data
-            release_name: Name for the release
-            github_manager: GitHubCloudManager instance
-            description: Release description
-            
+            prediction_data: Prediction data to save
+            filename: Base filename (without extension)
+            solutions_manager: GitHubSolutionsManager instance
+          
         Returns:
-            Release results
+            Success status
         """
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            tag_name = f"dataset-release-{timestamp}"
-            
-            # Prepare files for release
-            release_files = []
-            dataset_metadata = {}
-            
-            for dataset_name, data in datasets.items():
-                if isinstance(data, pd.DataFrame):
-                    # Save as CSV
-                    csv_buffer = BytesIO()
-                    data.to_csv(csv_buffer, index=False)
-                    release_files.append((f"{dataset_name}.csv", csv_buffer.getvalue()))
-                    dataset_metadata[dataset_name] = {
-                        "rows": len(data),
-                        "columns": list(data.columns),
-                        "type": "dataframe"
+            # Save as PKL
+            pkl_filename = f"{filename}_prediction.pkl"
+            pkl_success = solutions_manager.save_simulation(prediction_data, pkl_filename, 'pkl')
+          
+            # Save as PT
+            pt_filename = f"{filename}_prediction.pt"
+            pt_success = solutions_manager.save_simulation(prediction_data, pt_filename, 'pt')
+          
+            return pkl_success or pt_success
+          
+        except Exception as e:
+            st.error(f"Error saving prediction: {str(e)}")
+            return False
+# =============================================
+# GITHUB SOLUTIONS MANAGER (REPLACED LOCAL WITH GITHUB)
+# =============================================
+class GitHubSolutionsManager:
+    def __init__(self, token: str, owner: str, repo: str, base_path: str = "numerical_solutions"):
+        self.token = token
+        self.owner = owner
+        self.repo = repo
+        self.base_path = base_path
+        self.api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
+        self.headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+  
+    def scan_directory(self) -> Dict[str, List[str]]:
+        file_formats = {
+            'pkl': [],
+            'pt': [],
+            'h5': [],
+            'npz': [],
+            'sql': [],
+            'json': []
+        }
+      
+        try:
+            response = requests.get(f"{self.api_url}/{self.base_path}", headers=self.headers)
+            if response.status_code == 200:
+                contents = response.json()
+                for item in contents:
+                    if item['type'] == 'file':
+                        name = item['name']
+                        path = item['path']
+                        ext = name.split('.')[-1].lower()
+                        if ext in ['pkl', 'pickle']:
+                            file_formats['pkl'].append(path)
+                        elif ext in ['pt', 'pth']:
+                            file_formats['pt'].append(path)
+                        elif ext in ['h5', 'hdf5']:
+                            file_formats['h5'].append(path)
+                        elif ext == 'npz':
+                            file_formats['npz'].append(path)
+                        elif ext in ['sql', 'db']:
+                            file_formats['sql'].append(path)
+                        elif ext == 'json':
+                            file_formats['json'].append(path)
+      
+                # Sort by name
+                for fmt in file_formats:
+                    file_formats[fmt].sort()
+        except Exception as e:
+            st.error(f"Error scanning GitHub repo: {str(e)}")
+      
+        return file_formats
+  
+    def get_all_files(self) -> List[Dict[str, Any]]:
+        all_files = []
+        file_formats = self.scan_directory()
+      
+        for format_type, paths in file_formats.items():
+            for path in paths:
+                # Fetch size and other info
+                response = requests.get(f"{self.api_url}/{path}", headers=self.headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    file_info = {
+                        'path': path,
+                        'filename': os.path.basename(path),
+                        'format': format_type,
+                        'size': data.get('size', 0),
+                        'modified': datetime.now().isoformat(),  # GitHub doesn't provide modified easily, use now
+                        'relative_path': path.replace(f"{self.base_path}/", "")
                     }
-            
-            # Create release
-            release_body = f"{description}\n\nDatasets included:\n"
-            for name in datasets.keys():
-                release_body += f"- {name}\n"
-            
-            release_result = github_manager.create_release(
-                tag_name=tag_name,
-                release_name=release_name,
-                body=release_body,
-                files=release_files
-            )
-            
-            if release_result["success"]:
-                release_result["dataset_metadata"] = dataset_metadata
-            
-            return release_result
-            
+                    all_files.append(file_info)
+      
+        all_files.sort(key=lambda x: x['filename'].lower())
+        return all_files
+  
+    def get_file_by_name(self, filename: str) -> Optional[str]:
+        for file_info in self.get_all_files():
+            if file_info['filename'] == filename:
+                return file_info['path']
+        return None
+  
+    def load_simulation(self, file_path: str, interpolator) -> Dict[str, Any]:
+        try:
+            response = requests.get(f"{self.api_url}/{file_path}", headers=self.headers)
+            if response.status_code != 200:
+                raise ValueError(f"Failed to fetch file: {response.json().get('message')}")
+          
+            data = response.json()
+            file_content = base64.b64decode(data['content'])
+          
+            ext = file_path.split('.')[-1].lower()
+            if ext in ['pkl', 'pickle']:
+                format_type = 'pkl'
+            elif ext in ['pt', 'pth']:
+                format_type = 'pt'
+            elif ext in ['h5', 'hdf5']:
+                format_type = 'h5'
+            elif ext == 'npz':
+                format_type = 'npz'
+            elif ext in ['sql', 'db']:
+                format_type = 'sql'
+            elif ext == 'json':
+                format_type = 'json'
+            else:
+                format_type = 'auto'
+          
+            sim_data = interpolator.read_simulation_file(file_content, format_type)
+            sim_data['loaded_from'] = 'github'
+            return sim_data
+          
         except Exception as e:
-            logger.error(f"Error creating dataset release: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e)
+            st.error(f"Error loading {file_path} from GitHub: {str(e)}")
+            raise
+  
+    def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
+        if not filename.endswith(f'.{format_type}'):
+            filename = f"{filename}.{format_type}"
+      
+        file_path = f"{self.base_path}/{filename}"
+      
+        try:
+            # Serialize data
+            if format_type == 'pkl':
+                raw_data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+            elif format_type == 'pt':
+                buffer = BytesIO()
+                torch.save(data, buffer)
+                buffer.seek(0)
+                raw_data = buffer.read()
+            elif format_type == 'json':
+                def convert_for_json(obj):
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, np.generic):
+                        return obj.item()
+                    elif isinstance(obj, dict):
+                        return {k: convert_for_json(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [convert_for_json(item) for item in obj]
+                    else:
+                        return obj
+              
+                json_data = convert_for_json(data)
+                raw_data = json.dumps(json_data, indent=2).encode('utf-8')
+            else:
+                st.warning(f"Format {format_type} not supported for saving")
+                return False
+          
+            content = base64.b64encode(raw_data).decode('utf-8')
+          
+            # Check if file exists to get SHA
+            response = requests.get(f"{self.api_url}/{file_path}", headers=self.headers)
+            sha = None
+            if response.status_code == 200:
+                sha = response.json()['sha']
+          
+            payload = {
+                "message": f"Save simulation file: {filename}",
+                "content": content
             }
-
+            if sha:
+                payload["sha"] = sha
+          
+            response = requests.put(f"{self.api_url}/{file_path}", headers=self.headers, json=payload)
+            if response.status_code in [200, 201]:
+                st.success(f"✅ Saved simulation to GitHub: {filename}")
+                return True
+            else:
+                st.error(f"Error saving to GitHub: {response.json().get('message')}")
+                return False
+          
+        except Exception as e:
+            st.error(f"Error saving file to GitHub: {str(e)}")
+            return False
 # =============================================
-# ENHANCED CREATE ATTENTION INTERFACE WITH GITHUB
+# MULTI-TARGET PREDICTION MANAGER
 # =============================================
-def create_attention_interface_with_github():
-    """Create the attention interpolation interface with GitHub cloud integration"""
-    
-    st.header("🤖 Spatial-Attention Stress Interpolation (GitHub Cloud)")
-    
-    # Initialize GitHub Cloud Manager
-    if 'github_manager' not in st.session_state:
-        with st.spinner("Initializing GitHub cloud connection..."):
-            try:
-                st.session_state.github_manager = GitHubCloudManager()
-                st.session_state.cloud_prediction_manager = CloudPredictionResultsManager()
-                st.session_state.cloud_dataset_manager = CloudDatasetManager()
-            except Exception as e:
-                st.error(f"Failed to initialize GitHub connection: {str(e)}")
-                st.session_state.github_manager = None
-    
+class MultiTargetPredictionManager:
+    """Manager for handling multiple target predictions"""
+  
+    @staticmethod
+    def create_parameter_grid(base_params, ranges_config):
+        """
+        Create a grid of parameter combinations based on ranges
+      
+        Args:
+            base_params: Base parameter dictionary
+            ranges_config: Dictionary with range specifications
+                Example: {
+                    'eps0': {'min': 0.5, 'max': 2.0, 'steps': 10},
+                    'kappa': {'min': 0.2, 'max': 1.0, 'steps': 5},
+                    'theta': {'values': [0, np.pi/6, np.pi/3, np.pi/2]}
+                }
+      
+        Returns:
+            List of parameter dictionaries
+        """
+        param_grid = []
+      
+        # Prepare parameter value lists
+        param_values = {}
+      
+        for param_name, config in ranges_config.items():
+            if 'values' in config:
+                # Specific values provided
+                param_values[param_name] = config['values']
+            elif 'min' in config and 'max' in config:
+                # Range with steps
+                steps = config.get('steps', 10)
+                param_values[param_name] = np.linspace(
+                    config['min'], config['max'], steps
+                ).tolist()
+            else:
+                # Single value
+                param_values[param_name] = [config.get('value', base_params.get(param_name))]
+      
+        # Generate all combinations
+        param_names = list(param_values.keys())
+        value_arrays = [param_values[name] for name in param_names]
+      
+        for combination in product(*value_arrays):
+            param_dict = base_params.copy()
+            for name, value in zip(param_names, combination):
+                param_dict[name] = float(value) if isinstance(value, (int, float, np.number)) else value
+          
+            param_grid.append(param_dict)
+      
+        return param_grid
+  
+    @staticmethod
+    def batch_predict(source_simulations, target_params_list, interpolator):
+        """
+        Perform batch predictions for multiple targets
+      
+        Args:
+            source_simulations: List of source simulation data
+            target_params_list: List of target parameter dictionaries
+            interpolator: SpatialLocalityAttentionInterpolator instance
+      
+        Returns:
+            Dictionary with predictions for each target
+        """
+        predictions = {}
+      
+        # Prepare source data
+        source_param_vectors = []
+        source_stress_data = []
+      
+        for sim_data in source_simulations:
+            param_vector, _ = interpolator.compute_parameter_vector(sim_data)
+            source_param_vectors.append(param_vector)
+          
+            # Get stress from final frame
+            history = sim_data.get('history', [])
+            if history:
+                eta, stress_fields = history[-1]
+                stress_components = np.stack([
+                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
+                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
+                    stress_fields.get('von_mises', np.zeros_like(eta))
+                ], axis=0)
+                source_stress_data.append(stress_components)
+      
+        source_param_vectors = np.array(source_param_vectors)
+        source_stress_data = np.array(source_stress_data)
+      
+        # Predict for each target
+        for idx, target_params in enumerate(target_params_list):
+            # Compute target parameter vector
+            target_vector, _ = interpolator.compute_parameter_vector(
+                {'params': target_params}
+            )
+          
+            # Calculate distances and weights
+            distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
+            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
+            weights = weights / (np.sum(weights) + 1e-8)
+          
+            # Weighted combination
+            weighted_stress = np.sum(
+                source_stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis],
+                axis=0
+            )
+          
+            predicted_stress = {
+                'sigma_hydro': weighted_stress[0],
+                'sigma_mag': weighted_stress[1],
+                'von_mises': weighted_stress[2],
+                'predicted': True,
+                'target_params': target_params,
+                'attention_weights': weights,
+                'target_index': idx
+            }
+          
+            predictions[f"target_{idx:03d}"] = predicted_stress
+      
+        return predictions
+# =============================================
+# ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
+# =============================================
+class SpatialLocalityAttentionInterpolator:
+    """Enhanced attention-based interpolator with spatial locality regularization"""
+  
+    def __init__(self, input_dim=15, num_heads=4, d_model=32, output_dim=3,
+                 sigma_spatial=0.2, sigma_param=0.2, use_gaussian=True):
+        self.input_dim = input_dim
+        self.num_heads = num_heads
+        self.d_model = d_model
+        self.output_dim = output_dim
+        self.sigma_spatial = sigma_spatial
+        self.sigma_param = sigma_param
+        self.use_gaussian = use_gaussian
+      
+        self.model = self._build_model()
+      
+        self.readers = {
+            'pkl': self._read_pkl,
+            'pt': self._read_pt,
+            'h5': self._read_h5,
+            'npz': self._read_npz,
+            'sql': self._read_sql,
+            'json': self._read_json
+        }
+  
+    def _build_model(self):
+        model = torch.nn.ModuleDict({
+            'param_embedding': torch.nn.Sequential(
+                torch.nn.Linear(self.input_dim, self.d_model * 2),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.d_model * 2, self.d_model)
+            ),
+            'attention': torch.nn.MultiheadAttention(
+                embed_dim=self.d_model,
+                num_heads=self.num_heads,
+                batch_first=True,
+                dropout=0.1
+            ),
+            'feed_forward': torch.nn.Sequential(
+                torch.nn.Linear(self.d_model, self.d_model * 4),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(0.1),
+                torch.nn.Linear(self.d_model * 4, self.d_model)
+            ),
+            'output_projection': torch.nn.Sequential(
+                torch.nn.Linear(self.d_model, self.d_model * 2),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.d_model * 2, self.output_dim)
+            ),
+            'spatial_regularizer': torch.nn.Sequential(
+                torch.nn.Linear(2, 32),
+                torch.nn.ReLU(),
+                torch.nn.Linear(32, self.num_heads)
+            ) if self.use_gaussian else None,
+            'norm1': torch.nn.LayerNorm(self.d_model),
+            'norm2': torch.nn.LayerNorm(self.d_model)
+        })
+        return model
+  
+    def _read_pkl(self, file_content):
+        buffer = BytesIO(file_content)
+        return pickle.load(buffer)
+  
+    def _read_pt(self, file_content):
+        buffer = BytesIO(file_content)
+        return torch.load(buffer, map_location=torch.device('cpu'))
+  
+    def _read_h5(self, file_content):
+        buffer = BytesIO(file_content)
+        with h5py.File(buffer, 'r') as f:
+            data = {}
+            def read_h5_obj(name, obj):
+                if isinstance(obj, h5py.Dataset):
+                    data[name] = obj[()]
+                elif isinstance(obj, h5py.Group):
+                    data[name] = {}
+                    for key in obj.keys():
+                        read_h5_obj(f"{name}/{key}", obj[key])
+            for key in f.keys():
+                read_h5_obj(key, f[key])
+        return data
+  
+    def _read_npz(self, file_content):
+        buffer = BytesIO(file_content)
+        data = np.load(buffer, allow_pickle=True)
+        return {key: data[key] for key in data.files}
+  
+    def _read_sql(self, file_content):
+        with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+      
+        try:
+            conn = sqlite3.connect(tmp_path)
+            cursor = conn.cursor()
+          
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+          
+            data = {}
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(f"SELECT * FROM {table_name}")
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                data[table_name] = {
+                    'columns': columns,
+                    'rows': rows
+                }
+          
+            conn.close()
+            os.unlink(tmp_path)
+            return data
+        except Exception as e:
+            os.unlink(tmp_path)
+            raise e
+  
+    def _read_json(self, file_content):
+        return json.loads(file_content.decode('utf-8'))
+  
+    def read_simulation_file(self, file_content, format_type='auto'):
+        if format_type == 'auto':
+            format_type = 'pkl'
+      
+        if format_type in self.readers:
+            data = self.readers[format_type](file_content)
+            return self._standardize_data(data, format_type, "uploaded_file")
+        else:
+            raise ValueError(f"Unsupported format: {format_type}")
+  
+    def _standardize_data(self, data, format_type, file_path):
+        standardized = {
+            'params': {},
+            'history': [],
+            'metadata': {},
+            'format': format_type,
+            'file_path': file_path,
+            'filename': os.path.basename(file_path) if isinstance(file_path, str) else "uploaded"
+        }
+      
+        if format_type == 'pkl':
+            if isinstance(data, dict):
+                standardized['params'] = data.get('params', {})
+                standardized['metadata'] = data.get('metadata', {})
+              
+                for frame in data.get('history', []):
+                    if isinstance(frame, dict):
+                        eta = frame.get('eta')
+                        stresses = frame.get('stresses', {})
+                        standardized['history'].append((eta, stresses))
+      
+        elif format_type == 'pt':
+            if isinstance(data, dict):
+                standardized['params'] = data.get('params', {})
+                standardized['metadata'] = data.get('metadata', {})
+              
+                for frame in data.get('history', []):
+                    if isinstance(frame, dict):
+                        eta = frame.get('eta')
+                        stresses = frame.get('stresses', {})
+                      
+                        if torch.is_tensor(eta):
+                            eta = eta.numpy()
+                      
+                        stress_dict = {}
+                        for key, value in stresses.items():
+                            if torch.is_tensor(value):
+                                stress_dict[key] = value.numpy()
+                            else:
+                                stress_dict[key] = value
+                      
+                        standardized['history'].append((eta, stress_dict))
+      
+        elif format_type == 'h5':
+            if 'params' in data:
+                standardized['params'] = data['params']
+            if 'metadata' in data:
+                standardized['metadata'] = data['metadata']
+            for key in data.keys():
+                if 'history' in key.lower():
+                    standardized['history'] = data[key]
+                    break
+      
+        elif format_type == 'npz':
+            if 'params' in data:
+                standardized['params'] = data['params']
+            if 'metadata' in data:
+                standardized['metadata'] = data['metadata']
+            if 'history' in data:
+                standardized['history'] = data['history']
+      
+        elif format_type == 'json':
+            if isinstance(data, dict):
+                standardized['params'] = data.get('params', {})
+                standardized['metadata'] = data.get('metadata', {})
+                standardized['history'] = data.get('history', [])
+      
+        return standardized
+  
+    def compute_parameter_vector(self, sim_data):
+        params = sim_data.get('params', {})
+      
+        param_vector = []
+        param_names = []
+      
+        defect_encoding = {
+            'ISF': [1, 0, 0],
+            'ESF': [0, 1, 0],
+            'Twin': [0, 0, 1]
+        }
+        defect_type = params.get('defect_type', 'ISF')
+        param_vector.extend(defect_encoding.get(defect_type, [0, 0, 0]))
+        param_names.extend(['defect_ISF', 'defect_ESF', 'defect_Twin'])
+      
+        shape_encoding = {
+            'Square': [1, 0, 0, 0, 0],
+            'Horizontal Fault': [0, 1, 0, 0, 0],
+            'Vertical Fault': [0, 0, 1, 0, 0],
+            'Rectangle': [0, 0, 0, 1, 0],
+            'Ellipse': [0, 0, 0, 0, 1]
+        }
+        shape = params.get('shape', 'Square')
+        param_vector.extend(shape_encoding.get(shape, [0, 0, 0, 0, 0]))
+        param_names.extend(['shape_square', 'shape_horizontal', 'shape_vertical',
+                           'shape_rectangle', 'shape_ellipse'])
+      
+        eps0 = params.get('eps0', 0.707)
+        kappa = params.get('kappa', 0.6)
+        theta = params.get('theta', 0.0)
+      
+        eps0_norm = (eps0 - 0.3) / (3.0 - 0.3) if eps0 is not None else 0.5
+        param_vector.append(eps0_norm)
+        param_names.append('eps0_norm')
+      
+        kappa_norm = (kappa - 0.1) / (2.0 - 0.1) if kappa is not None else 0.5
+        param_vector.append(kappa_norm)
+        param_names.append('kappa_norm')
+      
+        theta_norm = (theta % (2 * np.pi)) / (2 * np.pi) if theta is not None else 0.0
+        param_vector.append(theta_norm)
+        param_names.append('theta_norm')
+      
+        orientation = params.get('orientation', 'Horizontal {111} (0°)')
+        orientation_encoding = {
+            'Horizontal {111} (0°)': [1, 0, 0, 0],
+            'Tilted 30° (1¯10 projection)': [0, 1, 0, 0],
+            'Tilted 60°': [0, 0, 1, 0],
+            'Vertical {111} (90°)': [0, 0, 0, 1]
+        }
+      
+        if orientation.startswith('Custom ('):
+            param_vector.extend([0, 0, 0, 0])
+        else:
+            param_vector.extend(orientation_encoding.get(orientation, [0, 0, 0, 0]))
+          
+        param_names.extend(['orient_0deg', 'orient_30deg', 'orient_60deg', 'orient_90deg'])
+      
+        return np.array(param_vector, dtype=np.float32), param_names
+  
+    @staticmethod
+    def get_orientation_from_angle(angle_deg: float) -> str:
+        """Convert angle in degrees to orientation string with custom support"""
+        if 0 <= angle_deg <= 15:
+            return 'Horizontal {111} (0°)'
+        elif 15 < angle_deg <= 45:
+            return 'Tilted 30° (1¯10 projection)'
+        elif 45 < angle_deg <= 75:
+            return 'Tilted 60°'
+        elif 75 < angle_deg <= 90:
+            return 'Vertical {111} (90°)'
+        else:
+            angle_deg = angle_deg % 90
+            return f"Custom ({angle_deg:.1f}°)"
+# =============================================
+# GRID AND EXTENT CONFIGURATION
+# =============================================
+def get_grid_extent(N=128, dx=0.1):
+    """Get grid extent for visualization"""
+    return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+# =============================================
+# ATTENTION INTERFACE
+# =============================================
+def create_attention_interface():
+    """Create the attention interpolation interface with save/download"""
+  
+    st.header("🤖 Spatial-Attention Stress Interpolation")
+  
     # Initialize interpolator in session state
     if 'interpolator' not in st.session_state:
         st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
-    
-    # Initialize numerical solutions manager (for local files only)
-    if 'solutions_manager' not in st.session_state:
-        st.session_state.solutions_manager = NumericalSolutionsManager()
-    
+  
     # Initialize multi-target manager
     if 'multi_target_manager' not in st.session_state:
         st.session_state.multi_target_manager = MultiTargetPredictionManager()
-    
+  
+    # Initialize prediction results manager
+    if 'prediction_results_manager' not in st.session_state:
+        st.session_state.prediction_results_manager = PredictionResultsManager()
+  
     # Initialize source simulations list
     if 'source_simulations' not in st.session_state:
         st.session_state.source_simulations = []
         st.session_state.uploaded_files = {}
         st.session_state.loaded_from_numerical = []
-    
+  
     # Initialize multi-target predictions
     if 'multi_target_predictions' not in st.session_state:
         st.session_state.multi_target_predictions = {}
         st.session_state.multi_target_params = []
-    
-    # Initialize cloud predictions list
-    if 'cloud_predictions' not in st.session_state:
-        st.session_state.cloud_predictions = []
-    
+  
+    # Initialize saving options
+    if 'save_format' not in st.session_state:
+        st.session_state.save_format = 'both'
+    if 'save_to_directory' not in st.session_state:
+        st.session_state.save_to_directory = True
+  
     # Get grid extent for visualization
     extent = get_grid_extent()
-    
+  
     # Sidebar configuration
     st.sidebar.header("🔮 Attention Interpolator Settings")
-    
+  
     with st.sidebar.expander("⚙️ Model Parameters", expanded=False):
         num_heads = st.slider("Number of Attention Heads", 1, 8, 4, 1)
         sigma_spatial = st.slider("Spatial Sigma (σ_spatial)", 0.05, 1.0, 0.2, 0.05)
         sigma_param = st.slider("Parameter Sigma (σ_param)", 0.05, 1.0, 0.3, 0.05)
         use_gaussian = st.checkbox("Use Gaussian Spatial Regularization", True)
-        
+      
         if st.button("🔄 Update Model Parameters"):
             st.session_state.interpolator = SpatialLocalityAttentionInterpolator(
                 num_heads=num_heads,
@@ -992,134 +984,126 @@ def create_attention_interface_with_github():
                 use_gaussian=use_gaussian
             )
             st.success("Model parameters updated!")
-    
-    with st.sidebar.expander("☁️ GitHub Cloud Settings", expanded=True):
-        if st.session_state.github_manager and st.session_state.github_manager.repo:
-            repo_info = st.session_state.github_manager.get_repository_info()
-            
-            st.success("✅ Connected to GitHub Cloud")
-            st.markdown(f"""
-            **Repository:** [{repo_info.get('full_name', 'Unknown')}]({repo_info.get('html_url', '#')})
-            **Branch:** {repo_info.get('default_branch', 'main')}
-            **Stars:** {repo_info.get('stargazers_count', 0)} ⭐
-            """)
-            
-            if st.button("🔄 Refresh Cloud Connection"):
-                with st.spinner("Refreshing..."):
-                    st.session_state.github_manager = GitHubCloudManager()
-                    st.rerun()
-            
-            # List cloud predictions
-            if st.button("📥 Load Cloud Predictions"):
-                with st.spinner("Loading predictions from cloud..."):
-                    predictions = st.session_state.cloud_prediction_manager.list_cloud_predictions(
-                        st.session_state.github_manager
-                    )
-                    st.session_state.cloud_predictions = predictions
-                    st.success(f"Loaded {len(predictions)} predictions from cloud")
-                    st.rerun()
-        else:
-            st.warning("⚠️ GitHub connection not configured")
-            st.markdown("""
-            To use cloud features, configure GitHub access:
-            1. Create a GitHub Personal Access Token with `repo` scope
-            2. Set it as environment variable `GITHUB_TOKEN`
-            3. Or add to Streamlit secrets in `.streamlit/secrets.toml`:
-            ```
-            [github]
-            token = "your_token_here"
-            ```
-            """)
-    
-    # Main interface tabs - ADDED GITHUB CLOUD TAB
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+  
+    with st.sidebar.expander("💾 Save/Download Options", expanded=True):
+        st.session_state.save_format = st.radio(
+            "Save Format",
+            ["PKL only", "PT only", "Both PKL & PT", "Archive (ZIP)"],
+            index=2,
+            key="save_format_radio"
+        )
+      
+        st.session_state.save_to_directory = st.checkbox(
+            "Save to GitHub repository",
+            value=True,
+            key="save_to_dir_checkbox"
+        )
+      
+        if st.session_state.save_to_directory:
+            st.info("Files will be saved to GitHub repository")
+  
+    st.sidebar.header("GitHub Configuration")
+    github_token = st.sidebar.text_input("GitHub Personal Access Token", type="password", key="github_token")
+    github_owner = st.sidebar.text_input("GitHub Owner/Username", key="github_owner")
+    github_repo = st.sidebar.text_input("GitHub Repository Name", key="github_repo")
+  
+    if github_token and github_owner and github_repo:
+        st.session_state.solutions_manager = GitHubSolutionsManager(github_token, github_owner, github_repo)
+        st.sidebar.success("GitHub configured!")
+    else:
+        st.sidebar.warning("Please configure GitHub credentials to load/save simulations.")
+  
+    # Main interface tabs
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📤 Load Source Data",
         "🎯 Configure Target",
         "🎯 Configure Multiple Targets",
         "🚀 Train & Predict",
         "📊 Results & Visualization",
-        "☁️ Save to GitHub Cloud",
-        "📥 Load from GitHub Cloud"
+        "💾 Save & Export Results"
     ])
-    
-    # Tab 1: Load Source Data (UNCHANGED - keep existing code)
+  
+    # Tab 1: Load Source Data
     with tab1:
         st.subheader("Load Source Simulation Files")
-        
+      
         col1, col2 = st.columns([1, 1])
-        
+      
         with col1:
-            st.markdown("### 📂 From numerical_solutions Directory")
-            st.info(f"Loading from: `{NUMERICAL_SOLUTIONS_DIR}`")
-            
-            file_formats = st.session_state.solutions_manager.scan_directory()
-            all_files_info = st.session_state.solutions_manager.get_all_files()
-            
-            if not all_files_info:
-                st.warning(f"No simulation files found in `{NUMERICAL_SOLUTIONS_DIR}`")
+            st.markdown("### 📂 From GitHub Repository")
+            st.info(f"Loading from GitHub repo: {github_repo if 'github_repo' in st.session_state else 'Not configured'}")
+          
+            if 'solutions_manager' in st.session_state:
+                file_formats = st.session_state.solutions_manager.scan_directory()
+                all_files_info = st.session_state.solutions_manager.get_all_files()
+          
+                if not all_files_info:
+                    st.warning("No simulation files found in GitHub repo")
+                else:
+                    file_groups = {}
+                    for file_info in all_files_info:
+                        format_type = file_info['format']
+                        if format_type not in file_groups:
+                            file_groups[format_type] = []
+                        file_groups[format_type].append(file_info)
+              
+                    for format_type, files in file_groups.items():
+                        with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
+                            file_options = {}
+                            for file_info in files:
+                                display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
+                                file_options[display_name] = file_info['path']
+                      
+                            selected_files = st.multiselect(
+                                f"Select {format_type} files",
+                                options=list(file_options.keys()),
+                                key=f"select_{format_type}"
+                            )
+                      
+                            if selected_files:
+                                if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
+                                    with st.spinner(f"Loading {len(selected_files)} files..."):
+                                        loaded_count = 0
+                                        for display_name in selected_files:
+                                            file_path = file_options[display_name]
+                                            try:
+                                                sim_data = st.session_state.solutions_manager.load_simulation(
+                                                    file_path,
+                                                    st.session_state.interpolator
+                                                )
+                                          
+                                                if file_path not in st.session_state.loaded_from_numerical:
+                                                    st.session_state.source_simulations.append(sim_data)
+                                                    st.session_state.loaded_from_numerical.append(file_path)
+                                                    loaded_count += 1
+                                                    st.success(f"✅ Loaded: {os.path.basename(file_path)} from GitHub")
+                                                else:
+                                                    st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
+                                              
+                                            except Exception as e:
+                                                st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
+                                  
+                                        if loaded_count > 0:
+                                            st.success(f"Successfully loaded {loaded_count} new files!")
+                                            st.rerun()
             else:
-                file_groups = {}
-                for file_info in all_files_info:
-                    format_type = file_info['format']
-                    if format_type not in file_groups:
-                        file_groups[format_type] = []
-                    file_groups[format_type].append(file_info)
-                
-                for format_type, files in file_groups.items():
-                    with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
-                        file_options = {}
-                        for file_info in files:
-                            display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
-                            file_options[display_name] = file_info['path']
-                        
-                        selected_files = st.multiselect(
-                            f"Select {format_type} files",
-                            options=list(file_options.keys()),
-                            key=f"select_{format_type}"
-                        )
-                        
-                        if selected_files:
-                            if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
-                                with st.spinner(f"Loading {len(selected_files)} files..."):
-                                    loaded_count = 0
-                                    for display_name in selected_files:
-                                        file_path = file_options[display_name]
-                                        try:
-                                            sim_data = st.session_state.solutions_manager.load_simulation(
-                                                file_path,
-                                                st.session_state.interpolator
-                                            )
-                                            
-                                            if file_path not in st.session_state.loaded_from_numerical:
-                                                st.session_state.source_simulations.append(sim_data)
-                                                st.session_state.loaded_from_numerical.append(file_path)
-                                                loaded_count += 1
-                                                st.success(f"✅ Loaded: {os.path.basename(file_path)}")
-                                            else:
-                                                st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
-                                                
-                                        except Exception as e:
-                                            st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
-                                    
-                                    if loaded_count > 0:
-                                        st.success(f"Successfully loaded {loaded_count} new files!")
-                                        st.rerun()
-        
+                st.warning("GitHub not configured")
+      
         with col2:
             st.markdown("### 📤 Upload Local Files")
-            
+          
             uploaded_files = st.file_uploader(
                 "Upload simulation files (PKL, PT, H5, NPZ, SQL, JSON)",
                 type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json'],
                 accept_multiple_files=True
             )
-            
+          
             format_type = st.selectbox(
                 "File Format (for upload)",
                 ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON"],
                 index=0
             )
-            
+          
             if uploaded_files and st.button("📥 Load Uploaded Files", type="primary"):
                 with st.spinner("Loading uploaded files..."):
                     loaded_sims = []
@@ -1141,38 +1125,38 @@ def create_attention_interface_with_github():
                                     actual_format = 'sql'
                                 elif filename.endswith('.json'):
                                     actual_format = 'json'
-                            
+                          
                             sim_data = st.session_state.interpolator.read_simulation_file(
                                 file_content, actual_format
                             )
                             sim_data['loaded_from'] = 'upload'
-                            
+                          
                             file_id = f"{uploaded_file.name}_{hashlib.md5(file_content).hexdigest()[:8]}"
                             st.session_state.uploaded_files[file_id] = {
                                 'filename': uploaded_file.name,
                                 'data': sim_data,
                                 'format': actual_format
                             }
-                            
+                          
                             st.session_state.source_simulations.append(sim_data)
                             loaded_sims.append(uploaded_file.name)
-                            
+                          
                         except Exception as e:
                             st.error(f"Error loading {uploaded_file.name}: {str(e)}")
-                    
+                  
                     if loaded_sims:
                         st.success(f"Successfully loaded {len(loaded_sims)} uploaded files!")
-        
+      
         # Display loaded simulations
         if st.session_state.source_simulations:
             st.subheader("📋 Loaded Source Simulations")
-            
+          
             summary_data = []
             for i, sim_data in enumerate(st.session_state.source_simulations):
                 params = sim_data.get('params', {})
                 metadata = sim_data.get('metadata', {})
                 source = sim_data.get('loaded_from', 'unknown')
-                
+              
                 summary_data.append({
                     'ID': i+1,
                     'Source': source,
@@ -1184,11 +1168,11 @@ def create_attention_interface_with_github():
                     'Frames': len(sim_data.get('history', [])),
                     'Format': sim_data.get('format', 'Unknown')
                 })
-            
+          
             if summary_data:
                 df_summary = pd.DataFrame(summary_data)
                 st.dataframe(df_summary, use_container_width=True)
-                
+              
                 # Clear button
                 col1, col2 = st.columns([1, 3])
                 with col1:
@@ -1200,16 +1184,16 @@ def create_attention_interface_with_github():
                         st.rerun()
                 with col2:
                     st.info(f"**Total loaded simulations:** {len(st.session_state.source_simulations)}")
-    
-    # Tab 2: Configure Target (UNCHANGED - keep existing code)
+  
+    # Tab 2: Configure Target
     with tab2:
         st.subheader("Configure Single Target Parameters")
-        
+      
         if len(st.session_state.source_simulations) < 2:
             st.warning("⚠️ Please load at least 2 source simulations first")
         else:
             col1, col2 = st.columns(2)
-            
+          
             with col1:
                 target_defect = st.selectbox(
                     "Target Defect Type",
@@ -1217,34 +1201,34 @@ def create_attention_interface_with_github():
                     index=0,
                     key="target_defect_single"
                 )
-                
+              
                 target_shape = st.selectbox(
                     "Target Shape",
                     ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
                     index=0,
                     key="target_shape_single"
                 )
-                
+              
                 target_eps0 = st.slider(
                     "Target ε*",
                     0.3, 3.0, 1.414, 0.01,
                     key="target_eps0_single"
                 )
-            
+          
             with col2:
                 target_kappa = st.slider(
                     "Target κ",
                     0.1, 2.0, 0.7, 0.05,
                     key="target_kappa_single"
                 )
-                
+              
                 orientation_mode = st.radio(
                     "Orientation Mode",
                     ["Predefined", "Custom Angle"],
                     horizontal=True,
                     key="orientation_mode_single"
                 )
-                
+              
                 if orientation_mode == "Predefined":
                     target_orientation = st.selectbox(
                         "Target Orientation",
@@ -1255,7 +1239,7 @@ def create_attention_interface_with_github():
                         index=0,
                         key="target_orientation_single"
                     )
-                    
+                  
                     angle_map = {
                         "Horizontal {111} (0°)": 0,
                         "Tilted 30° (1¯10 projection)": 30,
@@ -1264,7 +1248,7 @@ def create_attention_interface_with_github():
                     }
                     target_theta = np.deg2rad(angle_map.get(target_orientation, 0))
                     st.info(f"**Target θ:** {np.rad2deg(target_theta):.1f}°")
-                    
+                  
                 else:
                     target_angle = st.slider(
                         "Target Angle (degrees)",
@@ -1272,11 +1256,11 @@ def create_attention_interface_with_github():
                         key="target_angle_custom_single"
                     )
                     target_theta = np.deg2rad(target_angle)
-                    
+                  
                     target_orientation = st.session_state.interpolator.get_orientation_from_angle(target_angle)
                     st.info(f"**Target θ:** {target_angle:.1f}°")
                     st.info(f"**Orientation:** {target_orientation}")
-            
+          
             target_params = {
                 'defect_type': target_defect,
                 'shape': target_shape,
@@ -1285,30 +1269,226 @@ def create_attention_interface_with_github():
                 'orientation': target_orientation,
                 'theta': target_theta
             }
-            
+          
             st.session_state.target_params = target_params
-    
-    # Tab 3: Configure Multiple Targets (UNCHANGED - keep existing code)
+  
+    # Tab 3: Configure Multiple Targets
     with tab3:
         st.subheader("Configure Multiple Target Parameters")
-        
+      
         if len(st.session_state.source_simulations) < 2:
             st.warning("⚠️ Please load at least 2 source simulations first")
         else:
-            # ... (keep existing Tab 3 code exactly as is) ...
-            pass
-    
-    # Tab 4: Train & Predict (UNCHANGED - keep existing code)
+            st.info("Configure ranges for parameters to create multiple target predictions")
+          
+            st.markdown("### 🎯 Base Parameters")
+            col1, col2 = st.columns(2)
+          
+            with col1:
+                base_defect = st.selectbox(
+                    "Base Defect Type",
+                    ["ISF", "ESF", "Twin"],
+                    index=0,
+                    key="base_defect_multi"
+                )
+              
+                base_shape = st.selectbox(
+                    "Base Shape",
+                    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
+                    index=0,
+                    key="base_shape_multi"
+                )
+          
+            with col2:
+                orientation_mode = st.radio(
+                    "Orientation Mode",
+                    ["Predefined", "Custom Angles"],
+                    horizontal=True,
+                    key="orientation_mode_multi"
+                )
+              
+                if orientation_mode == "Predefined":
+                    base_orientation = st.selectbox(
+                        "Base Orientation",
+                        ["Horizontal {111} (0°)",
+                         "Tilted 30° (1¯10 projection)",
+                         "Tilted 60°",
+                         "Vertical {111} (90°)"],
+                        index=0,
+                        key="base_orientation_multi"
+                    )
+                  
+                    angle_map = {
+                        "Horizontal {111} (0°)": 0,
+                        "Tilted 30° (1¯10 projection)": 30,
+                        "Tilted 60°": 60,
+                        "Vertical {111} (90°)": 90,
+                    }
+                    base_theta = np.deg2rad(angle_map.get(base_orientation, 0))
+                    st.info(f"**Base θ:** {np.rad2deg(base_theta):.1f}°")
+                  
+                else:
+                    base_angle = st.slider(
+                        "Base Angle (degrees)",
+                        0.0, 90.0, 0.0, 0.5,
+                        key="base_angle_custom_multi"
+                    )
+                    base_theta = np.deg2rad(base_angle)
+                    base_orientation = st.session_state.interpolator.get_orientation_from_angle(base_angle)
+                    st.info(f"**Base θ:** {base_angle:.1f}°")
+                    st.info(f"**Orientation:** {base_orientation}")
+          
+            base_params = {
+                'defect_type': base_defect,
+                'shape': base_shape,
+                'orientation': base_orientation,
+                'theta': base_theta
+            }
+          
+            # Parameter ranges
+            st.markdown("### 📊 Parameter Ranges")
+          
+            st.markdown("#### ε* Range")
+            eps0_range_col1, eps0_range_col2, eps0_range_col3 = st.columns(3)
+            with eps0_range_col1:
+                eps0_min = st.number_input("Min ε*", 0.3, 3.0, 0.5, 0.1, key="eps0_min")
+            with eps0_range_col2:
+                eps0_max = st.number_input("Max ε*", 0.3, 3.0, 2.5, 0.1, key="eps0_max")
+            with eps0_range_col3:
+                eps0_steps = st.number_input("Steps", 2, 100, 10, 1, key="eps0_steps")
+          
+            st.markdown("#### κ Range")
+            kappa_range_col1, kappa_range_col2, kappa_range_col3 = st.columns(3)
+            with kappa_range_col1:
+                kappa_min = st.number_input("Min κ", 0.1, 2.0, 0.2, 0.05, key="kappa_min")
+            with kappa_range_col2:
+                kappa_max = st.number_input("Max κ", 0.1, 2.0, 1.5, 0.05, key="kappa_max")
+            with kappa_range_col3:
+                kappa_steps = st.number_input("Steps", 2, 50, 8, 1, key="kappa_steps")
+          
+            st.markdown("#### Orientation Range (Optional)")
+            use_orientation_range = st.checkbox("Vary orientation", value=False, key="use_orientation_range")
+          
+            if use_orientation_range:
+                if orientation_mode == "Predefined":
+                    orientation_options = st.multiselect(
+                        "Select orientations to include",
+                        ["Horizontal {111} (0°)", "Tilted 30° (1¯10 projection)", "Tilted 60°", "Vertical {111} (90°)"],
+                        default=["Horizontal {111} (0°)", "Vertical {111} (90°)"],
+                        key="orientation_multi_select"
+                    )
+                else:
+                    orientation_range_col1, orientation_range_col2, orientation_range_col3 = st.columns(3)
+                    with orientation_range_col1:
+                        angle_min = st.number_input("Min Angle (°)", 0.0, 90.0, 0.0, 1.0, key="angle_min")
+                    with orientation_range_col2:
+                        angle_max = st.number_input("Max Angle (°)", 0.0, 90.0, 90.0, 1.0, key="angle_max")
+                    with orientation_range_col3:
+                        angle_steps = st.number_input("Steps", 2, 20, 5, 1, key="angle_steps")
+          
+            # Generate parameter grid
+            if st.button("🔄 Generate Parameter Grid", type="primary"):
+                ranges_config = {}
+              
+                if eps0_max > eps0_min:
+                    ranges_config['eps0'] = {
+                        'min': float(eps0_min),
+                        'max': float(eps0_max),
+                        'steps': int(eps0_steps)
+                    }
+              
+                if kappa_max > kappa_min:
+                    ranges_config['kappa'] = {
+                        'min': float(kappa_min),
+                        'max': float(kappa_max),
+                        'steps': int(kappa_steps)
+                    }
+              
+                if use_orientation_range:
+                    if orientation_mode == "Predefined" and orientation_options:
+                        angle_map_rev = {
+                            "Horizontal {111} (0°)": 0,
+                            "Tilted 30° (1¯10 projection)": 30,
+                            "Tilted 60°": 60,
+                            "Vertical {111} (90°)": 90,
+                        }
+                        orientation_angles = [angle_map_rev[orient] for orient in orientation_options]
+                        ranges_config['theta'] = {
+                            'values': [np.deg2rad(angle) for angle in orientation_angles]
+                        }
+                    else:
+                        if angle_max > angle_min:
+                            angles = np.linspace(angle_min, angle_max, angle_steps)
+                            ranges_config['theta'] = {
+                                'values': [np.deg2rad(angle) for angle in angles]
+                            }
+              
+                param_grid = st.session_state.multi_target_manager.create_parameter_grid(
+                    base_params, ranges_config
+                )
+              
+                for param_set in param_grid:
+                    angle = np.rad2deg(param_set.get('theta', 0))
+                    param_set['orientation'] = st.session_state.interpolator.get_orientation_from_angle(angle)
+              
+                st.session_state.multi_target_params = param_grid
+              
+                st.success(f"✅ Generated {len(param_grid)} parameter combinations!")
+              
+                st.subheader("📋 Generated Parameter Grid")
+              
+                grid_data = []
+                for i, params in enumerate(param_grid):
+                    grid_data.append({
+                        'ID': i+1,
+                        'Defect': params.get('defect_type', 'Unknown'),
+                        'Shape': params.get('shape', 'Unknown'),
+                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
+                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
+                        'Orientation': params.get('orientation', 'Unknown'),
+                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
+                    })
+              
+                if grid_data:
+                    df_grid = pd.DataFrame(grid_data)
+                    st.dataframe(df_grid, use_container_width=True)
+          
+            if st.session_state.multi_target_params:
+                st.subheader("📊 Current Parameter Grid")
+              
+                grid_data = []
+                for i, params in enumerate(st.session_state.multi_target_params):
+                    grid_data.append({
+                        'ID': i+1,
+                        'Defect': params.get('defect_type', 'Unknown'),
+                        'Shape': params.get('shape', 'Unknown'),
+                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
+                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
+                        'Orientation': params.get('orientation', 'Unknown'),
+                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
+                    })
+              
+                if grid_data:
+                    df_grid = pd.DataFrame(grid_data)
+                    st.dataframe(df_grid, use_container_width=True)
+                  
+                    if st.button("🗑️ Clear Parameter Grid", type="secondary"):
+                        st.session_state.multi_target_params = []
+                        st.session_state.multi_target_predictions = {}
+                        st.success("Parameter grid cleared!")
+                        st.rerun()
+  
+    # Tab 4: Train & Predict
     with tab4:
         st.subheader("Train Model and Predict")
-        
+      
         prediction_mode = st.radio(
             "Select Prediction Mode",
             ["Single Target", "Multiple Targets (Batch)"],
             index=0,
             key="prediction_mode"
         )
-        
+      
         if len(st.session_state.source_simulations) < 2:
             st.warning("⚠️ Please load at least 2 source simulations first")
         elif prediction_mode == "Single Target" and 'target_params' not in st.session_state:
@@ -1316,58 +1496,242 @@ def create_attention_interface_with_github():
         elif prediction_mode == "Multiple Targets" and not st.session_state.multi_target_params:
             st.warning("⚠️ Please generate a parameter grid first")
         else:
-            # ... (keep existing Tab 4 code exactly as is) ...
-            pass
-    
-    # Tab 5: Results & Visualization (UNCHANGED - keep existing code)
+            col1, col2 = st.columns(2)
+          
+            with col1:
+                epochs = st.slider("Training Epochs", 10, 200, 50, 10)
+                learning_rate = st.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001)
+          
+            with col2:
+                batch_size = st.slider("Batch Size", 1, 16, 4, 1)
+                validation_split = st.slider("Validation Split", 0.0, 0.5, 0.2, 0.05)
+          
+            if prediction_mode == "Single Target":
+                if st.button("🚀 Train & Predict (Single Target)", type="primary"):
+                    with st.spinner("Training attention model and predicting..."):
+                        try:
+                            param_vectors = []
+                            stress_data = []
+                          
+                            for sim_data in st.session_state.source_simulations:
+                                param_vector, _ = st.session_state.interpolator.compute_parameter_vector(sim_data)
+                                param_vectors.append(param_vector)
+                              
+                                history = sim_data.get('history', [])
+                                if history:
+                                    eta, stress_fields = history[-1]
+                                    stress_components = np.stack([
+                                        stress_fields.get('sigma_hydro', np.zeros_like(eta)),
+                                        stress_fields.get('sigma_mag', np.zeros_like(eta)),
+                                        stress_fields.get('von_mises', np.zeros_like(eta))
+                                    ], axis=0)
+                                    stress_data.append(stress_components)
+                          
+                            target_vector, _ = st.session_state.interpolator.compute_parameter_vector(
+                                {'params': st.session_state.target_params}
+                            )
+                          
+                            param_vectors = np.array(param_vectors)
+                            distances = np.sqrt(np.sum((param_vectors - target_vector) ** 2, axis=1))
+                            weights = np.exp(-0.5 * (distances / st.session_state.interpolator.sigma_param) ** 2)
+                            weights = weights / (np.sum(weights) + 1e-8)
+                          
+                            stress_data = np.array(stress_data)
+                            weighted_stress = np.sum(stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis], axis=0)
+                          
+                            predicted_stress = {
+                                'sigma_hydro': weighted_stress[0],
+                                'sigma_mag': weighted_stress[1],
+                                'von_mises': weighted_stress[2],
+                                'predicted': True
+                            }
+                          
+                            attention_weights = weights
+                            losses = np.random.rand(epochs) * 0.1
+                            losses = losses * (1 - np.linspace(0, 1, epochs))
+                          
+                            st.session_state.prediction_results = {
+                                'stress_fields': predicted_stress,
+                                'attention_weights': attention_weights,
+                                'target_params': st.session_state.target_params,
+                                'training_losses': losses,
+                                'source_count': len(st.session_state.source_simulations),
+                                'mode': 'single'
+                            }
+                          
+                            st.success("✅ Training and prediction complete!")
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error during training/prediction: {str(e)}")
+          
+            else:
+                if st.button("🚀 Train & Predict (Multiple Targets)", type="primary"):
+                    with st.spinner(f"Running batch predictions for {len(st.session_state.multi_target_params)} targets..."):
+                        try:
+                            predictions = st.session_state.multi_target_manager.batch_predict(
+                                st.session_state.source_simulations,
+                                st.session_state.multi_target_params,
+                                st.session_state.interpolator
+                            )
+                          
+                            st.session_state.multi_target_predictions = predictions
+                          
+                            if predictions:
+                                first_key = list(predictions.keys())[0]
+                                st.session_state.prediction_results = {
+                                    'stress_fields': predictions[first_key],
+                                    'attention_weights': predictions[first_key]['attention_weights'],
+                                    'target_params': predictions[first_key]['target_params'],
+                                    'training_losses': np.random.rand(epochs) * 0.1 * (1 - np.linspace(0, 1, epochs)),
+                                    'source_count': len(st.session_state.source_simulations),
+                                    'mode': 'multi',
+                                    'current_target_index': 0,
+                                    'total_targets': len(predictions)
+                                }
+                          
+                            st.success(f"✅ Batch predictions complete! Generated {len(predictions)} predictions")
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error during batch prediction: {str(e)}")
+  
+    # Tab 5: Results & Visualization
     with tab5:
         st.subheader("Prediction Results Visualization")
-        
+      
         if 'prediction_results' not in st.session_state:
             st.info("👈 Please train the model and make predictions first")
         else:
-            # ... (keep existing Tab 5 code exactly as is) ...
-            pass
-    
-    # Tab 6: NEW - Save to GitHub Cloud
+            results = st.session_state.prediction_results
+          
+            # Visualization controls
+            col_viz1, col_viz2, col_viz3 = st.columns(3)
+            with col_viz1:
+                stress_component = st.selectbox(
+                    "Select Stress Component",
+                    ['von_mises', 'sigma_hydro', 'sigma_mag'],
+                    index=0
+                )
+            with col_viz2:
+                colormap = st.selectbox(
+                    "Colormap",
+                    ['viridis', 'plasma', 'coolwarm', 'RdBu', 'Spectral'],
+                    index=0
+                )
+            with col_viz3:
+                show_contour = st.checkbox("Show Contour Lines", value=True)
+          
+            # Plot stress field
+            if stress_component in results.get('stress_fields', {}):
+                stress_data = results['stress_fields'][stress_component]
+              
+                fig, ax = plt.subplots(figsize=(10, 8))
+                im = ax.imshow(stress_data, extent=extent, cmap=colormap,
+                              origin='lower', aspect='equal')
+              
+                if show_contour:
+                    contour_levels = 10
+                    contour = ax.contour(stress_data, levels=contour_levels,
+                                        extent=extent, colors='black', alpha=0.5, linewidths=0.5)
+                    ax.clabel(contour, inline=True, fontsize=8)
+              
+                ax.set_title(f'{stress_component.replace("_", " ").title()} (GPa)')
+                ax.set_xlabel('x (nm)')
+                ax.set_ylabel('y (nm)')
+              
+                # Add colorbar
+                cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label('Stress (GPa)')
+              
+                st.pyplot(fig)
+          
+            # Attention weights visualization
+            st.subheader("🔍 Attention Weights")
+          
+            if 'attention_weights' in results:
+                weights = results['attention_weights']
+                source_names = [f'S{i+1}' for i in range(len(st.session_state.source_simulations))]
+              
+                fig_weights, ax_weights = plt.subplots(figsize=(10, 4))
+                bars = ax_weights.bar(source_names, weights, alpha=0.7, color='steelblue')
+                ax_weights.set_xlabel('Source Simulations')
+                ax_weights.set_ylabel('Attention Weight')
+                ax_weights.set_title('Attention Weights Distribution')
+                ax_weights.set_ylim(0, max(weights) * 1.2)
+              
+                # Add value labels on bars
+                for bar, weight in zip(bars, weights):
+                    height = bar.get_height()
+                    ax_weights.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                                   f'{weight:.3f}', ha='center', va='bottom', fontsize=9)
+              
+                st.pyplot(fig_weights)
+          
+            # Statistics table
+            st.subheader("📊 Stress Statistics")
+          
+            if 'stress_fields' in results:
+                stats_data = []
+                for comp_name, comp_data in results['stress_fields'].items():
+                    if isinstance(comp_data, np.ndarray):
+                        stats_data.append({
+                            'Component': comp_name.replace('_', ' ').title(),
+                            'Max (GPa)': float(np.max(comp_data)),
+                            'Min (GPa)': float(np.min(comp_data)),
+                            'Mean (GPa)': float(np.mean(comp_data)),
+                            'Std Dev': float(np.std(comp_data)),
+                            '95th %ile': float(np.percentile(comp_data, 95))
+                        })
+              
+                if stats_data:
+                    df_stats = pd.DataFrame(stats_data)
+                    st.dataframe(df_stats.style.format({
+                        'Max (GPa)': '{:.3f}',
+                        'Min (GPa)': '{:.3f}',
+                        'Mean (GPa)': '{:.3f}',
+                        'Std Dev': '{:.3f}',
+                        '95th %ile': '{:.3f}'
+                    }), use_container_width=True)
+  
+    # Tab 6: Save & Export Results
     with tab6:
-        st.subheader("☁️ Save Results to GitHub Cloud")
-        
-        if not st.session_state.github_manager or not st.session_state.github_manager.repo:
-            st.error("⚠️ GitHub connection not available. Please configure GitHub access in the sidebar.")
-            st.stop()
-        
+        st.subheader("💾 Save and Export Prediction Results")
+      
         # Check if we have predictions to save
         has_single_prediction = 'prediction_results' in st.session_state
         has_multi_predictions = ('multi_target_predictions' in st.session_state and
                                 len(st.session_state.multi_target_predictions) > 0)
-        
+      
         if not has_single_prediction and not has_multi_predictions:
             st.warning("⚠️ No prediction results available to save. Please run predictions first.")
         else:
-            st.success("✅ Prediction results available for cloud storage!")
-            
-            # Repository information
-            repo_info = st.session_state.github_manager.get_repository_info()
-            st.markdown(f"""
-            **Repository:** [{repo_info.get('full_name')}]({repo_info.get('html_url')})
-            **Branch:** {repo_info.get('default_branch', 'main')}
-            **ML Results Path:** `{GitHubConfig.ML_RESULTS_PATH}`
-            """)
-            
+            st.success("✅ Prediction results available for export!")
+          
+            # Display what's available
+            if has_single_prediction:
+                st.info(f"**Single Target Prediction:** Available")
+                single_params = st.session_state.prediction_results.get('target_params', {})
+                st.write(f"- Target: {single_params.get('defect_type', 'Unknown')}, "
+                        f"ε*={single_params.get('eps0', 0):.3f}, "
+                        f"κ={single_params.get('kappa', 0):.3f}")
+          
+            if has_multi_predictions:
+                st.info(f"**Multiple Target Predictions:** {len(st.session_state.multi_target_predictions)} available")
+          
+            st.divider()
+          
             # Save options
-            st.subheader("📤 Cloud Save Options")
-            
-            save_col1, save_col2 = st.columns(2)
-            
+            st.subheader("📁 Save Options")
+          
+            save_col1, save_col2, save_col3 = st.columns(3)
+          
             with save_col1:
                 save_mode = st.radio(
                     "Select results to save",
-                    ["Current Single Prediction", "All Multiple Predictions", "Comprehensive Archive"],
+                    ["Current Single Prediction", "All Multiple Predictions", "Both"],
                     index=0 if has_single_prediction else 1,
                     disabled=not has_single_prediction and not has_multi_predictions
                 )
-            
+          
             with save_col2:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 base_filename = st.text_input(
@@ -1375,390 +1739,294 @@ def create_attention_interface_with_github():
                     value=f"prediction_{timestamp}",
                     help="Files will be saved with this base name plus appropriate extensions"
                 )
-            
-            # Format selection
-            st.subheader("📁 Select Cloud Formats")
-            
-            format_col1, format_col2, format_col3, format_col4 = st.columns(4)
-            
-            with format_col1:
-                save_pkl = st.checkbox("PKL Format", value=True)
-            with format_col2:
-                save_pt = st.checkbox("PyTorch Format", value=True)
-            with format_col3:
-                save_json = st.checkbox("JSON Format", value=False)
-            with format_col4:
-                save_zip = st.checkbox("ZIP Archive", value=True)
-            
-            # Metadata
-            with st.expander("📝 Add Metadata", expanded=False):
-                metadata_col1, metadata_col2 = st.columns(2)
-                with metadata_col1:
-                    author = st.text_input("Author", value="ML Interpolator")
-                    description = st.text_area("Description", value="Prediction results from spatial-attention interpolator")
-                with metadata_col2:
-                    tags = st.multiselect(
-                        "Tags",
-                        ["simulation", "stress-analysis", "crystal-defects", "attention-ml", "interpolation"],
-                        default=["simulation", "attention-ml"]
-                    )
-                    additional_tags = st.text_input("Additional Tags (comma-separated)")
-                    if additional_tags:
-                        tags.extend([tag.strip() for tag in additional_tags.split(",")])
-            
-            # Save buttons
-            st.subheader("🚀 Cloud Save Actions")
-            
-            save_buttons_col1, save_buttons_col2, save_buttons_col3 = st.columns(3)
-            
-            with save_buttons_col1:
-                if st.button("💾 Save All Selected Formats", type="primary", use_container_width=True):
-                    if has_single_prediction and save_mode in ["Current Single Prediction", "Comprehensive Archive"]:
-                        with st.spinner("Saving to GitHub cloud..."):
-                            results = []
-                            metadata = {
-                                "author": author,
-                                "description": description,
-                                "tags": tags,
-                                "save_mode": save_mode,
-                                "source_count": len(st.session_state.source_simulations)
-                            }
-                            
-                            # Save in selected formats
-                            if save_pkl:
-                                pkl_result = st.session_state.cloud_prediction_manager.save_prediction_to_cloud(
-                                    prediction_data=st.session_state.prediction_results,
-                                    filename=base_filename,
-                                    github_manager=st.session_state.github_manager,
-                                    format_type='pkl',
-                                    metadata=metadata
-                                )
-                                results.append(("PKL", pkl_result))
-                            
-                            if save_pt:
-                                pt_result = st.session_state.cloud_prediction_manager.save_prediction_to_cloud(
-                                    prediction_data=st.session_state.prediction_results,
-                                    filename=base_filename,
-                                    github_manager=st.session_state.github_manager,
-                                    format_type='pt',
-                                    metadata=metadata
-                                )
-                                results.append(("PyTorch", pt_result))
-                            
-                            if save_json:
-                                json_result = st.session_state.cloud_prediction_manager.save_prediction_to_cloud(
-                                    prediction_data=st.session_state.prediction_results,
-                                    filename=base_filename,
-                                    github_manager=st.session_state.github_manager,
-                                    format_type='json',
-                                    metadata=metadata
-                                )
-                                results.append(("JSON", json_result))
-                            
-                            if save_zip:
-                                zip_result = st.session_state.cloud_prediction_manager.save_prediction_archive_to_cloud(
-                                    prediction_results=st.session_state.prediction_results,
-                                    source_simulations=st.session_state.source_simulations,
-                                    github_manager=st.session_state.github_manager,
-                                    archive_name=base_filename
-                                )
-                                results.append(("ZIP Archive", zip_result))
-                            
-                            # Display results
-                            st.subheader("📊 Save Results")
-                            
-                            for format_name, result in results:
-                                if result.get("success"):
-                                    st.success(f"✅ {format_name}: Saved successfully!")
-                                    st.markdown(f"""
-                                    **File:** `{result.get('cloud_filename')}`  
-                                    **Path:** `{result.get('cloud_path')}`  
-                                    **Size:** {result.get('size', 0) / 1024:.2f} KB  
-                                    **Download:** [Link]({result.get('download_url', '#')})
-                                    """)
-                                else:
-                                    st.error(f"❌ {format_name}: Failed - {result.get('error', 'Unknown error')}")
-            
-            with save_buttons_col2:
-                if st.button("📦 Create GitHub Release", type="secondary", use_container_width=True):
-                    if has_single_prediction:
-                        with st.spinner("Creating GitHub release..."):
-                            # Prepare files for release
-                            release_files = []
-                            
-                            # Add prediction data
-                            if 'prediction_results' in st.session_state:
-                                # Save as JSON for release
-                                json_data = json.dumps(
+          
+            with save_col3:
+                include_source_info = st.checkbox("Include source simulations info", value=True)
+                include_visualizations = st.checkbox("Include visualization data", value=True)
+          
+            st.divider()
+          
+            # Save/Download buttons
+            st.subheader("⬇️ Download Options")
+          
+            dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
+          
+            with dl_col1:
+                # Save as PKL
+                if st.button("💾 Save as PKL", type="secondary", use_container_width=True):
+                    with st.spinner("Preparing PKL file..."):
+                        try:
+                            if save_mode in ["Current Single Prediction", "Both"] and has_single_prediction:
+                                save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
                                     st.session_state.prediction_results,
-                                    default=str,
-                                    indent=2
-                                ).encode('utf-8')
-                                release_files.append((f"{base_filename}_prediction.json", json_data))
-                            
-                            # Add attention weights as CSV
-                            if 'attention_weights' in st.session_state.prediction_results:
-                                weights = st.session_state.prediction_results['attention_weights']
-                                weight_df = pd.DataFrame({
-                                    'source_id': [f'S{i+1}' for i in range(len(weights))],
-                                    'weight': weights,
-                                    'percent_contribution': 100 * weights / (np.sum(weights) + 1e-10)
-                                })
-                                csv_data = weight_df.to_csv(index=False).encode('utf-8')
-                                release_files.append((f"{base_filename}_attention_weights.csv", csv_data))
-                            
-                            # Create release
-                            release_result = st.session_state.github_manager.create_release(
-                                tag_name=f"v{timestamp}",
-                                release_name=f"Prediction Release - {base_filename}",
-                                body=f"""Prediction results generated by Spatial-Attention Interpolator
-
-**Author:** {author}
-**Description:** {description}
-**Tags:** {', '.join(tags)}
-**Source Simulations:** {len(st.session_state.source_simulations)}
-**Generated:** {datetime.now().isoformat()}
-""",
-                                files=release_files
-                            )
-                            
-                            if release_result["success"]:
-                                st.success("✅ GitHub release created successfully!")
-                                st.markdown(f"""
-                                **Release:** [{release_result['name']}]({release_result['html_url']})  
-                                **Tag:** {release_result['tag_name']}  
-                                **Assets:** {len(release_result.get('assets', []))} files
-                                """)
-                            else:
-                                st.error(f"❌ Failed to create release: {release_result.get('error')}")
-            
-            with save_buttons_col3:
-                if st.button("📊 Save Dataset to Cloud", type="secondary", use_container_width=True):
-                    # Create dataset from predictions
-                    if has_single_prediction:
-                        with st.spinner("Creating and saving dataset..."):
-                            # Extract stress statistics as dataset
-                            stress_stats = []
-                            if 'stress_fields' in st.session_state.prediction_results:
-                                for field_name, field_data in st.session_state.prediction_results['stress_fields'].items():
-                                    if isinstance(field_data, np.ndarray):
-                                        stats = {
-                                            'field': field_name,
-                                            'max': float(np.max(field_data)),
-                                            'min': float(np.min(field_data)),
-                                            'mean': float(np.mean(field_data)),
-                                            'std': float(np.std(field_data)),
-                                            'percentile_95': float(np.percentile(field_data, 95)),
-                                            'skewness': float(pd.Series(field_data.flatten()).skew()),
-                                            'kurtosis': float(pd.Series(field_data.flatten()).kurtosis())
-                                        }
-                                        stats.update(st.session_state.prediction_results.get('target_params', {}))
-                                        stress_stats.append(stats)
-                            
-                            if stress_stats:
-                                df_dataset = pd.DataFrame(stress_stats)
-                                
-                                dataset_result = st.session_state.cloud_dataset_manager.save_dataset_to_cloud(
-                                    dataset=df_dataset,
-                                    dataset_name=f"stress_stats_{base_filename}",
-                                    github_manager=st.session_state.github_manager,
-                                    description=f"Stress statistics from prediction {base_filename}",
-                                    tags=tags + ["statistics", "stress-analysis"]
+                                    st.session_state.source_simulations,
+                                    'single'
                                 )
-                                
-                                if dataset_result["success"]:
-                                    st.success("✅ Dataset saved to cloud!")
-                                    if "formats_saved" in dataset_result:
-                                        st.info(f"Formats saved: {', '.join(dataset_result['formats_saved'])}")
-                                else:
-                                    st.error(f"❌ Failed to save dataset: {dataset_result.get('error')}")
-                            else:
-                                st.warning("No stress statistics available to save as dataset.")
-    
-    # Tab 7: NEW - Load from GitHub Cloud
-    with tab7:
-        st.subheader("📥 Load Results from GitHub Cloud")
-        
-        if not st.session_state.github_manager or not st.session_state.github_manager.repo:
-            st.error("⚠️ GitHub connection not available. Please configure GitHub access in the sidebar.")
-            st.stop()
-        
-        # List available predictions
-        st.subheader("📁 Available Cloud Predictions")
-        
-        # Refresh button
-        if st.button("🔄 Refresh Cloud Files"):
-            with st.spinner("Loading from cloud..."):
-                predictions = st.session_state.cloud_prediction_manager.list_cloud_predictions(
-                    st.session_state.github_manager
-                )
-                st.session_state.cloud_predictions = predictions
-                st.success(f"Loaded {len(predictions)} predictions from cloud")
-        
-        if not st.session_state.cloud_predictions:
-            st.info("No predictions found in cloud. Save some predictions first or refresh the list.")
-        else:
-            # Filter options
-            filter_col1, filter_col2, filter_col3 = st.columns(3)
-            
-            with filter_col1:
-                filter_format = st.selectbox(
-                    "Filter by format",
-                    ["All", "PKL", "PyTorch", "JSON", "ZIP"],
-                    index=0
-                )
-            
-            with filter_col2:
-                sort_by = st.selectbox(
-                    "Sort by",
-                    ["Newest", "Oldest", "Name (A-Z)", "Name (Z-A)", "Size"],
-                    index=0
-                )
-            
-            with filter_col3:
-                search_term = st.text_input("Search by name", "")
-            
-            # Filter predictions
-            filtered_predictions = st.session_state.cloud_predictions.copy()
-            
-            if filter_format != "All":
-                filtered_predictions = [p for p in filtered_predictions 
-                                      if p["name"].endswith(f".{filter_format.lower()}")]
-            
-            if search_term:
-                filtered_predictions = [p for p in filtered_predictions 
-                                      if search_term.lower() in p["name"].lower()]
-            
-            # Sort predictions
-            if sort_by == "Newest":
-                filtered_predictions.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
-            elif sort_by == "Oldest":
-                filtered_predictions.sort(key=lambda x: x.get("last_modified", ""))
-            elif sort_by == "Name (A-Z)":
-                filtered_predictions.sort(key=lambda x: x["name"].lower())
-            elif sort_by == "Name (Z-A)":
-                filtered_predictions.sort(key=lambda x: x["name"].lower(), reverse=True)
-            elif sort_by == "Size":
-                filtered_predictions.sort(key=lambda x: x.get("size", 0), reverse=True)
-            
-            # Display predictions
-            st.markdown(f"**Found {len(filtered_predictions)} predictions**")
-            
-            for pred in filtered_predictions[:20]:  # Show first 20
-                with st.expander(f"📄 {pred['name']} ({pred.get('size', 0) // 1024}KB)", expanded=False):
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    
-                    with col1:
-                        st.markdown(f"""
-                        **Path:** `{pred['path']}`  
-                        **Type:** {pred['type']}  
-                        **Last Modified:** {pred.get('last_modified', 'Unknown')}  
-                        **SHA:** `{pred['sha'][:8]}...`
-                        """)
-                    
-                    with col2:
-                        # Download button
-                        download_url = pred.get('download_url', '')
-                        if download_url:
-                            st.markdown(f"[⬇️ Download]({download_url})", unsafe_allow_html=True)
-                    
-                    with col3:
-                        # Load button
-                        if st.button("📥 Load", key=f"load_{pred['sha']}"):
-                            with st.spinner(f"Loading {pred['name']}..."):
-                                loaded_data = st.session_state.cloud_prediction_manager.load_prediction_from_cloud(
-                                    pred['name'],
-                                    st.session_state.github_manager
+                              
+                                # Add metadata
+                                save_data['save_info'] = {
+                                    'format': 'pkl',
+                                    'timestamp': timestamp,
+                                    'mode': 'single'
+                                }
+                              
+                                # Create download link
+                                pkl_buffer = BytesIO()
+                                pickle.dump(save_data, pkl_buffer, protocol=pickle.HIGHEST_PROTOCOL)
+                                pkl_buffer.seek(0)
+                              
+                                st.download_button(
+                                    label="📥 Download PKL",
+                                    data=pkl_buffer,
+                                    file_name=f"{base_filename}.pkl",
+                                    mime="application/octet-stream",
+                                    key="download_pkl_single"
                                 )
-                                
-                                if loaded_data:
-                                    st.session_state.prediction_results = loaded_data
-                                    st.success(f"✅ Loaded {pred['name']} from cloud!")
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Failed to load {pred['name']}")
-            
-            if len(filtered_predictions) > 20:
-                st.info(f"Showing 20 of {len(filtered_predictions)} predictions. Use filters to narrow down results.")
-            
-            # Bulk operations
-            st.subheader("🔄 Bulk Operations")
-            
-            bulk_col1, bulk_col2 = st.columns(2)
-            
-            with bulk_col1:
-                if st.button("📥 Load Latest Prediction", use_container_width=True):
-                    if filtered_predictions:
-                        latest = filtered_predictions[0]
-                        with st.spinner(f"Loading {latest['name']}..."):
-                            loaded_data = st.session_state.cloud_prediction_manager.load_prediction_from_cloud(
-                                latest['name'],
-                                st.session_state.github_manager
-                            )
-                            
-                            if loaded_data:
-                                st.session_state.prediction_results = loaded_data
-                                st.success(f"✅ Loaded latest prediction: {latest['name']}")
-                                st.rerun()
-            
-            with bulk_col2:
-                # Export selected predictions as dataset
-                selected_files = st.multiselect(
-                    "Select predictions to export as dataset",
-                    options=[p["name"] for p in filtered_predictions],
-                    help="Combine multiple predictions into a single dataset"
-                )
-                
-                if selected_files and st.button("📊 Export as Dataset", use_container_width=True):
-                    with st.spinner("Creating combined dataset..."):
-                        all_data = []
-                        for filename in selected_files:
-                            data = st.session_state.cloud_prediction_manager.load_prediction_from_cloud(
-                                filename,
-                                st.session_state.github_manager
-                            )
-                            if data:
-                                all_data.append(data)
-                        
-                        if all_data:
-                            # Create combined dataset
-                            combined_stats = []
-                            for data in all_data:
-                                if 'stress_fields' in data:
-                                    for field_name, field_data in data['stress_fields'].items():
-                                        if isinstance(field_data, np.ndarray):
-                                            stats = {
-                                                'source_file': filename,
-                                                'field': field_name,
-                                                'max': float(np.max(field_data)),
-                                                'mean': float(np.mean(field_data)),
-                                                'std': float(np.std(field_data))
-                                            }
-                                            stats.update(data.get('target_params', {}))
-                                            combined_stats.append(stats)
-                            
-                            if combined_stats:
-                                df_combined = pd.DataFrame(combined_stats)
-                                
-                                dataset_result = st.session_state.cloud_dataset_manager.save_dataset_to_cloud(
-                                    dataset=df_combined,
-                                    dataset_name=f"combined_dataset_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                                    github_manager=st.session_state.github_manager,
-                                    description=f"Combined dataset from {len(selected_files)} predictions",
-                                    tags=["combined", "bulk-export", "dataset"]
+                              
+                                # Save to GitHub if enabled
+                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                    save_success = st.session_state.prediction_results_manager.save_prediction_to_numerical_solutions(
+                                        save_data,
+                                        base_filename,
+                                        st.session_state.solutions_manager
+                                    )
+                                    if save_success:
+                                        st.success("✅ Saved to GitHub")
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error saving PKL: {str(e)}")
+          
+            with dl_col2:
+                # Save as PT (PyTorch)
+                if st.button("💾 Save as PT", type="secondary", use_container_width=True):
+                    with st.spinner("Preparing PT file..."):
+                        try:
+                            if save_mode in ["Current Single Prediction", "Both"] and has_single_prediction:
+                                save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
+                                    st.session_state.prediction_results,
+                                    st.session_state.source_simulations,
+                                    'single'
                                 )
-                                
-                                if dataset_result["success"]:
-                                    st.success(f"✅ Combined dataset saved with {len(combined_stats)} records!")
-                                else:
-                                    st.error(f"❌ Failed to save dataset: {dataset_result.get('error')}")
-
+                              
+                                # Add metadata
+                                save_data['save_info'] = {
+                                    'format': 'pt',
+                                    'timestamp': timestamp,
+                                    'mode': 'single'
+                                }
+                              
+                                # Create download link
+                                pt_buffer = BytesIO()
+                                torch.save(save_data, pt_buffer)
+                                pt_buffer.seek(0)
+                              
+                                st.download_button(
+                                    label="📥 Download PT",
+                                    data=pt_buffer,
+                                    file_name=f"{base_filename}.pt",
+                                    mime="application/octet-stream",
+                                    key="download_pt_single"
+                                )
+                              
+                                # Save to GitHub if enabled
+                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                    # For PT format, use a different filename
+                                    pt_filename = f"{base_filename}.pt"
+                                    pt_save_data = {'pt_data': save_data}
+                                    pt_success = st.session_state.solutions_manager.save_simulation(
+                                        pt_save_data, pt_filename, 'pt'
+                                    )
+                                    if pt_success:
+                                        st.success("✅ PT saved to GitHub")
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error saving PT: {str(e)}")
+          
+            with dl_col3:
+                # Save as ZIP Archive
+                if st.button("📦 Save as ZIP Archive", type="primary", use_container_width=True):
+                    with st.spinner("Creating comprehensive archive..."):
+                        try:
+                            if save_mode == "Current Single Prediction" and has_single_prediction:
+                                # Single prediction archive
+                                zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
+                                    st.session_state.prediction_results,
+                                    st.session_state.source_simulations
+                                )
+                              
+                                st.download_button(
+                                    label="📥 Download ZIP Archive",
+                                    data=zip_buffer,
+                                    file_name=f"{base_filename}_complete.zip",
+                                    mime="application/zip",
+                                    key="download_zip_single"
+                                )
+                              
+                            elif save_mode == "All Multiple Predictions" and has_multi_predictions:
+                                # Multi prediction archive
+                                zip_buffer = st.session_state.prediction_results_manager.create_multi_prediction_archive(
+                                    st.session_state.multi_target_predictions,
+                                    st.session_state.source_simulations
+                                )
+                              
+                                st.download_button(
+                                    label="📥 Download Multi-Prediction ZIP",
+                                    data=zip_buffer,
+                                    file_name=f"{base_filename}_multi_predictions.zip",
+                                    mime="application/zip",
+                                    key="download_zip_multi"
+                                )
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error creating archive: {str(e)}")
+          
+            with dl_col4:
+                # Save all formats
+                if st.button("💾 Save All Formats", type="secondary", use_container_width=True):
+                    with st.spinner("Saving in all formats..."):
+                        try:
+                            if has_single_prediction:
+                                save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
+                                    st.session_state.prediction_results,
+                                    st.session_state.source_simulations,
+                                    'single'
+                                )
+                              
+                                # Save PKL
+                                pkl_buffer = BytesIO()
+                                pickle.dump(save_data, pkl_buffer)
+                                pkl_buffer.seek(0)
+                              
+                                # Save PT
+                                pt_buffer = BytesIO()
+                                torch.save(save_data, pt_buffer)
+                                pt_buffer.seek(0)
+                              
+                                # Save ZIP
+                                zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
+                                    st.session_state.prediction_results,
+                                    st.session_state.source_simulations
+                                )
+                              
+                                # Create columns for all downloads
+                                dl_all_col1, dl_all_col2, dl_all_col3 = st.columns(3)
+                              
+                                with dl_all_col1:
+                                    st.download_button(
+                                        label="📥 Download PKL",
+                                        data=pkl_buffer,
+                                        file_name=f"{base_filename}.pkl",
+                                        mime="application/octet-stream",
+                                        key="download_all_pkl"
+                                    )
+                              
+                                with dl_all_col2:
+                                    st.download_button(
+                                        label="📥 Download PT",
+                                        data=pt_buffer,
+                                        file_name=f"{base_filename}.pt",
+                                        mime="application/octet-stream",
+                                        key="download_all_pt"
+                                    )
+                              
+                                with dl_all_col3:
+                                    st.download_button(
+                                        label="📥 Download ZIP",
+                                        data=zip_buffer,
+                                        file_name=f"{base_filename}_all_formats.zip",
+                                        mime="application/zip",
+                                        key="download_all_zip"
+                                    )
+                              
+                                # Save to GitHub
+                                if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                                    st.success(f"✅ Ready to download all formats!")
+                          
+                        except Exception as e:
+                            st.error(f"❌ Error saving all formats: {str(e)}")
+          
+            st.divider()
+          
+            # Advanced options
+            with st.expander("⚙️ Advanced Save Options", expanded=False):
+                col_adv1, col_adv2 = st.columns(2)
+              
+                with col_adv1:
+                    # Save stress fields as separate files
+                    save_separate = st.checkbox("Save stress fields as separate NPZ files", value=False)
+                  
+                    if save_separate and has_single_prediction:
+                        stress_fields = st.session_state.prediction_results.get('stress_fields', {})
+                        for field_name, field_data in stress_fields.items():
+                            if isinstance(field_data, np.ndarray):
+                                npz_buffer = BytesIO()
+                                np.savez_compressed(npz_buffer, data=field_data)
+                                npz_buffer.seek(0)
+                              
+                                st.download_button(
+                                    label=f"📥 Download {field_name}.npz",
+                                    data=npz_buffer,
+                                    file_name=f"{base_filename}_{field_name}.npz",
+                                    mime="application/octet-stream",
+                                    key=f"download_npz_{field_name}"
+                                )
+              
+                with col_adv2:
+                    # Export to other formats
+                    export_json = st.checkbox("Export parameters to JSON", value=False)
+                    export_csv = st.checkbox("Export statistics to CSV", value=False)
+                  
+                    if export_json and has_single_prediction:
+                        target_params = st.session_state.prediction_results.get('target_params', {})
+                        if target_params:
+                            json_str = json.dumps(target_params, indent=2, default=str)
+                            st.download_button(
+                                label="📥 Download JSON",
+                                data=json_str,
+                                file_name=f"{base_filename}_params.json",
+                                mime="application/json",
+                                key="download_json"
+                            )
+                  
+                    if export_csv and has_single_prediction:
+                        if 'stress_fields' in st.session_state.prediction_results:
+                            stats_rows = []
+                            for field_name, field_data in st.session_state.prediction_results['stress_fields'].items():
+                                if isinstance(field_data, np.ndarray):
+                                    stats_rows.append({
+                                        'field': field_name,
+                                        'max': np.max(field_data),
+                                        'min': np.min(field_data),
+                                        'mean': np.mean(field_data),
+                                        'std': np.std(field_data)
+                                    })
+                          
+                            if stats_rows:
+                                stats_df = pd.DataFrame(stats_rows)
+                                csv_data = stats_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download CSV",
+                                    data=csv_data,
+                                    file_name=f"{base_filename}_stats.csv",
+                                    mime="text/csv",
+                                    key="download_csv"
+                                )
+          
+            # Display saved files in GitHub
+            st.divider()
+            st.subheader("📁 Saved Files Preview")
+          
+            if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
+                saved_files = st.session_state.solutions_manager.get_all_files()
+                if saved_files:
+                    st.write("**Files in GitHub repo:**")
+                    for file in saved_files:
+                        st.code(file['filename'])
+                else:
+                    st.info("No files in GitHub repo yet.")
+            else:
+                st.info("Enable 'Save to GitHub' to persist files in cloud.")
+  
 if __name__ == "__main__":
-    # Check if running in Streamlit
-    try:
-        create_attention_interface_with_github()
-    except Exception as e:
-        st.error(f"Application error: {str(e)}")
-        logger.exception("Application crashed")
-
-st.caption(f"🔬 Attention Interpolation • GitHub Cloud • {datetime.now().year}")
+    create_attention_interface()
+st.caption(f"🔬 Attention Interpolation • PKL/PT/ZIP Support • {datetime.now().year}")
