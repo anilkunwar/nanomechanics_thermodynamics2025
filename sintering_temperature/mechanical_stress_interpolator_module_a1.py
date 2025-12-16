@@ -28,9 +28,9 @@ warnings.filterwarnings('ignore')
 # PATH CONFIGURATION
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ML_RESULTS_DIR = os.path.join(SCRIPT_DIR, "ml_results")
-if not os.path.exists(ML_RESULTS_DIR):
-    os.makedirs(ML_RESULTS_DIR, exist_ok=True)
+NUMERICAL_SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
+if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
+    os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
 
 # =============================================
 # PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
@@ -322,11 +322,11 @@ For more information, see the documentation.
         return zip_buffer
    
     @staticmethod
-    def save_prediction_to_ml_results(prediction_data: Dict[str, Any],
+    def save_prediction_to_numerical_solutions(prediction_data: Dict[str, Any],
                                              filename: str,
                                              solutions_manager: 'NumericalSolutionsManager') -> bool:
         """
-        Save prediction to ml_results directory
+        Save prediction to numerical_solutions directory
        
         Args:
             prediction_data: Prediction data to save
@@ -351,10 +351,10 @@ For more information, see the documentation.
             st.error(f"Error saving prediction: {str(e)}")
             return False
 # =============================================
-# NUMERICAL SOLUTIONS MANAGER (UPDATED FOR ML_RESULTS)
+# NUMERICAL SOLUTIONS MANAGER (UPDATED FOR NUMERICAL_SOLUTIONS)
 # =============================================
 class NumericalSolutionsManager:
-    def __init__(self, solutions_dir: str = ML_RESULTS_DIR):
+    def __init__(self, solutions_dir: str = NUMERICAL_SOLUTIONS_DIR):
         self.solutions_dir = solutions_dir
         self._ensure_directory()
    
@@ -959,13 +959,13 @@ def create_attention_interface():
         )
        
         st.session_state.save_to_directory = st.checkbox(
-            "Save to ml_results directory",
+            "Save to numerical_solutions directory",
             value=True,
             key="save_to_dir_checkbox"
         )
        
         if st.session_state.save_to_directory:
-            st.info(f"Files will be saved to: `{ML_RESULTS_DIR}`")
+            st.info(f"Files will be saved to: `{NUMERICAL_SOLUTIONS_DIR}`")
    
     # Main interface tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -984,14 +984,14 @@ def create_attention_interface():
         col1, col2 = st.columns([1, 1])
        
         with col1:
-            st.markdown("### 📂 From ml_results Directory")
-            st.info(f"Loading from: `{ML_RESULTS_DIR}`")
+            st.markdown("### 📂 From numerical_solutions Directory")
+            st.info(f"Loading from: `{NUMERICAL_SOLUTIONS_DIR}`")
            
             file_formats = st.session_state.solutions_manager.scan_directory()
             all_files_info = st.session_state.solutions_manager.get_all_files()
            
             if not all_files_info:
-                st.warning(f"No simulation files found in `{ML_RESULTS_DIR}`")
+                st.warning(f"No simulation files found in `{NUMERICAL_SOLUTIONS_DIR}`")
             else:
                 file_groups = {}
                 for file_info in all_files_info:
@@ -1736,13 +1736,13 @@ def create_attention_interface():
                                
                                 # Save to directory if enabled
                                 if st.session_state.save_to_directory:
-                                    save_success = st.session_state.prediction_results_manager.save_prediction_to_ml_results(
+                                    save_success = st.session_state.prediction_results_manager.save_prediction_to_numerical_solutions(
                                         save_data,
                                         base_filename,
                                         st.session_state.solutions_manager
                                     )
                                     if save_success:
-                                        st.success(f"✅ Saved to {ML_RESULTS_DIR}")
+                                        st.success(f"✅ Saved to {NUMERICAL_SOLUTIONS_DIR}")
                            
                         except Exception as e:
                             st.error(f"❌ Error saving PKL: {str(e)}")
@@ -1788,7 +1788,7 @@ def create_attention_interface():
                                         pt_save_data, pt_filename, 'pt'
                                     )
                                     if pt_success:
-                                        st.success(f"✅ PT saved to {ML_RESULTS_DIR}")
+                                        st.success(f"✅ PT saved to {NUMERICAL_SOLUTIONS_DIR}")
                            
                         except Exception as e:
                             st.error(f"❌ Error saving PT: {str(e)}")
@@ -1970,7 +1970,7 @@ def create_attention_interface():
             if st.session_state.save_to_directory:
                 saved_files = []
                 for ext in ['pkl', 'pt', 'zip']:
-                    pattern = os.path.join(ML_RESULTS_DIR, f"*{base_filename}*.{ext}")
+                    pattern = os.path.join(NUMERICAL_SOLUTIONS_DIR, f"*{base_filename}*.{ext}")
                     files = glob.glob(pattern)
                     saved_files.extend([os.path.basename(f) for f in files])
                
