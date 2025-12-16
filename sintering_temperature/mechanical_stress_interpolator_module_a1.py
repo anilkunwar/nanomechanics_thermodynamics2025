@@ -24,9 +24,11 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import requests
 import base64
+import s3fs  # Added for AWS S3 support
+import h5py  # Added for H5 support
 warnings.filterwarnings('ignore')
 # =============================================
-# PATH CONFIGURATION - Removed local dir, using GitHub
+# PATH CONFIGURATION - Removed local dir, using GitHub or S3
 # =============================================
 # =============================================
 # PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
@@ -320,14 +322,14 @@ For more information, see the documentation.
     @staticmethod
     def save_prediction_to_numerical_solutions(prediction_data: Dict[str, Any],
                                              filename: str,
-                                             solutions_manager: 'GitHubSolutionsManager') -> bool:
+                                             solutions_manager: Union['GitHubSolutionsManager', 'S3SolutionsManager']) -> bool:
         """
-        Save prediction to GitHub repository
+        Save prediction to external storage (GitHub or S3)
       
         Args:
             prediction_data: Prediction data to save
             filename: Base filename (without extension)
-            solutions_manager: GitHubSolutionsManager instance
+            solutions_manager: GitHubSolutionsManager or S3SolutionsManager instance
           
         Returns:
             Success status
@@ -347,7 +349,7 @@ For more information, see the documentation.
             st.error(f"Error saving prediction: {str(e)}")
             return False
 # =============================================
-# GITHUB SOLUTIONS MANAGER (REPLACED LOCAL WITH GITHUB)
+# GITHUB SOLUTIONS MANAGER
 # =============================================
 class GitHubSolutionsManager:
     def __init__(self, token: str, owner: str, repo: str, base_path: str = "numerical_solutions"):
@@ -522,6 +524,157 @@ class GitHubSolutionsManager:
           
         except Exception as e:
             st.error(f"Error saving file to GitHub: {str(e)}")
+            return False
+
+# =============================================
+# S3 SOLUTIONS MANAGER (NEW)
+# =============================================
+class S3SolutionsManager:
+    def __init__(self, aws_access_key_id: str, aws_secret_access_key: str, bucket: str, base_path: str = "numerical_solutions"):
+        self.s3 = s3fs.S3FileSystem(
+            key=aws_access_key_id,
+            secret=aws_secret_access_key
+        )
+        self.bucket = bucket
+        self.base_path = f"{bucket}/{base_path}"
+        if not self.s3.exists(self.base_path):
+            self.s3.mkdir(self.base_path)
+
+    def scan_directory(self) -> Dict[str, List[str]]:
+        file_formats = {
+            'pkl': [],
+            'pt': [],
+            'h5': [],
+            'npz': [],
+            'sql': [],
+            'json': []
+        }
+      
+        try:
+            files = self.s3.ls(self.base_path, detail=False)
+            for path in files:
+                name = path.split('/')[-1]
+                ext = name.split('.')[-1].lower() if '.' in name else ''
+                if ext in ['pkl', 'pickle']:
+                    file_formats['pkl'].append(path)
+                elif ext in ['pt', 'pth']:
+                    file_formats['pt'].append(path)
+                elif ext in ['h5', 'hdf5']:
+                    file_formats['h5'].append(path)
+                elif ext == 'npz':
+                    file_formats['npz'].append(path)
+                elif ext in ['sql', 'db']:
+                    file_formats['sql'].append(path)
+                elif ext == 'json':
+                    file_formats['json'].append(path)
+      
+            # Sort by name
+            for fmt in file_formats:
+                file_formats[fmt].sort()
+        except Exception as e:
+            st.error(f"Error scanning S3 bucket: {str(e)}")
+      
+        return file_formats
+  
+    def get_all_files(self) -> List[Dict[str, Any]]:
+        all_files = []
+        file_formats = self.scan_directory()
+      
+        for format_type, paths in file_formats.items():
+            for path in paths:
+                try:
+                    info = self.s3.info(path)
+                    file_info = {
+                        'path': path,
+                        'filename': os.path.basename(path),
+                        'format': format_type,
+                        'size': info.size if info else 0,
+                        'modified': info.last_modified.isoformat() if info and hasattr(info, 'last_modified') else datetime.now().isoformat(),
+                        'relative_path': path.replace(f"{self.bucket}/{self.base_path}/", "")
+                    }
+                    all_files.append(file_info)
+                except:
+                    pass
+      
+        all_files.sort(key=lambda x: x['filename'].lower())
+        return all_files
+  
+    def get_file_by_name(self, filename: str) -> Optional[str]:
+        for file_info in self.get_all_files():
+            if file_info['filename'] == filename:
+                return file_info['path']
+        return None
+  
+    def load_simulation(self, file_path: str, interpolator) -> Dict[str, Any]:
+        try:
+            with self.s3.open(file_path, 'rb') as f:
+                file_content = f.read()
+          
+            ext = file_path.split('.')[-1].lower()
+            if ext in ['pkl', 'pickle']:
+                format_type = 'pkl'
+            elif ext in ['pt', 'pth']:
+                format_type = 'pt'
+            elif ext in ['h5', 'hdf5']:
+                format_type = 'h5'
+            elif ext == 'npz':
+                format_type = 'npz'
+            elif ext in ['sql', 'db']:
+                format_type = 'sql'
+            elif ext == 'json':
+                format_type = 'json'
+            else:
+                format_type = 'auto'
+          
+            sim_data = interpolator.read_simulation_file(file_content, format_type)
+            sim_data['loaded_from'] = 's3'
+            return sim_data
+          
+        except Exception as e:
+            st.error(f"Error loading {file_path} from S3: {str(e)}")
+            raise
+  
+    def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
+        if not filename.endswith(f'.{format_type}'):
+            filename = f"{filename}.{format_type}"
+      
+        file_path = f"{self.base_path}/{filename}"
+      
+        try:
+            if format_type == 'pkl':
+                raw_data = pickle.dumps(data, protocol=pickle.HIGHEST_PROTOCOL)
+            elif format_type == 'pt':
+                buffer = BytesIO()
+                torch.save(data, buffer)
+                buffer.seek(0)
+                raw_data = buffer.read()
+            elif format_type == 'json':
+                def convert_for_json(obj):
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, np.generic):
+                        return obj.item()
+                    elif isinstance(obj, dict):
+                        return {k: convert_for_json(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [convert_for_json(item) for item in obj]
+                    else:
+                        return obj
+              
+                json_data = convert_for_json(data)
+                raw_data = json.dumps(json_data, indent=2).encode('utf-8')
+            else:
+                st.warning(f"Format {format_type} not supported for saving")
+                return False
+          
+            with self.s3.open(file_path, 'wb') as f:
+                f.write(raw_data)
+          
+            st.success(f"✅ Saved simulation to S3: {filename}")
+            return True
+          
+        except Exception as e:
+            st.error(f"Error saving file to S3: {str(e)}")
             return False
 # =============================================
 # MULTI-TARGET PREDICTION MANAGER
@@ -994,24 +1147,38 @@ def create_attention_interface():
         )
       
         st.session_state.save_to_directory = st.checkbox(
-            "Save to GitHub repository",
+            "Save to external storage",
             value=True,
             key="save_to_dir_checkbox"
         )
       
         if st.session_state.save_to_directory:
-            st.info("Files will be saved to GitHub repository")
+            st.info("Files will be saved to the selected external storage")
   
-    st.sidebar.header("GitHub Configuration")
-    github_token = st.sidebar.text_input("GitHub Personal Access Token", type="password", key="github_token")
-    github_owner = st.sidebar.text_input("GitHub Owner/Username", key="github_owner")
-    github_repo = st.sidebar.text_input("GitHub Repository Name", key="github_repo")
+    st.sidebar.header("External Storage Configuration")
+    storage_type = st.sidebar.selectbox("Select Storage Type", ["GitHub", "AWS S3"], key="storage_type")
   
-    if github_token and github_owner and github_repo:
-        st.session_state.solutions_manager = GitHubSolutionsManager(github_token, github_owner, github_repo)
-        st.sidebar.success("GitHub configured!")
-    else:
-        st.sidebar.warning("Please configure GitHub credentials to load/save simulations.")
+    if storage_type == "GitHub":
+        github_token = st.sidebar.text_input("GitHub Personal Access Token", type="password", key="github_token")
+        github_owner = st.sidebar.text_input("GitHub Owner/Username", key="github_owner")
+        github_repo = st.sidebar.text_input("GitHub Repository Name", key="github_repo")
+      
+        if github_token and github_owner and github_repo:
+            st.session_state.solutions_manager = GitHubSolutionsManager(github_token, github_owner, github_repo)
+            st.sidebar.success("GitHub configured!")
+        else:
+            st.sidebar.warning("Please configure GitHub credentials to load/save simulations.")
+      
+    elif storage_type == "AWS S3":
+        aws_access_key_id = st.sidebar.text_input("AWS Access Key ID", key="aws_access_key_id")
+        aws_secret_access_key = st.sidebar.text_input("AWS Secret Access Key", type="password", key="aws_secret_access_key")
+        s3_bucket = st.sidebar.text_input("S3 Bucket Name", key="s3_bucket")
+      
+        if aws_access_key_id and aws_secret_access_key and s3_bucket:
+            st.session_state.solutions_manager = S3SolutionsManager(aws_access_key_id, aws_secret_access_key, s3_bucket)
+            st.sidebar.success("AWS S3 configured!")
+        else:
+            st.sidebar.warning("Please configure AWS S3 credentials to load/save simulations.")
   
     # Main interface tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -1030,15 +1197,15 @@ def create_attention_interface():
         col1, col2 = st.columns([1, 1])
       
         with col1:
-            st.markdown("### 📂 From GitHub Repository")
-            st.info(f"Loading from GitHub repo: {github_repo if 'github_repo' in st.session_state else 'Not configured'}")
+            st.markdown(f"### 📂 From {storage_type} Storage")
+            st.info(f"Loading from {storage_type}")
           
             if 'solutions_manager' in st.session_state:
                 file_formats = st.session_state.solutions_manager.scan_directory()
                 all_files_info = st.session_state.solutions_manager.get_all_files()
           
                 if not all_files_info:
-                    st.warning("No simulation files found in GitHub repo")
+                    st.warning(f"No simulation files found in {storage_type}")
                 else:
                     file_groups = {}
                     for file_info in all_files_info:
@@ -1076,7 +1243,7 @@ def create_attention_interface():
                                                     st.session_state.source_simulations.append(sim_data)
                                                     st.session_state.loaded_from_numerical.append(file_path)
                                                     loaded_count += 1
-                                                    st.success(f"✅ Loaded: {os.path.basename(file_path)} from GitHub")
+                                                    st.success(f"✅ Loaded: {os.path.basename(file_path)} from {storage_type}")
                                                 else:
                                                     st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
                                               
@@ -1087,7 +1254,7 @@ def create_attention_interface():
                                             st.success(f"Successfully loaded {loaded_count} new files!")
                                             st.rerun()
             else:
-                st.warning("GitHub not configured")
+                st.warning(f"{storage_type} not configured")
       
         with col2:
             st.markdown("### 📤 Upload Local Files")
@@ -1783,7 +1950,7 @@ def create_attention_interface():
                                     key="download_pkl_single"
                                 )
                               
-                                # Save to GitHub if enabled
+                                # Save to external if enabled
                                 if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
                                     save_success = st.session_state.prediction_results_manager.save_prediction_to_numerical_solutions(
                                         save_data,
@@ -1791,7 +1958,7 @@ def create_attention_interface():
                                         st.session_state.solutions_manager
                                     )
                                     if save_success:
-                                        st.success("✅ Saved to GitHub")
+                                        st.success(f"✅ Saved to {storage_type}")
                           
                         except Exception as e:
                             st.error(f"❌ Error saving PKL: {str(e)}")
@@ -1828,7 +1995,7 @@ def create_attention_interface():
                                     key="download_pt_single"
                                 )
                               
-                                # Save to GitHub if enabled
+                                # Save to external if enabled
                                 if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
                                     # For PT format, use a different filename
                                     pt_filename = f"{base_filename}.pt"
@@ -1837,7 +2004,7 @@ def create_attention_interface():
                                         pt_save_data, pt_filename, 'pt'
                                     )
                                     if pt_success:
-                                        st.success("✅ PT saved to GitHub")
+                                        st.success(f"✅ PT saved to {storage_type}")
                           
                         except Exception as e:
                             st.error(f"❌ Error saving PT: {str(e)}")
@@ -1938,7 +2105,7 @@ def create_attention_interface():
                                         key="download_all_zip"
                                     )
                               
-                                # Save to GitHub
+                                # Save to external
                                 if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
                                     st.success(f"✅ Ready to download all formats!")
                           
@@ -2012,20 +2179,20 @@ def create_attention_interface():
                                     key="download_csv"
                                 )
           
-            # Display saved files in GitHub
+            # Display saved files in external storage
             st.divider()
             st.subheader("📁 Saved Files Preview")
           
             if st.session_state.save_to_directory and 'solutions_manager' in st.session_state:
                 saved_files = st.session_state.solutions_manager.get_all_files()
                 if saved_files:
-                    st.write("**Files in GitHub repo:**")
+                    st.write(f"**Files in {storage_type}:**")
                     for file in saved_files:
                         st.code(file['filename'])
                 else:
-                    st.info("No files in GitHub repo yet.")
+                    st.info(f"No files in {storage_type} yet.")
             else:
-                st.info("Enable 'Save to GitHub' to persist files in cloud.")
+                st.info("Enable 'Save to external storage' to persist files in cloud.")
   
 if __name__ == "__main__":
     create_attention_interface()
