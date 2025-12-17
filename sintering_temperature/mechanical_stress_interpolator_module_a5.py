@@ -1523,23 +1523,42 @@ def create_attention_interface():
             results = st.session_state.prediction_results
          
             # Handle multi-target selection
+            # Handle multi-target selection and unify data access
             if results.get('mode') == 'multi':
                 target_keys = list(st.session_state.multi_target_predictions.keys())
-                selected_target = st.selectbox(
+                selected_target_key = st.selectbox(
                     "Select Target Prediction",
                     options=target_keys,
-                    index=results.get('current_target_index', 0)
+                    index=results.get('current_target_index', 0),
+                    key="multi_target_selector"
                 )
-                selected_results = st.session_state.multi_target_predictions[selected_target]
-                stress_fields = selected_results['stress_fields']
-                attention_weights = selected_results['attention_weights']
-                target_params = selected_results['target_params']
-                training_losses = results['training_losses']  # Shared for simplicity
+                selected_results = st.session_state.multi_target_predictions[selected_target_key]
+
+                # Update current index for next time
+                results['current_target_index'] = target_keys.index(selected_target_key)
+
+                # Unify access: multi-target predictions lack 'stress_fields' wrapper
+                if 'stress_fields' in selected_results:
+                    stress_fields = selected_results['stress_fields']
+                else:
+                    # Direct stress components at top level
+                    stress_fields = {
+                        'sigma_hydro': selected_results.get('sigma_hydro'),
+                        'sigma_mag': selected_results.get('sigma_mag'),
+                        'von_mises': selected_results.get('von_mises')
+                    }
+
+                attention_weights = selected_results.get('attention_weights')
+                target_params = selected_results.get('target_params', {})
+                training_losses = results.get('training_losses')
+
             else:
+                # Single prediction mode
                 stress_fields = results.get('stress_fields', {})
                 attention_weights = results.get('attention_weights')
                 target_params = results.get('target_params', {})
                 training_losses = results.get('training_losses')
+            
          
             # Visualization controls
             col_viz1, col_viz2, col_viz3 = st.columns(3)
