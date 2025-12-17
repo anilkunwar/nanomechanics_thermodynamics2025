@@ -171,10 +171,13 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa3-streamlit-red)](https://mechanicalstress-interpolator-module-a3.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download not available)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa4-streamlit-red)](https://mechanicalstress-interpolator-module-a4.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, manual upload of training data)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa4-streamlit-red)](https://mechanicalstress-interpolator-module-a4.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , no download function is available, manual upload of training data)
 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa5-streamlit-red)](https://mechanicalstress-interpolator-module-a5.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, automatic loading of training data)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa5-streamlit-red)](https://mechanicalstress-interpolator-module-a5.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , no download function is available, automatic loading of training data)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa6-streamlit-red)](https://mechanicalstress-interpolator-module-a6.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, automatic loading of training data)
+
 
 
 
