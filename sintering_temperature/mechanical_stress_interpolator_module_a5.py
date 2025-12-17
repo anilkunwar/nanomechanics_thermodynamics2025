@@ -285,7 +285,7 @@ For more information, see the documentation.
                     'orientation': target_params.get('orientation', 'Unknown'),
                     'eps0': float(target_params.get('eps0', 0)),
                     'kappa': float(target_params.get('kappa', 0)),
-                    'theta_deg': float(np.deg2rad(target_params.get('theta', 0)))
+                    'theta_deg': float(np.rad2deg(target_params.get('theta', 0)))
                 }
              
                 # Add stress metrics
@@ -318,36 +318,6 @@ For more information, see the documentation.
      
         zip_buffer.seek(0)
         return zip_buffer
- 
-    @staticmethod
-    def save_prediction_to_numerical_solutions(prediction_data: Dict[str, Any],
-                                             filename: str,
-                                             solutions_manager: 'NumericalSolutionsManager') -> bool:
-        """
-        Save prediction to numerical_solutions directory
-     
-        Args:
-            prediction_data: Prediction data to save
-            filename: Base filename (without extension)
-            solutions_manager: NumericalSolutionsManager instance
-         
-        Returns:
-            Success status
-        """
-        try:
-            # Save as PKL
-            pkl_filename = f"{filename}_prediction.pkl"
-            pkl_success = solutions_manager.save_simulation(prediction_data, pkl_filename, 'pkl')
-         
-            # Save as PT
-            pt_filename = f"{filename}_prediction.pt"
-            pt_success = solutions_manager.save_simulation(prediction_data, pt_filename, 'pt')
-         
-            return pkl_success or pt_success
-         
-        except Exception as e:
-            st.error(f"Error saving prediction: {str(e)}")
-            return False
 # =============================================
 # NUMERICAL SOLUTIONS MANAGER (UPDATED FOR NUMERICAL_SOLUTIONS)
 # =============================================
@@ -925,9 +895,7 @@ def create_attention_interface():
     # Initialize saving options
     if 'save_format' not in st.session_state:
         st.session_state.save_format = 'both'
-    if 'save_to_directory' not in st.session_state:
-        st.session_state.save_to_directory = False  # Changed default to False for download focus
- 
+  
     # Initialize download data in session state
     if 'download_pkl_data' not in st.session_state:
         st.session_state.download_pkl_data = None
@@ -959,22 +927,13 @@ def create_attention_interface():
             )
             st.success("Model parameters updated!")
  
-    with st.sidebar.expander("💾 Save/Download Options", expanded=True):
+    with st.sidebar.expander("💾 Download Options", expanded=True):
         st.session_state.save_format = st.radio(
-            "Save Format",
+            "Download Format",
             ["PKL only", "PT only", "Both PKL & PT", "Archive (ZIP)"],
             index=2,
             key="save_format_radio"
         )
-     
-        st.session_state.save_to_directory = st.checkbox(
-            "Save to numerical_solutions directory",
-            value=st.session_state.save_to_directory,
-            key="save_to_dir_checkbox"
-        )
-     
-        if st.session_state.save_to_directory:
-            st.info(f"Files will be saved to: `{NUMERICAL_SOLUTIONS_DIR}`")
  
     # Main interface tabs
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -983,7 +942,7 @@ def create_attention_interface():
         "🎯 Configure Multiple Targets",
         "🚀 Train & Predict",
         "📊 Results & Visualization",
-        "💾 Save & Export Results"
+        "💾 Export Results"
     ])
  
     # Tab 1: Load Source Data
@@ -1563,6 +1522,25 @@ def create_attention_interface():
         else:
             results = st.session_state.prediction_results
          
+            # Handle multi-target selection
+            if results.get('mode') == 'multi':
+                target_keys = list(st.session_state.multi_target_predictions.keys())
+                selected_target = st.selectbox(
+                    "Select Target Prediction",
+                    options=target_keys,
+                    index=results.get('current_target_index', 0)
+                )
+                selected_results = st.session_state.multi_target_predictions[selected_target]
+                stress_fields = selected_results['stress_fields']
+                attention_weights = selected_results['attention_weights']
+                target_params = selected_results['target_params']
+                training_losses = results['training_losses']  # Shared for simplicity
+            else:
+                stress_fields = results.get('stress_fields', {})
+                attention_weights = results.get('attention_weights')
+                target_params = results.get('target_params', {})
+                training_losses = results.get('training_losses')
+         
             # Visualization controls
             col_viz1, col_viz2, col_viz3 = st.columns(3)
             with col_viz1:
@@ -1580,80 +1558,110 @@ def create_attention_interface():
             with col_viz3:
                 show_contour = st.checkbox("Show Contour Lines", value=True)
          
-            # Plot stress field
-            if stress_component in results.get('stress_fields', {}):
-                stress_data = results['stress_fields'][stress_component]
+            # Plot stress field with Plotly for interactivity
+            if stress_component in stress_fields:
+                stress_data = stress_fields[stress_component]
              
-                fig, ax = plt.subplots(figsize=(10, 8))
-                im = ax.imshow(stress_data, extent=extent, cmap=colormap,
-                              origin='lower', aspect='equal')
+                # Interactive heatmap
+                fig_heat = px.imshow(
+                    stress_data,
+                    color_continuous_scale=colormap,
+                    origin='lower',
+                    aspect='equal',
+                    title=f'{stress_component.replace("_", " ").title()} (GPa) - Orientation: {target_params.get("orientation", "Unknown")}'
+                )
+                fig_heat.update_layout(
+                    xaxis_title='x (nm)',
+                    yaxis_title='y (nm)',
+                    coloraxis_colorbar=dict(title='Stress (GPa)')
+                )
              
+                # Add contours if enabled
                 if show_contour:
-                    contour_levels = 10
-                    contour = ax.contour(stress_data, levels=contour_levels,
-                                        extent=extent, colors='black', alpha=0.5, linewidths=0.5)
-                    ax.clabel(contour, inline=True, fontsize=8)
+                    fig_heat.add_trace(
+                        go.Contour(
+                            z=stress_data,
+                            showscale=False,
+                            contours=dict(
+                                coloring='lines',
+                                showlabels=True,
+                                labelfont=dict(size=8)
+                            ),
+                            line=dict(color='black', width=0.5),
+                            ncontours=10
+                        )
+                    )
              
-                ax.set_title(f'{stress_component.replace("_", " ").title()} (GPa)')
-                ax.set_xlabel('x (nm)')
-                ax.set_ylabel('y (nm)')
-             
-                # Add colorbar
-                cbar = plt.colorbar(im, ax=ax, shrink=0.8)
-                cbar.set_label('Stress (GPa)')
-             
-                st.pyplot(fig)
+                st.plotly_chart(fig_heat, use_container_width=True)
          
-            # Attention weights visualization
+            # Attention weights visualization with Plotly
             st.subheader("🔍 Attention Weights")
          
-            if 'attention_weights' in results:
-                weights = results['attention_weights']
+            if attention_weights is not None:
+                weights = attention_weights
                 source_names = [f'S{i+1}' for i in range(len(st.session_state.source_simulations))]
              
-                fig_weights, ax_weights = plt.subplots(figsize=(10, 4))
-                bars = ax_weights.bar(source_names, weights, alpha=0.7, color='steelblue')
-                ax_weights.set_xlabel('Source Simulations')
-                ax_weights.set_ylabel('Attention Weight')
-                ax_weights.set_title('Attention Weights Distribution')
-                ax_weights.set_ylim(0, max(weights) * 1.2)
+                fig_weights = px.bar(
+                    x=source_names,
+                    y=weights,
+                    labels={'x': 'Source Simulations', 'y': 'Attention Weight'},
+                    title='Attention Weights Distribution'
+                )
+                fig_weights.update_traces(marker_color='steelblue', opacity=0.7)
+                fig_weights.update_layout(yaxis_range=[0, max(weights) * 1.2])
              
-                # Add value labels on bars
-                for bar, weight in zip(bars, weights):
-                    height = bar.get_height()
-                    ax_weights.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                                   f'{weight:.3f}', ha='center', va='bottom', fontsize=9)
+                # Add text labels
+                for i, weight in enumerate(weights):
+                    fig_weights.add_annotation(
+                        x=source_names[i],
+                        y=weight,
+                        text=f'{weight:.3f}',
+                        showarrow=False,
+                        yshift=10,
+                        font=dict(size=9)
+                    )
              
-                st.pyplot(fig_weights)
+                st.plotly_chart(fig_weights, use_container_width=True)
+         
+            # Training losses visualization
+            st.subheader("📉 Training Losses")
+            if training_losses is not None:
+                fig_losses = px.line(
+                    x=range(len(training_losses)),
+                    y=training_losses,
+                    labels={'x': 'Epoch', 'y': 'Loss'},
+                    title='Training Loss Curve'
+                )
+                fig_losses.update_traces(line_color='firebrick')
+                st.plotly_chart(fig_losses, use_container_width=True)
          
             # Statistics table
             st.subheader("📊 Stress Statistics")
          
-            if 'stress_fields' in results:
-                stats_data = []
-                for comp_name, comp_data in results['stress_fields'].items():
-                    if isinstance(comp_data, np.ndarray):
-                        stats_data.append({
-                            'Component': comp_name.replace('_', ' ').title(),
-                            'Max (GPa)': float(np.max(comp_data)),
-                            'Min (GPa)': float(np.min(comp_data)),
-                            'Mean (GPa)': float(np.mean(comp_data)),
-                            'Std Dev': float(np.std(comp_data)),
-                            '95th %ile': float(np.percentile(comp_data, 95))
-                        })
-             
-                if stats_data:
-                    df_stats = pd.DataFrame(stats_data)
-                    st.dataframe(df_stats.style.format({
-                        'Max (GPa)': '{:.3f}',
-                        'Min (GPa)': '{:.3f}',
-                        'Mean (GPa)': '{:.3f}',
-                        'Std Dev': '{:.3f}',
-                        '95th %ile': '{:.3f}'
-                    }), use_container_width=True)
+            stats_data = []
+            for comp_name, comp_data in stress_fields.items():
+                if isinstance(comp_data, np.ndarray):
+                    stats_data.append({
+                        'Component': comp_name.replace('_', ' ').title(),
+                        'Max (GPa)': float(np.max(comp_data)),
+                        'Min (GPa)': float(np.min(comp_data)),
+                        'Mean (GPa)': float(np.mean(comp_data)),
+                        'Std Dev': float(np.std(comp_data)),
+                        '95th %ile': float(np.percentile(comp_data, 95))
+                    })
+         
+            if stats_data:
+                df_stats = pd.DataFrame(stats_data)
+                st.dataframe(df_stats.style.format({
+                    'Max (GPa)': '{:.3f}',
+                    'Min (GPa)': '{:.3f}',
+                    'Mean (GPa)': '{:.3f}',
+                    'Std Dev': '{:.3f}',
+                    '95th %ile': '{:.3f}'
+                }), use_container_width=True)
     # Tab 6: Save & Export Results (FIXED VERSION)
     with tab6:
-        st.subheader("💾 Save and Export Prediction Results")
+        st.subheader("💾 Export Prediction Results")
       
         # Check if we have predictions to save
         has_single_prediction = 'prediction_results' in st.session_state
@@ -1679,7 +1687,7 @@ def create_attention_interface():
             st.divider()
           
             # Save options
-            st.subheader("📁 Save Options")
+            st.subheader("📁 Export Options")
           
             save_col1, save_col2, save_col3 = st.columns(3)
           
@@ -1738,13 +1746,6 @@ def create_attention_interface():
                                 pkl_buffer.seek(0)
                                 st.session_state.download_pkl_data = pkl_buffer.getvalue()
                                 st.success("✅ PKL file prepared!")
-                              
-                                # Optional save to directory
-                                if st.session_state.save_to_directory:
-                                    pkl_filename = f"{base_filename}.pkl"
-                                    with open(os.path.join(NUMERICAL_SOLUTIONS_DIR, pkl_filename), 'wb') as f:
-                                        f.write(st.session_state.download_pkl_data)
-                                    st.success(f"✅ Saved PKL to {NUMERICAL_SOLUTIONS_DIR}")
                           
                         except Exception as e:
                             st.error(f"❌ Error preparing PKL: {str(e)}")
@@ -1790,13 +1791,6 @@ def create_attention_interface():
                                 pt_buffer.seek(0)
                                 st.session_state.download_pt_data = pt_buffer.getvalue()
                                 st.success("✅ PT file prepared!")
-                              
-                                # Optional save to directory
-                                if st.session_state.save_to_directory:
-                                    pt_filename = f"{base_filename}.pt"
-                                    with open(os.path.join(NUMERICAL_SOLUTIONS_DIR, pt_filename), 'wb') as f:
-                                        f.write(st.session_state.download_pt_data)
-                                    st.success(f"✅ Saved PT to {NUMERICAL_SOLUTIONS_DIR}")
                           
                         except Exception as e:
                             st.error(f"❌ Error preparing PT: {str(e)}")
@@ -1831,13 +1825,6 @@ def create_attention_interface():
                                 st.session_state.download_zip_data = zip_buffer.getvalue()
                                 st.session_state.download_zip_filename = f"{base_filename}_complete.zip"
                                 st.success("✅ Single ZIP archive prepared!")
-                              
-                                # Optional save to directory
-                                if st.session_state.save_to_directory:
-                                    zip_filename = st.session_state.download_zip_filename
-                                    with open(os.path.join(NUMERICAL_SOLUTIONS_DIR, zip_filename), 'wb') as f:
-                                        f.write(st.session_state.download_zip_data)
-                                    st.success(f"✅ Saved ZIP to {NUMERICAL_SOLUTIONS_DIR}")
                             elif save_mode == "All Multiple Predictions" and has_multi_predictions:
                                 # Multi prediction archive
                                 zip_buffer = st.session_state.prediction_results_manager.create_multi_prediction_archive(
@@ -1847,13 +1834,6 @@ def create_attention_interface():
                                 st.session_state.download_zip_data = zip_buffer.getvalue()
                                 st.session_state.download_zip_filename = f"{base_filename}_multi_predictions.zip"
                                 st.success("✅ Multi ZIP archive prepared!")
-                              
-                                # Optional save to directory
-                                if st.session_state.save_to_directory:
-                                    zip_filename = st.session_state.download_zip_filename
-                                    with open(os.path.join(NUMERICAL_SOLUTIONS_DIR, zip_filename), 'wb') as f:
-                                        f.write(st.session_state.download_zip_data)
-                                    st.success(f"✅ Saved ZIP to {NUMERICAL_SOLUTIONS_DIR}")
                             elif save_mode == "Both" and has_single_prediction:
                                 # Create single ZIP even if Both is selected (for simplicity)
                                 zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
@@ -1863,13 +1843,6 @@ def create_attention_interface():
                                 st.session_state.download_zip_data = zip_buffer.getvalue()
                                 st.session_state.download_zip_filename = f"{base_filename}_complete.zip"
                                 st.success("✅ Single ZIP archive prepared!")
-                              
-                                # Optional save to directory
-                                if st.session_state.save_to_directory:
-                                    zip_filename = st.session_state.download_zip_filename
-                                    with open(os.path.join(NUMERICAL_SOLUTIONS_DIR, zip_filename), 'wb') as f:
-                                        f.write(st.session_state.download_zip_data)
-                                    st.success(f"✅ Saved ZIP to {NUMERICAL_SOLUTIONS_DIR}")
                           
                         except Exception as e:
                             st.error(f"❌ Error creating archive: {str(e)}")
@@ -1902,11 +1875,11 @@ def create_attention_interface():
             st.divider()
           
             # Advanced options
-            with st.expander("⚙️ Advanced Save Options", expanded=False):
+            with st.expander("⚙️ Advanced Export Options", expanded=False):
                 col_adv1, col_adv2 = st.columns(2)
               
                 with col_adv1:
-                    # Save stress fields as separate files
+                    # Export stress fields as separate files
                     st.markdown("**Separate Stress Fields**")
                     stress_fields = st.session_state.prediction_results.get('stress_fields', {}) if has_single_prediction else {}
                   
@@ -1982,29 +1955,9 @@ def create_attention_interface():
                                 key=f"download_csv_{timestamp}"
                             )
           
-            # Display saved files in directory
-            st.divider()
-            st.subheader("📁 Saved Files Preview")
-          
-            if st.session_state.save_to_directory:
-                saved_files = []
-                for ext in ['pkl', 'pt', 'zip', 'npz', 'json', 'csv']:
-                    pattern = os.path.join(NUMERICAL_SOLUTIONS_DIR, f"*{base_filename}*.{ext}")
-                    files = glob.glob(pattern)
-                    saved_files.extend([(os.path.basename(f), os.path.getsize(f)) for f in files])
-              
-                if saved_files:
-                    st.write("**Recently saved files:**")
-                    for file_name, file_size in sorted(saved_files)[:10]: # Show last 10
-                        st.code(f"{file_name} ({file_size // 1024}KB)")
-                else:
-                    st.info("No files saved yet for this session.")
-            else:
-                st.info("Enable 'Save to directory' to persist files locally.")
-          
             # EXPANDED SECTION: Download saved files from directory
             st.divider()
-            st.subheader("📥 Download Saved Files from Directory")
+            st.subheader("📥 Download Files from numerical_solutions Directory")
             all_files_info = st.session_state.solutions_manager.get_all_files()
             all_files_info.sort(key=lambda x: datetime.fromisoformat(x['modified']), reverse=True) # Newest first
            
