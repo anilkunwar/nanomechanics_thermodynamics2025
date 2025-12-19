@@ -178,6 +178,10 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa6-streamlit-red)](https://mechanicalstress-interpolator-module-a6.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, automatic loading of training data)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa7-streamlit-red)](https://mechanicalstress-interpolator-module-a7.streamlit.app/) (Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, automatic loading of training data)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa8-streamlit-red)](https://mechanicalstress-interpolator-module-a8.streamlit.app/) (Incomplete Code, Training data accessible for the model, Doesn't uses transformer inspired attention , download function is available, automatic loading of training data)
+
 
 
 
