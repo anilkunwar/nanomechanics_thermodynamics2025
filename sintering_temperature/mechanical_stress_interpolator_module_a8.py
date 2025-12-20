@@ -923,11 +923,14 @@ class SpatialLocalityAttentionInterpolator:
         return model
   
     def get_attention_weights(self, target_param, source_params):
+        if source_params.size(0) == 0:
+            raise ValueError("No source parameters provided for attention weights computation")
         target_embed = self.model.param_embedding(target_param) # (1, d_model)
         source_embeds = self.model.param_embedding(source_params) # (N, d_model)
-        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds) # (1, d_model), (1, num_heads, 1, N)
+        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds, average_attn_weights=False) # (1, num_heads, 1, N)
         weights = attn_weights.mean(dim=1).mean(dim=1).squeeze(0) # (N,)
-        return weights / (weights.sum() + 1e-8)
+        weights = weights / (weights.sum() + 1e-8)
+        return weights
    
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
         if source_params.size(0) < 2:
@@ -1590,6 +1593,9 @@ def create_attention_interface():
                                 ], axis=0)
                                 stress_data.append(stress_components)
                       
+                        if len(param_vectors) < 1:
+                            raise ValueError("No valid source simulations available for prediction")
+                      
                         param_vectors = np.array(param_vectors)
                         stress_data = np.stack(stress_data) # (N, 3, H, W)
                       
@@ -2094,6 +2100,27 @@ def create_attention_interface():
             # Save options
             st.subheader("📁 Export Options")
           
+            save_col1, save_col2, save_col3 = st.columns(3)
+          
+            with save_col1:
+                save_mode = "Current Single Prediction"
+                st.write("Exporting single prediction")
+          
+            with save_col2:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_filename = st.text_input(
+                    "Base filename",
+                    value=f"prediction_{timestamp}",
+                    help="Files will be saved with this base name plus appropriate extensions"
+                )
+          
+            with save_col3:
+                include_source_info = st.checkbox("Include source simulations info", value=True)
+                include_visualizations = st.checkbox("Include visualization data", value=True)
+          
+            st.divider()
+          
+            # Save/Download buttons
             st.subheader("⬇️ Download Options")
           
             dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
