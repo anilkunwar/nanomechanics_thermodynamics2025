@@ -451,7 +451,7 @@ class TimeFrameVisualizationManager:
                
                 im = ax.imshow(data,
                               cmap=self.vis_manager.stress_cmap,
-                              extent=[-64, 64, 64, -64],
+                              extent=[-64, 64, -64, 64],
                               origin='lower',
                               aspect='equal',
                               vmin=vmin,
@@ -926,7 +926,7 @@ class SpatialLocalityAttentionInterpolator:
         target_embed = self.model.param_embedding(target_param)  # (1, d_model)
         source_embeds = self.model.param_embedding(source_params)  # (N, d_model)
         _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds)  # (1, d_model), (1, num_heads, 1, N)
-        weights = attn_weights.mean(dim=1).squeeze(1).squeeze(0)  # (N,)
+        weights = attn_weights.mean(dim=1).mean(dim=1).squeeze(0)  # (N,)
         return weights / (weights.sum() + 1e-8)
     
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
@@ -942,6 +942,8 @@ class SpatialLocalityAttentionInterpolator:
                 src_mask[i] = False
                 src_params = source_params[src_mask]
                 src_stress = source_stress[src_mask]
+                if len(src_params) == 0:
+                    continue  # Skip if no sources
                 weights = self.get_attention_weights(target_param, src_params)
                 predicted_stress = torch.einsum('n,nchw->chw', weights, src_stress)
                 loss = torch.mean((predicted_stress - target_stress)**2)
@@ -949,7 +951,10 @@ class SpatialLocalityAttentionInterpolator:
                 loss.backward()
                 optimizer.step()
                 epoch_loss += loss.item()
-            losses.append(epoch_loss / N)
+            if N > 0:
+                losses.append(epoch_loss / N)
+            else:
+                losses.append(0.0)
         return losses
    
     def _read_pkl(self, file_content):
