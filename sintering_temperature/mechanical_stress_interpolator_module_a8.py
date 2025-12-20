@@ -925,8 +925,8 @@ class SpatialLocalityAttentionInterpolator:
     def get_attention_weights(self, target_param, source_params):
         target_embed = self.model.param_embedding(target_param)  # (1, d_model)
         source_embeds = self.model.param_embedding(source_params)  # (N, d_model)
-        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds)  # (1, d_model), (1,1,N)
-        weights = attn_weights.mean(dim=1).squeeze(0)  # (N,)
+        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds)  # (1, d_model), (1, num_heads, 1, N)
+        weights = attn_weights.mean(dim=1).squeeze(1).squeeze(0)  # (N,)
         return weights / (weights.sum() + 1e-8)
     
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
@@ -1935,7 +1935,7 @@ def create_attention_interface():
                         selected_sim, max_frames
                     )
                     st.session_state.time_frames = time_frames
-                    st.success(f"✅ Extracted {len(len(time_frames.get('frame_numbers', [])))} time frames!")
+                    st.success(f"✅ Extracted {len(time_frames.get('frame_numbers', []))} time frames!")
            
             if 'time_frames' in st.session_state and st.session_state.time_frames:
                 time_frames = st.session_state.time_frames
