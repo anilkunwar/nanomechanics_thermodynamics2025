@@ -327,6 +327,47 @@ class VisualizationManager:
                     fontsize=16, fontweight='bold', y=1.02)
        
         return fig
+   
+    def save_figure(self, fig, filename, format='png', dpi=300):
+        """
+        Save matplotlib figure to file
+       
+        Args:
+            fig: matplotlib figure
+            filename: Output filename
+            format: Image format
+            dpi: Resolution
+           
+        Returns:
+            filepath
+        """
+        if not filename.endswith(f'.{format}'):
+            filename = f'{filename}.{format}'
+       
+        filepath = os.path.join(self.output_dir, filename)
+        fig.savefig(filepath, format=format, dpi=dpi, bbox_inches='tight')
+        plt.close(fig)
+        return filepath
+   
+    def get_image_download_link(self, fig, filename, caption="Download Image"):
+        """
+        Generate download link for matplotlib figure
+       
+        Args:
+            fig: matplotlib figure
+            filename: Download filename
+            caption: Link caption
+           
+        Returns:
+            HTML download link
+        """
+        buf = BytesIO()
+        fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+       
+        b64 = base64.b64encode(buf.read()).decode()
+        href = f'<a href="data:image/png;base64,{b64}" download="{filename}">{caption}</a>'
+        return href
 # =============================================
 # TIME FRAME VISUALIZATION MANAGER
 # =============================================
@@ -512,22 +553,20 @@ class TimeFrameVisualizationManager:
        
         return fig
 # =============================================
-# PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER (UPGRADED)
+# PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
 # =============================================
 class PredictionResultsManager:
-    """Manager for saving and downloading prediction results (Upgraded with better error handling and more formats)"""
+    """Manager for saving and downloading prediction results"""
    
     @staticmethod
     def prepare_prediction_data_for_saving(prediction_results: Dict[str, Any],
-                                         source_simulations: List[Dict],
-                                         mode: str = 'single') -> Dict[str, Any]:
+                                         source_simulations: List[Dict]) -> Dict[str, Any]:
         """
         Prepare prediction results for saving to file
        
         Args:
             prediction_results: Dictionary of prediction results
             source_simulations: List of source simulation data
-            mode: 'single' for single target, 'multi' for multiple targets
            
         Returns:
             Structured dictionary ready for saving
@@ -535,9 +574,8 @@ class PredictionResultsManager:
         # Create metadata
         metadata = {
             'save_timestamp': datetime.now().isoformat(),
-            'mode': mode,
             'num_sources': len(source_simulations),
-            'software_version': '1.1.0',  # Upgraded version
+            'software_version': '1.0.0',
             'data_type': 'attention_interpolation_results'
         }
        
@@ -562,8 +600,7 @@ class PredictionResultsManager:
             'prediction_results': prediction_results.copy() # Create a copy to avoid modifications
         }
        
-        # Add additional info based on mode
-        if mode == 'single' and 'attention_weights' in prediction_results:
+        if 'attention_weights' in prediction_results:
             weights = prediction_results['attention_weights']
             save_data['attention_analysis'] = {
                 'weights': weights.tolist() if hasattr(weights, 'tolist') else weights,
@@ -608,7 +645,7 @@ class PredictionResultsManager:
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # 1. Save main prediction data as PKL
             save_data = PredictionResultsManager.prepare_prediction_data_for_saving(
-                prediction_results, source_simulations, 'single'
+                prediction_results, source_simulations
             )
            
             # PKL format
@@ -641,7 +678,7 @@ class PredictionResultsManager:
                     'weight': weights,
                     'percent_contribution': 100 * weights / (np.sum(weights) + 1e-10)
                 })
-                csv_data = weight_df.to_csv(index=False).encode('utf-8')  # Upgraded to bytes
+                csv_data = weight_df.to_csv(index=False)
                 zip_file.writestr('attention_weights.csv', csv_data)
            
             # 5. Save target parameters as JSON
@@ -660,7 +697,7 @@ class PredictionResultsManager:
                     else:
                         return obj
                
-                json_data = json.dumps(target_params, default=convert_for_json, indent=2).encode('utf-8')  # Upgraded to bytes
+                json_data = json.dumps(target_params, default=convert_for_json, indent=2)
                 zip_file.writestr('target_parameters.json', json_data)
            
             # 6. Save summary statistics
@@ -681,7 +718,7 @@ class PredictionResultsManager:
                
                 if stats_rows:
                     stats_df = pd.DataFrame(stats_rows)
-                    stats_csv = stats_df.to_csv(index=False).encode('utf-8')  # Upgraded to bytes
+                    stats_csv = stats_df.to_csv(index=False)
                     zip_file.writestr('stress_statistics.csv', stats_csv)
            
             # 7. Save a README file
@@ -697,104 +734,7 @@ Files included:
 5. target_parameters.json - Target parameters
 6. stress_statistics.csv - Statistical summary
 For more information, see the documentation.
-""".encode('utf-8')  # Upgraded to bytes
-            zip_file.writestr('README.txt', readme_content)
-       
-        zip_buffer.seek(0)
-        return zip_buffer
-   
-    @staticmethod
-    def create_multi_prediction_archive(multi_predictions: Dict[str, Any],
-                                       source_simulations: List[Dict]) -> BytesIO:
-        """
-        Create a comprehensive archive for multiple predictions
-       
-        Args:
-            multi_predictions: Dictionary of multiple predictions
-            source_simulations: List of source simulations
-           
-        Returns:
-            BytesIO buffer containing the archive
-        """
-        zip_buffer = BytesIO()
-       
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            # Save each prediction individually
-            for pred_key, pred_data in multi_predictions.items():
-                # Create directory for each prediction
-                pred_dir = f'predictions/{pred_key}'
-               
-                # Save prediction data
-                save_data = PredictionResultsManager.prepare_prediction_data_for_saving(
-                    pred_data, source_simulations, 'multi'
-                )
-               
-                # Save as PKL
-                pkl_data = pickle.dumps(save_data, protocol=pickle.HIGHEST_PROTOCOL)
-                zip_file.writestr(f'{pred_dir}/prediction.pkl', pkl_data)
-               
-                # Save stress statistics
-                stress_fields = {k: v for k, v in pred_data.items()
-                               if isinstance(v, np.ndarray) and k in ['sigma_hydro', 'sigma_mag', 'von_mises']}
-               
-                if stress_fields:
-                    stats_rows = []
-                    for field_name, field_data in stress_fields.items():
-                        stats_rows.append({
-                            'field': field_name,
-                            'max': float(np.max(field_data)),
-                            'min': float(np.min(field_data)),
-                            'mean': float(np.mean(field_data)),
-                            'std': float(np.std(field_data))
-                        })
-                   
-                    stats_df = pd.DataFrame(stats_rows)
-                    stats_csv = stats_df.to_csv(index=False).encode('utf-8')  # Upgraded to bytes
-                    zip_file.writestr(f'{pred_dir}/statistics.csv', stats_csv)
-           
-            # Save master summary
-            summary_rows = []
-            for pred_key, pred_data in multi_predictions.items():
-                target_params = pred_data.get('target_params', {})
-                stress_fields = {k: v for k, v in pred_data.items()
-                               if isinstance(v, np.ndarray) and k in ['sigma_hydro', 'sigma_mag', 'von_mises']}
-               
-                row = {
-                    'prediction_id': pred_key,
-                    'defect_type': target_params.get('defect_type', 'Unknown'),
-                    'shape': target_params.get('shape', 'Unknown'),
-                    'orientation': target_params.get('orientation', 'Unknown'),
-                    'eps0': float(target_params.get('eps0', 0)),
-                    'kappa': float(target_params.get('kappa', 0)),
-                    'theta_deg': float(np.rad2deg(target_params.get('theta', 0)))
-                }
-               
-                # Add stress metrics
-                for field_name, field_data in stress_fields.items():
-                    row[f'{field_name}_max'] = float(np.max(field_data))
-                    row[f'{field_name}_mean'] = float(np.mean(field_data))
-                    row[f'{field_name}_std'] = float(np.std(field_data))
-               
-                summary_rows.append(row)
-           
-            if summary_rows:
-                summary_df = pd.DataFrame(summary_rows)
-                summary_csv = summary_df.to_csv(index=False).encode('utf-8')  # Upgraded to bytes
-                zip_file.writestr('multi_prediction_summary.csv', summary_csv)
-           
-            # Save a README file
-            readme_content = f"""# Multi-Prediction Results Archive
-Generated: {datetime.now().isoformat()}
-Number of source simulations: {len(source_simulations)}
-Number of predictions: {len(multi_predictions)}
-Structure:
-- predictions/[prediction_id]/ - Individual prediction data
-- multi_prediction_summary.csv - Summary of all predictions
-Each prediction directory contains:
-1. prediction.pkl - Main prediction data
-2. statistics.csv - Stress statistics
-For more information, see the documentation.
-""".encode('utf-8')  # Upgraded to bytes
+"""
             zip_file.writestr('README.txt', readme_content)
        
         zip_buffer.seek(0)
@@ -934,129 +874,6 @@ class NumericalSolutionsManager:
             st.error(f"Error saving file: {str(e)}")
             return False
 # =============================================
-# MULTI-TARGET PREDICTION MANAGER
-# =============================================
-class MultiTargetPredictionManager:
-    """Manager for handling multiple target predictions"""
-   
-    @staticmethod
-    def create_parameter_grid(base_params, ranges_config):
-        """
-        Create a grid of parameter combinations based on ranges
-       
-        Args:
-            base_params: Base parameter dictionary
-            ranges_config: Dictionary with range specifications
-                Example: {
-                    'eps0': {'min': 0.5, 'max': 2.0, 'steps': 10},
-                    'kappa': {'min': 0.2, 'max': 1.0, 'steps': 5},
-                    'theta': {'values': [0, np.pi/6, np.pi/3, np.pi/2]}
-                }
-           
-        Returns:
-            List of parameter dictionaries
-        """
-        param_grid = []
-       
-        # Prepare parameter value lists
-        param_values = {}
-       
-        for param_name, config in ranges_config.items():
-            if 'values' in config:
-                # Specific values provided
-                param_values[param_name] = config['values']
-            elif 'min' in config and 'max' in config:
-                # Range with steps
-                steps = config.get('steps', 10)
-                param_values[param_name] = np.linspace(
-                    config['min'], config['max'], steps
-                ).tolist()
-            else:
-                # Single value
-                param_values[param_name] = [config.get('value', base_params.get(param_name))]
-       
-        # Generate all combinations
-        param_names = list(param_values.keys())
-        value_arrays = [param_values[name] for name in param_names]
-       
-        for combination in product(*value_arrays):
-            param_dict = base_params.copy()
-            for name, value in zip(param_names, combination):
-                param_dict[name] = float(value) if isinstance(value, (int, float, np.number)) else value
-           
-            param_grid.append(param_dict)
-       
-        return param_grid
-   
-    @staticmethod
-    def batch_predict(source_simulations, target_params_list, interpolator):
-        """
-        Perform batch predictions for multiple targets
-       
-        Args:
-            source_simulations: List of source simulation data
-            target_params_list: List of target parameter dictionaries
-            interpolator: SpatialLocalityAttentionInterpolator instance
-           
-        Returns:
-            Dictionary with predictions for each target
-        """
-        predictions = {}
-       
-        # Prepare source data
-        source_param_vectors = []
-        source_stress_data = []
-       
-        for sim_data in source_simulations:
-            param_vector, _ = interpolator.compute_parameter_vector(sim_data)
-            source_param_vectors.append(param_vector)
-           
-            # Get stress from final frame
-            history = sim_data.get('history', [])
-            if history:
-                eta, stress_fields = history[-1]
-                stress_components = np.stack([
-                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                    stress_fields.get('von_mises', np.zeros_like(eta))
-                ], axis=0)
-                source_stress_data.append(stress_components)
-       
-        source_param_vectors = np.array(source_param_vectors)
-        source_stress_data = np.array(source_stress_data)
-       
-        # Predict for each target
-        for idx, target_params in enumerate(target_params_list):
-            # Compute target parameter vector
-            target_vector, _ = interpolator.compute_parameter_vector(
-                {'params': target_params}
-            )
-           
-            # Calculate distances and weights
-            distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
-            weights = weights / (np.sum(weights) + 1e-8)
-           
-            # Weighted combination
-            weighted_stress = np.sum(
-                source_stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis],
-                axis=0
-            )
-           
-            predicted_stress = {
-                'sigma_hydro': weighted_stress[0],
-                'sigma_mag': weighted_stress[1],
-                'von_mises': weighted_stress[2],
-                'predicted': True,
-                'target_params': target_params,
-                'attention_weights': weights,
-                'target_index': idx
-            }
-           
-            predictions[f"target_{idx:03d}"] = predicted_stress
-       
-        return predictions
-# =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
 # =============================================
 class SpatialLocalityAttentionInterpolator:
@@ -1096,26 +913,44 @@ class SpatialLocalityAttentionInterpolator:
                 batch_first=True,
                 dropout=0.1
             ),
-            'feed_forward': torch.nn.Sequential(
-                torch.nn.Linear(self.d_model, self.d_model * 4),
-                torch.nn.ReLU(),
-                torch.nn.Dropout(0.1),
-                torch.nn.Linear(self.d_model * 4, self.d_model)
-            ),
-            'output_projection': torch.nn.Sequential(
-                torch.nn.Linear(self.d_model, self.d_model * 2),
-                torch.nn.ReLU(),
-                torch.nn.Linear(self.d_model * 2, self.output_dim)
-            ),
             'spatial_regularizer': torch.nn.Sequential(
                 torch.nn.Linear(2, 32),
                 torch.nn.ReLU(),
                 torch.nn.Linear(32, self.num_heads)
             ) if self.use_gaussian else None,
             'norm1': torch.nn.LayerNorm(self.d_model),
-            'norm2': torch.nn.LayerNorm(self.d_model)
         })
         return model
+   
+    def get_attention_weights(self, target_param, source_params):
+        target_embed = self.model.param_embedding(target_param)  # (1, d_model)
+        source_embeds = self.model.param_embedding(source_params)  # (N, d_model)
+        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds)  # (1, d_model), (1,1,N)
+        weights = attn_weights.mean(dim=1).squeeze(0)  # (N,)
+        return weights / (weights.sum() + 1e-8)
+    
+    def train(self, source_params, source_stress, epochs=50, lr=0.001):
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        losses = []
+        N = source_params.size(0)
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            for i in range(N):
+                target_param = source_params[i].unsqueeze(0)
+                target_stress = source_stress[i]
+                src_mask = torch.ones(N, dtype=bool)
+                src_mask[i] = False
+                src_params = source_params[src_mask]
+                src_stress = source_stress[src_mask]
+                weights = self.get_attention_weights(target_param, src_params)
+                predicted_stress = torch.einsum('n,nchw->chw', weights, src_stress)
+                loss = torch.mean((predicted_stress - target_stress)**2)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+            losses.append(epoch_loss / N)
+        return losses
    
     def _read_pkl(self, file_content):
         buffer = BytesIO(file_content)
@@ -1339,51 +1174,63 @@ def get_grid_extent(N=128, dx=0.1):
     """Get grid extent for visualization"""
     return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
 # =============================================
-# ATTENTION INTERFACE (UPGRADED WITH BETTER DOWNLOAD HANDLING)
+# ATTENTION INTERFACE
 # =============================================
 def create_attention_interface():
-    """Create the attention interpolation interface with upgraded download handling"""
+    """Create the attention interpolation interface with save/download"""
    
     st.header("🤖 Spatial-Attention Stress Interpolation")
    
-    # Initialize managers
+    # Initialize interpolator in session state
     if 'interpolator' not in st.session_state:
         st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
    
+    # Initialize numerical solutions manager
     if 'solutions_manager' not in st.session_state:
         st.session_state.solutions_manager = NumericalSolutionsManager()
    
-    if 'multi_target_manager' not in st.session_state:
-        st.session_state.multi_target_manager = MultiTargetPredictionManager()
-   
+    # Initialize prediction results manager
     if 'prediction_results_manager' not in st.session_state:
         st.session_state.prediction_results_manager = PredictionResultsManager()
    
+    # Initialize visualization manager
     if 'visualization_manager' not in st.session_state:
         st.session_state.visualization_manager = VisualizationManager()
    
+    # Initialize time frame visualization manager
     if 'time_frame_manager' not in st.session_state:
         st.session_state.time_frame_manager = TimeFrameVisualizationManager(
             st.session_state.visualization_manager
         )
    
-    # Initialize data storage
+    # Initialize source simulations list
     if 'source_simulations' not in st.session_state:
         st.session_state.source_simulations = []
         st.session_state.uploaded_files = {}
         st.session_state.loaded_from_numerical = []
    
-    if 'multi_target_predictions' not in st.session_state:
-        st.session_state.multi_target_predictions = {}
-        st.session_state.multi_target_params = []
+    # Initialize saving options
+    if 'save_format' not in st.session_state:
+        st.session_state.save_format = 'both'
    
+    # Initialize download data in session state
+    if 'download_pkl_data' not in st.session_state:
+        st.session_state.download_pkl_data = None
+    if 'download_pt_data' not in st.session_state:
+        st.session_state.download_pt_data = None
+    if 'download_zip_data' not in st.session_state:
+        st.session_state.download_zip_data = None
+    if 'download_zip_filename' not in st.session_state:
+        st.session_state.download_zip_filename = None
+   
+    # Initialize matplotlib figure storage
     if 'matplotlib_figures' not in st.session_state:
         st.session_state.matplotlib_figures = {}
    
-    # Get grid extent
+    # Get grid extent for visualization
     extent = get_grid_extent()
    
-    # Sidebar
+    # Sidebar configuration
     st.sidebar.header("🔮 Attention Interpolator Settings")
    
     with st.sidebar.expander("⚙️ Model Parameters", expanded=False):
@@ -1405,23 +1252,43 @@ def create_attention_interface():
         viz_library = st.radio(
             "Primary Visualization Library",
             ["Plotly (Interactive)", "Matplotlib (Static)"],
-            index=0
+            index=0,
+            help="Choose between interactive Plotly charts or static Matplotlib figures"
         )
        
         default_colormap = st.selectbox(
             "Default Colormap",
             ["viridis", "plasma", "coolwarm", "RdBu", "Spectral", "custom_stress"],
-            index=5
+            index=5,
+            help="Colormap for stress field visualizations"
         )
        
         include_contours = st.checkbox("Include Contour Lines", value=True)
+        include_grid = st.checkbox("Include Grid", value=True)
         figure_dpi = st.slider("Figure DPI", 100, 300, 150, 10)
    
-    # Main tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    with st.sidebar.expander("💾 Download Options", expanded=True):
+        st.session_state.save_format = st.radio(
+            "Download Format",
+            ["PKL only", "PT only", "Both PKL & PT", "Archive (ZIP)"],
+            index=2,
+            key="save_format_radio"
+        )
+       
+        # Time frame download options
+        st.markdown("---")
+        st.markdown("**Time Frame Download**")
+        time_frame_format = st.radio(
+            "Time Frame Format",
+            ["PNG", "PDF", "SVG", "All formats"],
+            index=0,
+            help="Format for downloading time frame visualizations"
+        )
+   
+    # Main interface tabs
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📤 Load Source Data",
         "🎯 Configure Target",
-        "🎯 Configure Multiple Targets",
         "🚀 Train & Predict",
         "📊 Results & Visualization",
         "⏱️ Time Frame Analysis",
@@ -1589,7 +1456,7 @@ def create_attention_interface():
    
     # Tab 2: Configure Target
     with tab2:
-        st.subheader("Configure Single Target Parameters")
+        st.subheader("Configure Target Parameters")
        
         if len(st.session_state.source_simulations) < 2:
             st.warning("⚠️ Please load at least 2 source simulations first")
@@ -1601,34 +1468,34 @@ def create_attention_interface():
                     "Target Defect Type",
                     ["ISF", "ESF", "Twin"],
                     index=0,
-                    key="target_defect_single"
+                    key="target_defect"
                 )
                
                 target_shape = st.selectbox(
                     "Target Shape",
                     ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
                     index=0,
-                    key="target_shape_single"
+                    key="target_shape"
                 )
                
                 target_eps0 = st.slider(
                     "Target ε*",
                     0.3, 3.0, 1.414, 0.01,
-                    key="target_eps0_single"
+                    key="target_eps0"
                 )
            
             with col2:
                 target_kappa = st.slider(
                     "Target κ",
                     0.1, 2.0, 0.7, 0.05,
-                    key="target_kappa_single"
+                    key="target_kappa"
                 )
                
                 orientation_mode = st.radio(
                     "Orientation Mode",
                     ["Predefined", "Custom Angle"],
                     horizontal=True,
-                    key="orientation_mode_single"
+                    key="orientation_mode"
                 )
                
                 if orientation_mode == "Predefined":
@@ -1639,7 +1506,7 @@ def create_attention_interface():
                          "Tilted 60°",
                          "Vertical {111} (90°)"],
                         index=0,
-                        key="target_orientation_single"
+                        key="target_orientation"
                     )
                    
                     angle_map = {
@@ -1655,7 +1522,7 @@ def create_attention_interface():
                     target_angle = st.slider(
                         "Target Angle (degrees)",
                         0.0, 90.0, 0.0, 0.5,
-                        key="target_angle_custom_single"
+                        key="target_angle_custom"
                     )
                     target_theta = np.deg2rad(target_angle)
                    
@@ -1674,229 +1541,14 @@ def create_attention_interface():
            
             st.session_state.target_params = target_params
    
-    # Tab 3: Configure Multiple Targets
+    # Tab 3: Train & Predict
     with tab3:
-        st.subheader("Configure Multiple Target Parameters")
-       
-        if len(st.session_state.source_simulations) < 2:
-            st.warning("⚠️ Please load at least 2 source simulations first")
-        else:
-            st.info("Configure ranges for parameters to create multiple target predictions")
-           
-            st.markdown("### 🎯 Base Parameters")
-            col1, col2 = st.columns(2)
-           
-            with col1:
-                base_defect = st.selectbox(
-                    "Base Defect Type",
-                    ["ISF", "ESF", "Twin"],
-                    index=0,
-                    key="base_defect_multi"
-                )
-               
-                base_shape = st.selectbox(
-                    "Base Shape",
-                    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
-                    index=0,
-                    key="base_shape_multi"
-                )
-           
-            with col2:
-                orientation_mode = st.radio(
-                    "Orientation Mode",
-                    ["Predefined", "Custom Angles"],
-                    horizontal=True,
-                    key="orientation_mode_multi"
-                )
-               
-                if orientation_mode == "Predefined":
-                    base_orientation = st.selectbox(
-                        "Base Orientation",
-                        ["Horizontal {111} (0°)",
-                         "Tilted 30° (1¯10 projection)",
-                         "Tilted 60°",
-                         "Vertical {111} (90°)"],
-                        index=0,
-                        key="base_orientation_multi"
-                    )
-                   
-                    angle_map = {
-                        "Horizontal {111} (0°)": 0,
-                        "Tilted 30° (1¯10 projection)": 30,
-                        "Tilted 60°": 60,
-                        "Vertical {111} (90°)": 90,
-                    }
-                    base_theta = np.deg2rad(angle_map.get(base_orientation, 0))
-                    st.info(f"**Base θ:** {np.rad2deg(base_theta):.1f}°")
-                   
-                else:
-                    base_angle = st.slider(
-                        "Base Angle (degrees)",
-                        0.0, 90.0, 0.0, 0.5,
-                        key="base_angle_custom_multi"
-                    )
-                    base_theta = np.deg2rad(base_angle)
-                    base_orientation = st.session_state.interpolator.get_orientation_from_angle(base_angle)
-                    st.info(f"**Base θ:** {base_angle:.1f}°")
-                    st.info(f"**Orientation:** {base_orientation}")
-           
-            base_params = {
-                'defect_type': base_defect,
-                'shape': base_shape,
-                'orientation': base_orientation,
-                'theta': base_theta
-            }
-           
-            # Parameter ranges
-            st.markdown("### 📊 Parameter Ranges")
-           
-            st.markdown("#### ε* Range")
-            eps0_range_col1, eps0_range_col2, eps0_range_col3 = st.columns(3)
-            with eps0_range_col1:
-                eps0_min = st.number_input("Min ε*", 0.3, 3.0, 0.5, 0.1, key="eps0_min")
-            with eps0_range_col2:
-                eps0_max = st.number_input("Max ε*", 0.3, 3.0, 2.5, 0.1, key="eps0_max")
-            with eps0_range_col3:
-                eps0_steps = st.number_input("Steps", 2, 100, 10, 1, key="eps0_steps")
-           
-            st.markdown("#### κ Range")
-            kappa_range_col1, kappa_range_col2, kappa_range_col3 = st.columns(3)
-            with kappa_range_col1:
-                kappa_min = st.number_input("Min κ", 0.1, 2.0, 0.2, 0.05, key="kappa_min")
-            with kappa_range_col2:
-                kappa_max = st.number_input("Max κ", 0.1, 2.0, 1.5, 0.05, key="kappa_max")
-            with kappa_range_col3:
-                kappa_steps = st.number_input("Steps", 2, 50, 8, 1, key="kappa_steps")
-           
-            st.markdown("#### Orientation Range (Optional)")
-            use_orientation_range = st.checkbox("Vary orientation", value=False, key="use_orientation_range")
-           
-            if use_orientation_range:
-                if orientation_mode == "Predefined":
-                    orientation_options = st.multiselect(
-                        "Select orientations to include",
-                        ["Horizontal {111} (0°)", "Tilted 30° (1¯10 projection)", "Tilted 60°", "Vertical {111} (90°)"],
-                        default=["Horizontal {111} (0°)", "Vertical {111} (90°)"],
-                        key="orientation_multi_select"
-                    )
-                else:
-                    orientation_range_col1, orientation_range_col2, orientation_range_col3 = st.columns(3)
-                    with orientation_range_col1:
-                        angle_min = st.number_input("Min Angle (°)", 0.0, 90.0, 0.0, 1.0, key="angle_min")
-                    with orientation_range_col2:
-                        angle_max = st.number_input("Max Angle (°)", 0.0, 90.0, 90.0, 1.0, key="angle_max")
-                    with orientation_range_col3:
-                        angle_steps = st.number_input("Steps", 2, 20, 5, 1, key="angle_steps")
-           
-            # Generate parameter grid
-            if st.button("🔄 Generate Parameter Grid", type="primary"):
-                ranges_config = {}
-               
-                if eps0_max > eps0_min:
-                    ranges_config['eps0'] = {
-                        'min': float(eps0_min),
-                        'max': float(eps0_max),
-                        'steps': int(eps0_steps)
-                    }
-               
-                if kappa_max > kappa_min:
-                    ranges_config['kappa'] = {
-                        'min': float(kappa_min),
-                        'max': float(kappa_max),
-                        'steps': int(kappa_steps)
-                    }
-               
-                if use_orientation_range:
-                    if orientation_mode == "Predefined" and orientation_options:
-                        angle_map_rev = {
-                            "Horizontal {111} (0°)": 0,
-                            "Tilted 30° (1¯10 projection)": 30,
-                            "Tilted 60°": 60,
-                            "Vertical {111} (90°)": 90,
-                        }
-                        orientation_angles = [angle_map_rev[orient] for orient in orientation_options]
-                        ranges_config['theta'] = {
-                            'values': [np.deg2rad(angle) for angle in orientation_angles]
-                        }
-                    else:
-                        if angle_max > angle_min:
-                            angles = np.linspace(angle_min, angle_max, angle_steps)
-                            ranges_config['theta'] = {
-                                'values': [np.deg2rad(angle) for angle in angles]
-                            }
-               
-                param_grid = st.session_state.multi_target_manager.create_parameter_grid(
-                    base_params, ranges_config
-                )
-               
-                for param_set in param_grid:
-                    angle = np.rad2deg(param_set.get('theta', 0))
-                    param_set['orientation'] = st.session_state.interpolator.get_orientation_from_angle(angle)
-               
-                st.session_state.multi_target_params = param_grid
-               
-                st.success(f"✅ Generated {len(param_grid)} parameter combinations!")
-               
-                st.subheader("📋 Generated Parameter Grid")
-               
-                grid_data = []
-                for i, params in enumerate(param_grid):
-                    grid_data.append({
-                        'ID': i+1,
-                        'Defect': params.get('defect_type', 'Unknown'),
-                        'Shape': params.get('shape', 'Unknown'),
-                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                        'Orientation': params.get('orientation', 'Unknown'),
-                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
-                    })
-               
-                if grid_data:
-                    df_grid = pd.DataFrame(grid_data)
-                    st.dataframe(df_grid, use_container_width=True)
-           
-            if st.session_state.multi_target_params:
-                st.subheader("📊 Current Parameter Grid")
-               
-                grid_data = []
-                for i, params in enumerate(st.session_state.multi_target_params):
-                    grid_data.append({
-                        'ID': i+1,
-                        'Defect': params.get('defect_type', 'Unknown'),
-                        'Shape': params.get('shape', 'Unknown'),
-                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                        'Orientation': params.get('orientation', 'Unknown'),
-                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
-                    })
-               
-                if grid_data:
-                    df_grid = pd.DataFrame(grid_data)
-                    st.dataframe(df_grid, use_container_width=True)
-                   
-                    if st.button("🗑️ Clear Parameter Grid", type="secondary"):
-                        st.session_state.multi_target_params = []
-                        st.session_state.multi_target_predictions = {}
-                        st.success("Parameter grid cleared!")
-                        st.rerun()
-   
-    # Tab 4: Train & Predict
-    with tab4:
         st.subheader("Train Model and Predict")
        
-        prediction_mode = st.radio(
-            "Select Prediction Mode",
-            ["Single Target", "Multiple Targets (Batch)"],
-            index=0,
-            key="prediction_mode"
-        )
-       
         if len(st.session_state.source_simulations) < 2:
             st.warning("⚠️ Please load at least 2 source simulations first")
-        elif prediction_mode == "Single Target" and 'target_params' not in st.session_state:
-            st.warning("⚠️ Please configure single target parameters first")
-        elif prediction_mode == "Multiple Targets" and not st.session_state.multi_target_params:
-            st.warning("⚠️ Please generate a parameter grid first")
+        elif 'target_params' not in st.session_state:
+            st.warning("⚠️ Please configure target parameters first")
         else:
             col1, col2 = st.columns(2)
            
@@ -1908,140 +1560,83 @@ def create_attention_interface():
                 batch_size = st.slider("Batch Size", 1, 16, 4, 1)
                 validation_split = st.slider("Validation Split", 0.0, 0.5, 0.2, 0.05)
            
-            if prediction_mode == "Single Target":
-                if st.button("🚀 Train & Predict (Single Target)", type="primary"):
-                    with st.spinner("Training attention model and predicting..."):
-                        try:
-                            param_vectors = []
-                            stress_data = []
+            if st.button("🚀 Train & Predict", type="primary"):
+                with st.spinner("Training attention model and predicting..."):
+                    try:
+                        param_vectors = []
+                        stress_data = []
+                       
+                        for sim_data in st.session_state.source_simulations:
+                            param_vector, _ = st.session_state.interpolator.compute_parameter_vector(sim_data)
+                            param_vectors.append(param_vector)
                            
-                            for sim_data in st.session_state.source_simulations:
-                                param_vector, _ = st.session_state.interpolator.compute_parameter_vector(sim_data)
-                                param_vectors.append(param_vector)
-                               
-                                history = sim_data.get('history', [])
-                                if history:
-                                    eta, stress_fields = history[-1]
-                                    stress_components = np.stack([
-                                        stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                                        stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                                        stress_fields.get('von_mises', np.zeros_like(eta))
-                                    ], axis=0)
-                                    stress_data.append(stress_components)
-                           
-                            target_vector, _ = st.session_state.interpolator.compute_parameter_vector(
-                                {'params': st.session_state.target_params}
-                            )
-                           
-                            param_vectors = np.array(param_vectors)
-                            distances = np.sqrt(np.sum((param_vectors - target_vector) ** 2, axis=1))
-                            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
-                            weights = weights / (np.sum(weights) + 1e-8)
-                           
-                            stress_data = np.array(stress_data)
-                            weighted_stress = np.sum(stress_data * weights[:, np.newaxis, np.newaxis, np.newaxis], axis=0)
-                           
-                            predicted_stress = {
-                                'sigma_hydro': weighted_stress[0],
-                                'sigma_mag': weighted_stress[1],
-                                'von_mises': weighted_stress[2],
-                                'predicted': True
-                            }
-                           
-                            attention_weights = weights
-                            losses = np.random.rand(epochs) * 0.1
-                            losses = losses * (1 - np.linspace(0, 1, epochs))
-                           
-                            st.session_state.prediction_results = {
-                                'stress_fields': predicted_stress,
-                                'attention_weights': attention_weights,
-                                'target_params': st.session_state.target_params,
-                                'training_losses': losses,
-                                'source_count': len(st.session_state.source_simulations),
-                                'mode': 'single'
-                            }
-                           
-                            st.success("✅ Training and prediction complete!")
-                           
-                        except Exception as e:
-                            st.error(f"❌ Error during training/prediction: {str(e)}")
-           
-            else:
-                if st.button("🚀 Train & Predict (Multiple Targets)", type="primary"):
-                    with st.spinner(f"Running batch predictions for {len(st.session_state.multi_target_params)} targets..."):
-                        try:
-                            predictions = st.session_state.multi_target_manager.batch_predict(
-                                st.session_state.source_simulations,
-                                st.session_state.multi_target_params,
-                                st.session_state.interpolator
-                            )
-                           
-                            st.session_state.multi_target_predictions = predictions
-                           
-                            if predictions:
-                                first_key = list(predictions.keys())[0]
-                                st.session_state.prediction_results = {
-                                    'stress_fields': predictions[first_key],
-                                    'attention_weights': predictions[first_key]['attention_weights'],
-                                    'target_params': predictions[first_key]['target_params'],
-                                    'training_losses': np.random.rand(epochs) * 0.1 * (1 - np.linspace(0, 1, epochs)),
-                                    'source_count': len(st.session_state.source_simulations),
-                                    'mode': 'multi',
-                                    'current_target_index': 0,
-                                    'total_targets': len(predictions)
-                                }
-                           
-                            st.success(f"Batch predictions complete! Generated {len(predictions)} predictions")
-                           
-                        except Exception as e:
-                            st.error(f"❌ Error during batch prediction: {str(e)}")
+                            history = sim_data.get('history', [])
+                            if history:
+                                eta, stress_fields = history[-1]
+                                stress_components = np.stack([
+                                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
+                                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
+                                    stress_fields.get('von_mises', np.zeros_like(eta))
+                                ], axis=0)
+                                stress_data.append(stress_components)
+                       
+                        param_vectors = np.array(param_vectors)
+                        stress_data = np.stack(stress_data)  # (N, 3, H, W)
+                       
+                        source_params = torch.from_numpy(param_vectors).float()
+                        source_stress = torch.from_numpy(stress_data).float()
+                       
+                        losses = st.session_state.interpolator.train(
+                            source_params, source_stress, epochs=epochs, lr=learning_rate
+                        )
+                       
+                        target_vector, _ = st.session_state.interpolator.compute_parameter_vector(
+                            {'params': st.session_state.target_params}
+                        )
+                        target_param = torch.from_numpy(target_vector).float().unsqueeze(0)
+                       
+                        weights = st.session_state.interpolator.get_attention_weights(target_param, source_params)
+                       
+                        predicted_stress = torch.einsum('n,nchw->chw', weights, source_stress).numpy()
+                       
+                        predicted = {
+                            'sigma_hydro': predicted_stress[0],
+                            'sigma_mag': predicted_stress[1],
+                            'von_mises': predicted_stress[2],
+                            'predicted': True
+                        }
+                       
+                        attention_weights = weights.numpy()
+                       
+                        st.session_state.prediction_results = {
+                            'stress_fields': predicted,
+                            'attention_weights': attention_weights,
+                            'target_params': st.session_state.target_params,
+                            'training_losses': losses,
+                            'source_count': len(st.session_state.source_simulations),
+                            'mode': 'single'
+                        }
+                       
+                        st.success("✅ Training and prediction complete!")
+                       
+                    except Exception as e:
+                        st.error(f"❌ Error during training/prediction: {str(e)}")
    
-    # Tab 5: Results & Visualization
-    with tab5:
+    # Tab 4: Results & Visualization
+    with tab4:
         st.subheader("Prediction Results Visualization")
        
         if 'prediction_results' not in st.session_state:
             st.info("👈 Please train the model and make predictions first")
         else:
             results = st.session_state.prediction_results
-           
-            # Handle multi-target selection
-            if results.get('mode') == 'multi':
-                target_keys = list(st.session_state.multi_target_predictions.keys())
-                selected_target_key = st.selectbox(
-                    "Select Target Prediction",
-                    options=target_keys,
-                    index=results.get('current_target_index', 0),
-                    key="multi_target_selector"
-                )
-                selected_results = st.session_state.multi_target_predictions[selected_target_key]
-               
-                # Update current index for next time
-                results['current_target_index'] = target_keys.index(selected_target_key)
-               
-                # Unify access: multi-target predictions lack 'stress_fields' wrapper
-                if 'stress_fields' in selected_results:
-                    stress_fields = selected_results['stress_fields']
-                else:
-                    # Direct stress components at top level
-                    stress_fields = {
-                        'sigma_hydro': selected_results.get('sigma_hydro'),
-                        'sigma_mag': selected_results.get('sigma_mag'),
-                        'von_mises': selected_results.get('von_mises')
-                    }
-               
-                attention_weights = selected_results.get('attention_weights')
-                target_params = selected_results.get('target_params', {})
-                training_losses = results.get('training_losses')
-            else:
-                # Single prediction mode
-                stress_fields = results.get('stress_fields', {})
-                attention_weights = results.get('attention_weights')
-                target_params = results.get('target_params', {})
-                training_losses = results.get('training_losses')
+            stress_fields = results.get('stress_fields', {})
+            attention_weights = results.get('attention_weights')
+            target_params = results.get('target_params', {})
+            training_losses = results.get('training_losses')
            
             # Visualization controls
-            col_viz1, col_viz2, col_viz3 = st.columns(3)
+            col_viz1, col_viz2, col_viz3, col_viz4 = st.columns(4)
             with col_viz1:
                 stress_component = st.selectbox(
                     "Select Stress Component",
@@ -2063,6 +1658,13 @@ def create_attention_interface():
                     )
             with col_viz3:
                 show_contour = st.checkbox("Show Contour Lines", value=include_contours)
+            with col_viz4:
+                viz_option = st.radio(
+                    "View",
+                    ["Single View", "Comparison View"],
+                    horizontal=True,
+                    key="viz_option"
+                )
            
             # Store matplotlib figures for download
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -2122,46 +1724,34 @@ def create_attention_interface():
                     # Store for download
                     st.session_state.matplotlib_figures['stress_field'] = fig_matplotlib
                    
-                    # Download button for matplotlib figure - DIRECT PATTERN LIKE CSV
+                    # Download button for matplotlib figure
                     col_dl1, col_dl2, col_dl3 = st.columns(3)
                     with col_dl1:
-                        # PNG format
                         buf = BytesIO()
                         fig_matplotlib.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        buf.seek(0)
-                        png_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PNG",
-                            data=png_data,
+                            data=buf.getvalue(),
                             file_name=f"stress_field_{stress_component}_{timestamp}.png",
                             mime="image/png",
                             key=f"download_stress_png_{timestamp}"
                         )
                     with col_dl2:
-                        # PDF format
                         buf = BytesIO()
                         fig_matplotlib.savefig(buf, format="pdf", bbox_inches='tight')
-                        buf.seek(0)
-                        pdf_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PDF",
-                            data=pdf_data,
+                            data=buf.getvalue(),
                             file_name=f"stress_field_{stress_component}_{timestamp}.pdf",
                             mime="application/pdf",
                             key=f"download_stress_pdf_{timestamp}"
                         )
                     with col_dl3:
-                        # SVG format
                         buf = BytesIO()
                         fig_matplotlib.savefig(buf, format="svg", bbox_inches='tight')
-                        buf.seek(0)
-                        svg_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download SVG",
-                            data=svg_data,
+                            data=buf.getvalue(),
                             file_name=f"stress_field_{stress_component}_{timestamp}.svg",
                             mime="image/svg+xml",
                             key=f"download_stress_svg_{timestamp}"
@@ -2208,17 +1798,14 @@ def create_attention_interface():
                     # Store for download
                     st.session_state.matplotlib_figures['attention_weights'] = fig_weights
                    
-                    # Download button for attention weights - DIRECT PATTERN LIKE CSV
+                    # Download button for attention weights
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
                         buf = BytesIO()
                         fig_weights.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        buf.seek(0)
-                        png_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PNG",
-                            data=png_data,
+                            data=buf.getvalue(),
                             file_name=f"attention_weights_{timestamp}.png",
                             mime="image/png",
                             key=f"download_attention_png_{timestamp}"
@@ -2226,12 +1813,9 @@ def create_attention_interface():
                     with col_dl2:
                         buf = BytesIO()
                         fig_weights.savefig(buf, format="pdf", bbox_inches='tight')
-                        buf.seek(0)
-                        pdf_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PDF",
-                            data=pdf_data,
+                            data=buf.getvalue(),
                             file_name=f"attention_weights_{timestamp}.pdf",
                             mime="application/pdf",
                             key=f"download_attention_pdf_{timestamp}"
@@ -2260,17 +1844,14 @@ def create_attention_interface():
                     # Store for download
                     st.session_state.matplotlib_figures['training_losses'] = fig_losses
                    
-                    # Download button for training losses - DIRECT PATTERN LIKE CSV
+                    # Download button for training losses
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
                         buf = BytesIO()
                         fig_losses.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        buf.seek(0)
-                        png_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PNG",
-                            data=png_data,
+                            data=buf.getvalue(),
                             file_name=f"training_losses_{timestamp}.png",
                             mime="image/png",
                             key=f"download_losses_png_{timestamp}"
@@ -2278,18 +1859,15 @@ def create_attention_interface():
                     with col_dl2:
                         buf = BytesIO()
                         fig_losses.savefig(buf, format="pdf", bbox_inches='tight')
-                        buf.seek(0)
-                        pdf_data = buf.getvalue()
-                       
                         st.download_button(
                             label="📥 Download PDF",
-                            data=pdf_data,
+                            data=buf.getvalue(),
                             file_name=f"training_losses_{timestamp}.pdf",
                             mime="application/pdf",
                             key=f"download_losses_pdf_{timestamp}"
                         )
            
-            # Statistics table with DIRECT CSV DOWNLOAD
+            # Statistics table
             st.subheader("📊 Stress Statistics")
            
             stats_data = []
@@ -2314,18 +1892,18 @@ def create_attention_interface():
                     '95th %ile': '{:.3f}'
                 }), use_container_width=True)
                
-                # Download statistics as CSV - DIRECT PATTERN
-                csv_data = df_stats.to_csv(index=False).encode('utf-8')  # Upgraded to bytes
+                # Download statistics as CSV
+                csv = df_stats.to_csv(index=False)
                 st.download_button(
                     label="📥 Download Statistics CSV",
-                    data=csv_data,
+                    data=csv,
                     file_name=f"stress_statistics_{timestamp}.csv",
                     mime="text/csv",
                     key=f"download_stats_{timestamp}"
                 )
    
-    # Tab 6: Time Frame Analysis
-    with tab6:
+    # Tab 5: Time Frame Analysis
+    with tab5:
         st.subheader("⏱️ Time Frame Analysis")
        
         if not st.session_state.source_simulations:
@@ -2357,7 +1935,7 @@ def create_attention_interface():
                         selected_sim, max_frames
                     )
                     st.session_state.time_frames = time_frames
-                    st.success(f"✅ Extracted {len(time_frames.get('frame_numbers', []))} time frames!")
+                    st.success(f"✅ Extracted {len(len(time_frames.get('frame_numbers', [])))} time frames!")
            
             if 'time_frames' in st.session_state and st.session_state.time_frames:
                 time_frames = st.session_state.time_frames
@@ -2380,17 +1958,14 @@ def create_attention_interface():
                 if fig_time_series:
                     st.pyplot(fig_time_series)
                    
-                    # Download time series plot - DIRECT PATTERN
+                    # Download time series plot
                     col_dl1, col_dl2, col_dl3 = st.columns(3)
                     with col_dl1:
                         buf = BytesIO()
                         fig_time_series.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        buf.seek(0)
-                        png_data = buf.getvalue()
-                       
                         st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
+                            label="📥 Download Time Series PNG",
+                            data=buf.getvalue(),
                             file_name=f"time_series_{time_component}_{timestamp}.png",
                             mime="image/png",
                             key=f"download_time_png_{timestamp}"
@@ -2398,12 +1973,9 @@ def create_attention_interface():
                     with col_dl2:
                         buf = BytesIO()
                         fig_time_series.savefig(buf, format="pdf", bbox_inches='tight')
-                        buf.seek(0)
-                        pdf_data = buf.getvalue()
-                       
                         st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
+                            label="📥 Download Time Series PDF",
+                            data=buf.getvalue(),
                             file_name=f"time_series_{time_component}_{timestamp}.pdf",
                             mime="application/pdf",
                             key=f"download_time_pdf_{timestamp}"
@@ -2411,12 +1983,9 @@ def create_attention_interface():
                     with col_dl3:
                         buf = BytesIO()
                         fig_time_series.savefig(buf, format="svg", bbox_inches='tight')
-                        buf.seek(0)
-                        svg_data = buf.getvalue()
-                       
                         st.download_button(
-                            label="📥 Download SVG",
-                            data=svg_data,
+                            label="📥 Download Time Series SVG",
+                            data=buf.getvalue(),
                             file_name=f"time_series_{time_component}_{timestamp}.svg",
                             mime="image/svg+xml",
                             key=f"download_time_svg_{timestamp}"
@@ -2432,17 +2001,14 @@ def create_attention_interface():
                 if fig_metrics:
                     st.pyplot(fig_metrics)
                    
-                    # Download metrics plot - DIRECT PATTERN
+                    # Download metrics plot
                     col_dl1, col_dl2 = st.columns(2)
                     with col_dl1:
                         buf = BytesIO()
                         fig_metrics.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        buf.seek(0)
-                        png_data = buf.getvalue()
-                       
                         st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
+                            label="📥 Download Metrics PNG",
+                            data=buf.getvalue(),
                             file_name=f"stress_metrics_{timestamp}.png",
                             mime="image/png",
                             key=f"download_metrics_png_{timestamp}"
@@ -2450,12 +2016,9 @@ def create_attention_interface():
                     with col_dl2:
                         buf = BytesIO()
                         fig_metrics.savefig(buf, format="pdf", bbox_inches='tight')
-                        buf.seek(0)
-                        pdf_data = buf.getvalue()
-                       
                         st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
+                            label="📥 Download Metrics PDF",
+                            data=buf.getvalue(),
                             file_name=f"stress_metrics_{timestamp}.pdf",
                             mime="application/pdf",
                             key=f"download_metrics_pdf_{timestamp}"
@@ -2463,7 +2026,7 @@ def create_attention_interface():
                    
                     plt.close(fig_metrics)
                
-                # Individual frame download - DIRECT PATTERN
+                # Individual frame download
                 st.subheader("📥 Download Individual Time Frames")
                
                 if time_component in time_frames:
@@ -2486,200 +2049,229 @@ def create_attention_interface():
                             st.pyplot(fig_mini)
                             plt.close(fig_mini)
                            
-                            # Download button for individual frame - DIRECT PATTERN
+                            # Download button for individual frame
                             buf = BytesIO()
                             np.save(buf, frame_data)
-                            buf.seek(0)
-                            npy_data = buf.getvalue()
-                           
                             st.download_button(
                                 label=f"📥 Frame {frame_num} (NPY)",
-                                data=npy_data,
+                                data=buf.getvalue(),
                                 file_name=f"frame_{frame_num}_{time_component}_{timestamp}.npy",
                                 mime="application/octet-stream",
                                 key=f"download_frame_{frame_num}_{timestamp}"
                             )
    
-    # Tab 7: Export Results (UPGRADED WITH BETTER BINARY HANDLING)
-    with tab7:
+    # Tab 6: Save & Export Results
+    with tab6:
         st.subheader("💾 Export Prediction Results")
        
-        # Check available data
-        has_single_prediction = 'prediction_results' in st.session_state
-        has_multi_predictions = ('multi_target_predictions' in st.session_state and
-                                len(st.session_state.multi_target_predictions) > 0)
+        # Check if we have predictions to save
+        has_prediction = 'prediction_results' in st.session_state
        
-        if not has_single_prediction and not has_multi_predictions:
+        if not has_prediction:
             st.warning("⚠️ No prediction results available to save. Please run predictions first.")
         else:
             st.success("✅ Prediction results available for export!")
            
             # Display what's available
-            if has_single_prediction:
-                st.info(f"**Single Target Prediction:** Available")
-                single_params = st.session_state.prediction_results.get('target_params', {})
-                st.write(f"- Target: {single_params.get('defect_type', 'Unknown')}, "
-                        f"ε*={single_params.get('eps0', 0):.3f}, "
-                        f"κ={single_params.get('kappa', 0):.3f}")
-           
-            if has_multi_predictions:
-                st.info(f"**Multiple Target Predictions:** {len(st.session_state.multi_target_predictions)} available")
+            st.info(f"**Single Target Prediction:** Available")
+            single_params = st.session_state.prediction_results.get('target_params', {})
+            st.write(f"- Target: {single_params.get('defect_type', 'Unknown')}, "
+                    f"ε*={single_params.get('eps0', 0):.3f}, "
+                    f"κ={single_params.get('kappa', 0):.3f}")
            
             st.divider()
            
-            # Simplified download options
-            st.subheader("⬇️ Direct Download")
+            # Save options
+            st.subheader("📁 Export Options")
            
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_filename = st.text_input(
-                "Base filename for downloads",
-                value=f"prediction_{timestamp}",
-                help="All files will use this base name"
-            )
+            save_col1, save_col2, save_col3 = st.columns(3)
            
-            # SINGLE ROW OF DOWNLOAD BUTTONS - DIRECT PATTERN LIKE CSV
-            st.markdown("### 📁 Download Results in Various Formats")
+            with save_col1:
+                save_mode = "Current Single Prediction"
+                st.write("Exporting single prediction")
            
-            # Row 1: Main formats
-            col1, col2, col3 = st.columns(3)
+            with save_col2:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                base_filename = st.text_input(
+                    "Base filename",
+                    value=f"prediction_{timestamp}",
+                    help="Files will be saved with this base name plus appropriate extensions"
+                )
            
-            with col1:
-                # PKL Format - DIRECT PATTERN
-                if has_single_prediction:
-                    # Prepare data
-                    save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
-                        st.session_state.prediction_results,
-                        st.session_state.source_simulations,
-                        'single'
-                    )
-                   
-                    # Serialize to bytes
-                    pkl_buffer = BytesIO()
-                    pickle.dump(save_data, pkl_buffer, protocol=pickle.HIGHEST_PROTOCOL)
-                    pkl_buffer.seek(0)
-                    pkl_data = pkl_buffer.getvalue()
-                   
-                    # Download button (direct like CSV)
+            with save_col3:
+                include_source_info = st.checkbox("Include source simulations info", value=True)
+                include_visualizations = st.checkbox("Include visualization data", value=True)
+           
+            st.divider()
+           
+            # Save/Download buttons
+            st.subheader("⬇️ Download Options")
+           
+            dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
+           
+            # PKL download
+            with dl_col1:
+                st.markdown("**PKL Format**")
+                prepare_pkl = st.button("💾 Prepare PKL", type="secondary", use_container_width=True, key="prepare_pkl")
+               
+                if prepare_pkl:
+                    with st.spinner("Preparing PKL file..."):
+                        try:
+                            save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
+                                st.session_state.prediction_results,
+                                st.session_state.source_simulations
+                            )
+                           
+                            # Add metadata
+                            save_data['save_info'] = {
+                                'format': 'pkl',
+                                'timestamp': timestamp,
+                                'mode': 'single'
+                            }
+                           
+                            # Create download link
+                            pkl_buffer = BytesIO()
+                            pickle.dump(save_data, pkl_buffer, protocol=pickle.HIGHEST_PROTOCOL)
+                            pkl_buffer.seek(0)
+                            st.session_state.download_pkl_data = pkl_buffer.getvalue()
+                            st.success("✅ PKL file prepared!")
+                           
+                        except Exception as e:
+                            st.error(f"❌ Error preparing PKL: {str(e)}")
+               
+                # Always show download button if data exists
+                if st.session_state.download_pkl_data:
                     st.download_button(
                         label="📥 Download PKL",
-                        data=pkl_data,
+                        data=st.session_state.download_pkl_data,
                         file_name=f"{base_filename}.pkl",
                         mime="application/octet-stream",
-                        key=f"download_pkl_{timestamp}",
+                        key="download_pkl_final",
                         use_container_width=True
                     )
-                    st.caption("Python Pickle format")
+                else:
+                    st.caption("Click 'Prepare PKL' first")
            
-            with col2:
-                # PT Format - DIRECT PATTERN
-                if has_single_prediction:
-                    # Prepare data (same as for PKL)
-                    save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
-                        st.session_state.prediction_results,
-                        st.session_state.source_simulations,
-                        'single'
-                    )
-                   
-                    # Serialize to bytes
-                    pt_buffer = BytesIO()
-                    torch.save(save_data, pt_buffer)
-                    pt_buffer.seek(0)
-                    pt_data = pt_buffer.getvalue()
-                   
-                    # Download button (direct like CSV)
+            # PT download
+            with dl_col2:
+                st.markdown("**PT Format**")
+                prepare_pt = st.button("💾 Prepare PT", type="secondary", use_container_width=True, key="prepare_pt")
+               
+                if prepare_pt:
+                    with st.spinner("Preparing PT file..."):
+                        try:
+                            save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
+                                st.session_state.prediction_results,
+                                st.session_state.source_simulations
+                            )
+                           
+                            # Add metadata
+                            save_data['save_info'] = {
+                                'format': 'pt',
+                                'timestamp': timestamp,
+                                'mode': 'single'
+                            }
+                           
+                            # Create download link
+                            pt_buffer = BytesIO()
+                            torch.save(save_data, pt_buffer)
+                            pt_buffer.seek(0)
+                            st.session_state.download_pt_data = pt_buffer.getvalue()
+                            st.success("✅ PT file prepared!")
+                           
+                        except Exception as e:
+                            st.error(f"❌ Error preparing PT: {str(e)}")
+               
+                # Always show download button if data exists
+                if st.session_state.download_pt_data:
                     st.download_button(
                         label="📥 Download PT",
-                        data=pt_data,
+                        data=st.session_state.download_pt_data,
                         file_name=f"{base_filename}.pt",
                         mime="application/octet-stream",
-                        key=f"download_pt_{timestamp}",
+                        key="download_pt_final",
                         use_container_width=True
                     )
-                    st.caption("PyTorch format")
+                else:
+                    st.caption("Click 'Prepare PT' first")
            
-            with col3:
-                # ZIP Archive - DIRECT PATTERN
-                if has_single_prediction:
-                    # Create archive
-                    zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
-                        st.session_state.prediction_results,
-                        st.session_state.source_simulations
-                    )
-                    zip_buffer.seek(0)
-                    zip_data = zip_buffer.getvalue()
-                   
-                    # Download button (direct like CSV)
+            # ZIP download
+            with dl_col3:
+                st.markdown("**ZIP Archive**")
+                prepare_zip = st.button("📦 Prepare ZIP", type="primary", use_container_width=True, key="prepare_zip")
+               
+                if prepare_zip:
+                    with st.spinner("Creating comprehensive archive..."):
+                        try:
+                            zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
+                                st.session_state.prediction_results,
+                                st.session_state.source_simulations
+                            )
+                            st.session_state.download_zip_data = zip_buffer.getvalue()
+                            st.session_state.download_zip_filename = f"{base_filename}_complete.zip"
+                            st.success("✅ ZIP archive prepared!")
+                           
+                        except Exception as e:
+                            st.error(f"❌ Error creating archive: {str(e)}")
+               
+                # Always show download button if data exists
+                if st.session_state.download_zip_data and st.session_state.download_zip_filename:
                     st.download_button(
-                        label="📦 Download ZIP Archive",
-                        data=zip_data,
-                        file_name=f"{base_filename}_complete.zip",
+                        label="📥 Download ZIP",
+                        data=st.session_state.download_zip_data,
+                        file_name=st.session_state.download_zip_filename,
                         mime="application/zip",
-                        key=f"download_zip_{timestamp}",
+                        key="download_zip_final",
                         use_container_width=True
                     )
-                    st.caption("Complete results package")
+                else:
+                    st.caption("Click 'Prepare ZIP' first")
+           
+            # Clear all button
+            with dl_col4:
+                st.markdown("**Clear All**")
+                if st.button("🗑️ Clear All Prepared", type="secondary", use_container_width=True):
+                    st.session_state.download_pkl_data = None
+                    st.session_state.download_pt_data = None
+                    st.session_state.download_zip_data = None
+                    st.session_state.download_zip_filename = None
+                    st.success("✅ All prepared files cleared!")
+                    st.rerun()
+                st.caption("Clears prepared download files from memory")
            
             st.divider()
            
-            # Row 2: Individual files - DIRECT PATTERN
-            st.markdown("### 📄 Download Individual Components")
-           
-            if has_single_prediction:
-                col1, col2, col3, col4 = st.columns(4)
+            # Advanced options
+            with st.expander("⚙️ Advanced Export Options", expanded=False):
+                col_adv1, col_adv2 = st.columns(2)
                
-                with col1:
-                    # Stress fields as NPZ - DIRECT PATTERN
-                    stress_fields = st.session_state.prediction_results.get('stress_fields', {})
-                    if stress_fields:
-                        for field_name, field_data in stress_fields.items():
-                            if isinstance(field_data, np.ndarray):
-                                # Serialize to bytes
-                                npz_buffer = BytesIO()
-                                np.savez_compressed(npz_buffer, data=field_data)
-                                npz_buffer.seek(0)
-                                npz_data = npz_buffer.getvalue()
-                               
-                                # Download button
-                                st.download_button(
-                                    label=f"📥 {field_name}.npz",
-                                    data=npz_data,
-                                    file_name=f"{base_filename}_{field_name}.npz",
-                                    mime="application/octet-stream",
-                                    key=f"download_npz_{field_name}_{timestamp}",
-                                    use_container_width=True
-                                )
+                with col_adv1:
+                    # Export stress fields as separate files
+                    st.markdown("**Separate Stress Fields**")
+                    stress_fields = st.session_state.prediction_results.get('stress_fields', {}) 
+                   
+                    for field_name, field_data in stress_fields.items():
+                        if isinstance(field_data, np.ndarray):
+                            npz_buffer = BytesIO()
+                            np.savez_compressed(npz_buffer, data=field_data)
+                            npz_buffer.seek(0)
+                           
+                            st.download_button(
+                                label=f"📥 {field_name}.npz",
+                                data=npz_buffer.getvalue(),
+                                file_name=f"{base_filename}_{field_name}.npz",
+                                mime="application/octet-stream",
+                                key=f"download_npz_{field_name}_{timestamp}"
+                            )
                
-                with col2:
-                    # Attention weights CSV - DIRECT PATTERN (SAME AS CSV EXAMPLE)
-                    if 'attention_weights' in st.session_state.prediction_results:
-                        weights = st.session_state.prediction_results['attention_weights']
-                        if hasattr(weights, 'flatten'):
-                            weights = weights.flatten()
-                       
-                        weight_df = pd.DataFrame({
-                            'source_id': [f'S{i+1}' for i in range(len(weights))],
-                            'weight': weights,
-                            'percent_contribution': 100 * weights / (np.sum(weights) + 1e-10)
-                        })
-                       
-                        # Serialize to bytes (CSV)
-                        csv_data = weight_df.to_csv(index=False).encode('utf-8')
-                       
-                        # Download button (direct like CSV)
-                        st.download_button(
-                            label="📥 Attention Weights CSV",
-                            data=csv_data,
-                            file_name=f"{base_filename}_attention_weights.csv",
-                            mime="text/csv",
-                            key=f"download_attention_csv_{timestamp}",
-                            use_container_width=True
-                        )
-               
-                with col3:
-                    # Target parameters JSON - DIRECT PATTERN
+                with col_adv2:
+                    # Export to other formats
+                    st.markdown("**Export Formats**")
+                   
+                    # JSON export
                     target_params = st.session_state.prediction_results.get('target_params', {})
                     if target_params:
-                        # Convert numpy types for JSON
+                        # Helper function to convert numpy types for JSON
                         def convert_for_json(obj):
                             if isinstance(obj, (np.float32, np.float64, np.float16)):
                                 return float(obj)
@@ -2692,23 +2284,19 @@ def create_attention_interface():
                             else:
                                 return obj
                        
-                        # Serialize to bytes (JSON)
-                        json_str = json.dumps(target_params, indent=2, default=convert_for_json).encode('utf-8')
+                        json_str = json.dumps(target_params, indent=2, default=convert_for_json)
                        
-                        # Download button (direct like CSV)
                         st.download_button(
                             label="📥 Parameters JSON",
                             data=json_str,
                             file_name=f"{base_filename}_params.json",
                             mime="application/json",
-                            key=f"download_json_{timestamp}",
-                            use_container_width=True
+                            key=f"download_json_{timestamp}"
                         )
-               
-                with col4:
-                    # Statistics CSV - DIRECT PATTERN (SAME AS CSV EXAMPLE)
-                    stress_fields = st.session_state.prediction_results.get('stress_fields', {})
-                    if stress_fields:
+                   
+                    # CSV export
+                    if 'stress_fields' in st.session_state.prediction_results:
+                        stress_fields = st.session_state.prediction_results['stress_fields']
                         stats_rows = []
                         for field_name, field_data in stress_fields.items():
                             if isinstance(field_data, np.ndarray):
@@ -2723,8 +2311,48 @@ def create_attention_interface():
                        
                         if stats_rows:
                             stats_df = pd.DataFrame(stats_rows)
-                            # Serialize to bytes (CSV)
-                            csv_data = stats_df.to_csv(index=False).encode('utf-8')
+                            csv_data = stats_df.to_csv(index=False)
                            
-                            # Download button (direct like CSV)
-                            st.download_button
+                            st.download_button(
+                                label="📥 Statistics CSV",
+                                data=csv_data,
+                                file_name=f"{base_filename}_stats.csv",
+                                mime="text/csv",
+                                key=f"download_csv_{timestamp}"
+                            )
+           
+            # EXPANDED SECTION: Download saved files from directory
+            st.divider()
+            st.subheader("📥 Download Files from numerical_solutions Directory")
+            all_files_info = st.session_state.solutions_manager.get_all_files()
+            all_files_info.sort(key=lambda x: datetime.fromisoformat(x['modified']), reverse=True) # Newest first
+           
+            if not all_files_info:
+                st.info("No files found in the numerical_solutions directory.")
+            else:
+                with st.expander("📂 All Files in Directory (Newest First, Up to 20)", expanded=True):
+                    for file_info in all_files_info[:20]: # Limit to 20 to avoid UI clutter
+                        file_path = file_info['path']
+                        file_name = file_info['filename']
+                        file_size_kb = file_info['size'] // 1024
+                        modified_time = file_info['modified']
+                       
+                        col_file1, col_file2 = st.columns([3, 1])
+                        with col_file1:
+                            st.write(f"**{file_name}** ({file_size_kb}KB, modified {modified_time})")
+                        with col_file2:
+                            try:
+                                with open(file_path, 'rb') as f:
+                                    file_data = f.read()
+                                st.download_button(
+                                    label="📥 Download",
+                                    data=file_data,
+                                    file_name=file_name,
+                                    mime="application/octet-stream",
+                                    key=f"download_dir_{file_name}_{hash(file_path)}" # Unique key
+                                )
+                            except Exception as e:
+                                st.error(f"Error reading {file_name}: {str(e)}")
+if __name__ == "__main__":
+    create_attention_interface()
+st.caption(f"🔬 Attention Interpolation • PKL/PT/ZIP Support • Matplotlib & Plotly Visualizations • {datetime.now().year}")
