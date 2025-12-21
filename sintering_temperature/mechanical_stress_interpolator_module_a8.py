@@ -936,23 +936,33 @@ class SpatialLocalityAttentionInterpolator:
             raise ValueError("No source parameters provided for attention weights computation")
         
         # Prepare embeddings with correct dimensions
-        target_embed = self.model.param_embedding(target_param).unsqueeze(0)  # (1, d_model) -> (1, 1, d_model)
-        source_embeds = self.model.param_embedding(source_params).unsqueeze(0)  # (N, d_model) -> (1, N, d_model)
+        # target_param: (1, input_dim) -> (1, d_model)
+        # source_params: (N, input_dim) -> (N, d_model)
+        target_embed = self.model.param_embedding(target_param)  # (1, d_model)
+        source_embeds = self.model.param_embedding(source_params)  # (N, d_model)
         
-        # Compute attention
-        _, attn_weights = self.model.attention(
-            target_embed, 
-            source_embeds, 
-            source_embeds, 
-            average_attn_weights=False
-        )  # (num_heads, 1, N)
+        # For multi-head attention, we need to add sequence dimension
+        # target_embed: (1, 1, d_model) [batch_size=1, seq_len=1, d_model]
+        # source_embeds: (1, N, d_model) [batch_size=1, seq_len=N, d_model]
+        target_embed_seq = target_embed.unsqueeze(1)  # (1, 1, d_model)
+        source_embeds_seq = source_embeds.unsqueeze(0)  # (1, N, d_model)
         
-        # Average across heads to get single weight per source
-        weights = attn_weights.mean(dim=0)  # (1, N)
-        weights = weights.squeeze(0)  # (N,)
+        # Compute attention with average_attn_weights=True to get averaged attention weights
+        # This returns attention weights averaged over heads
+        attn_output, attn_weights = self.model.attention(
+            target_embed_seq, 
+            source_embeds_seq, 
+            source_embeds_seq, 
+            average_attn_weights=True
+        )
         
-        # Normalize weights
+        # attn_weights shape: (1, 1, N) when average_attn_weights=True
+        # Squeeze to get (N,)
+        weights = attn_weights.squeeze(0).squeeze(0)  # (N,)
+        
+        # Ensure weights sum to 1
         weights = torch.softmax(weights, dim=0)
+        
         return weights
 
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
@@ -986,6 +996,12 @@ class SpatialLocalityAttentionInterpolator:
                 # Get attention weights
                 weights = self.get_attention_weights(target_param, src_params)  # (N-1,)
                 
+                # Debug: check weights shape
+                if weights.dim() != 1:
+                    st.warning(f"Warning: weights is not 1D, shape: {weights.shape}")
+                    # Try to fix by squeezing
+                    weights = weights.squeeze()
+                
                 # Check dimensions before einsum
                 if weights.dim() != 1:
                     raise ValueError(f"Expected 1D weights tensor, got shape {weights.shape}")
@@ -1012,6 +1028,10 @@ class SpatialLocalityAttentionInterpolator:
                 losses.append(epoch_loss / valid_iterations)
             else:
                 losses.append(0.0)
+            
+            # Print progress every 10 epochs
+            if (epoch + 1) % 10 == 0:
+                st.info(f"Epoch {epoch+1}/{epochs}, Loss: {losses[-1]:.6f}")
         
         return losses
 
