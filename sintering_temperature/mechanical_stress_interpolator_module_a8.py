@@ -2295,17 +2295,15 @@ def create_attention_interface():
           
             st.divider()
           
-            # Save/Download buttons
-            st.subheader("⬇️ Download Options")
+            # Save/Download buttons - DIRECT DOWNLOAD (no prepare step needed)
+            st.subheader("⬇️ Direct Download Options")
           
             dl_col1, dl_col2, dl_col3, dl_col4 = st.columns(4)
           
-            # PKL download
+            # PKL download - DIRECT
             with dl_col1:
                 st.markdown("**PKL Format**")
-                prepare_pkl = st.button("💾 Prepare PKL", type="secondary", use_container_width=True, key="prepare_pkl")
-              
-                if prepare_pkl:
+                if st.button("📥 Download PKL", type="secondary", use_container_width=True, key="download_pkl_direct"):
                     with st.spinner("Preparing PKL file..."):
                         try:
                             save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
@@ -2324,31 +2322,27 @@ def create_attention_interface():
                             pkl_buffer = BytesIO()
                             pickle.dump(save_data, pkl_buffer, protocol=pickle.HIGHEST_PROTOCOL)
                             pkl_buffer.seek(0)
-                            st.session_state.download_pkl_data = pkl_buffer.getvalue()
-                            st.success("✅ PKL file prepared!")
+                            pkl_data = pkl_buffer.getvalue()
+                          
+                            st.download_button(
+                                label="💾 Click to Save PKL",
+                                data=pkl_data,
+                                file_name=f"{base_filename}.pkl",
+                                mime="application/octet-stream",
+                                key="download_pkl_final_direct",
+                                use_container_width=True
+                            )
+                            st.success("✅ PKL file ready for download!")
                           
                         except Exception as e:
                             st.error(f"❌ Error preparing PKL: {str(e)}")
-              
-                # Always show download button if data exists
-                if st.session_state.download_pkl_data:
-                    st.download_button(
-                        label="📥 Download PKL",
-                        data=st.session_state.download_pkl_data,
-                        file_name=f"{base_filename}.pkl",
-                        mime="application/octet-stream",
-                        key="download_pkl_final",
-                        use_container_width=True
-                    )
                 else:
-                    st.caption("Click 'Prepare PKL' first")
+                    st.caption("Click to generate and download PKL file")
           
-            # PT download
+            # PT download - DIRECT
             with dl_col2:
                 st.markdown("**PT Format**")
-                prepare_pt = st.button("💾 Prepare PT", type="secondary", use_container_width=True, key="prepare_pt")
-              
-                if prepare_pt:
+                if st.button("📥 Download PT", type="secondary", use_container_width=True, key="download_pt_direct"):
                     with st.spinner("Preparing PT file..."):
                         try:
                             save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
@@ -2367,61 +2361,55 @@ def create_attention_interface():
                             pt_buffer = BytesIO()
                             torch.save(save_data, pt_buffer)
                             pt_buffer.seek(0)
-                            st.session_state.download_pt_data = pt_buffer.getvalue()
-                            st.success("✅ PT file prepared!")
+                            pt_data = pt_buffer.getvalue()
+                          
+                            st.download_button(
+                                label="💾 Click to Save PT",
+                                data=pt_data,
+                                file_name=f"{base_filename}.pt",
+                                mime="application/octet-stream",
+                                key="download_pt_final_direct",
+                                use_container_width=True
+                            )
+                            st.success("✅ PT file ready for download!")
                           
                         except Exception as e:
                             st.error(f"❌ Error preparing PT: {str(e)}")
-              
-                # Always show download button if data exists
-                if st.session_state.download_pt_data:
-                    st.download_button(
-                        label="📥 Download PT",
-                        data=st.session_state.download_pt_data,
-                        file_name=f"{base_filename}.pt",
-                        mime="application/octet-stream",
-                        key="download_pt_final",
-                        use_container_width=True
-                    )
                 else:
-                    st.caption("Click 'Prepare PT' first")
+                    st.caption("Click to generate and download PT file")
           
-            # ZIP download
+            # ZIP download - DIRECT
             with dl_col3:
                 st.markdown("**ZIP Archive**")
-                prepare_zip = st.button("📦 Prepare ZIP", type="primary", use_container_width=True, key="prepare_zip")
-              
-                if prepare_zip:
+                if st.button("📦 Download ZIP", type="primary", use_container_width=True, key="download_zip_direct"):
                     with st.spinner("Creating comprehensive archive..."):
                         try:
                             zip_buffer = st.session_state.prediction_results_manager.create_single_prediction_archive(
                                 st.session_state.prediction_results,
                                 st.session_state.source_simulations
                             )
-                            st.session_state.download_zip_data = zip_buffer.getvalue()
-                            st.session_state.download_zip_filename = f"{base_filename}_complete.zip"
-                            st.success("✅ ZIP archive prepared!")
+                            zip_data = zip_buffer.getvalue()
+                            zip_filename = f"{base_filename}_complete.zip"
+                          
+                            st.download_button(
+                                label="📦 Click to Save ZIP",
+                                data=zip_data,
+                                file_name=zip_filename,
+                                mime="application/zip",
+                                key="download_zip_final_direct",
+                                use_container_width=True
+                            )
+                            st.success("✅ ZIP archive ready for download!")
                           
                         except Exception as e:
                             st.error(f"❌ Error creating archive: {str(e)}")
-              
-                # Always show download button if data exists
-                if st.session_state.download_zip_data and st.session_state.download_zip_filename:
-                    st.download_button(
-                        label="📥 Download ZIP",
-                        data=st.session_state.download_zip_data,
-                        file_name=st.session_state.download_zip_filename,
-                        mime="application/zip",
-                        key="download_zip_final",
-                        use_container_width=True
-                    )
                 else:
-                    st.caption("Click 'Prepare ZIP' first")
+                    st.caption("Click to generate and download ZIP archive")
           
             # Clear all button
             with dl_col4:
                 st.markdown("**Clear All**")
-                if st.button("🗑️ Clear All Prepared", type="secondary", use_container_width=True):
+                if st.button("🗑️ Clear All Downloads", type="secondary", use_container_width=True):
                     st.session_state.download_pkl_data = None
                     st.session_state.download_pt_data = None
                     st.session_state.download_zip_data = None
@@ -2429,6 +2417,90 @@ def create_attention_interface():
                     st.success("✅ All prepared files cleared!")
                     st.rerun()
                 st.caption("Clears prepared download files from memory")
+          
+            st.divider()
+          
+            # Option 2: Single-click download for all formats at once
+            st.subheader("🎯 One-Click Download All Formats")
+            col_oneclick1, col_oneclick2, col_oneclick3 = st.columns([2, 1, 1])
+            
+            with col_oneclick1:
+                st.markdown("**Download all formats at once:**")
+            
+            with col_oneclick2:
+                if st.button("🚀 Download All", type="primary", key="download_all_formats"):
+                    with st.spinner("Preparing all formats..."):
+                        try:
+                            # Prepare all formats
+                            save_data = st.session_state.prediction_results_manager.prepare_prediction_data_for_saving(
+                                st.session_state.prediction_results,
+                                st.session_state.source_simulations
+                            )
+                            
+                            # Create a new ZIP with all formats
+                            zip_buffer_all = BytesIO()
+                            with zipfile.ZipFile(zip_buffer_all, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                                # Add PKL
+                                pkl_buffer = BytesIO()
+                                pickle.dump(save_data, pkl_buffer, protocol=pickle.HIGHEST_PROTOCOL)
+                                pkl_buffer.seek(0)
+                                zip_file.writestr(f"{base_filename}.pkl", pkl_buffer.read())
+                                
+                                # Add PT
+                                pt_buffer = BytesIO()
+                                torch.save(save_data, pt_buffer)
+                                pt_buffer.seek(0)
+                                zip_file.writestr(f"{base_filename}.pt", pt_buffer.read())
+                                
+                                # Add stress fields
+                                stress_fields = st.session_state.prediction_results.get('stress_fields', {})
+                                for field_name, field_data in stress_fields.items():
+                                    if isinstance(field_data, np.ndarray):
+                                        npz_buffer = BytesIO()
+                                        np.savez_compressed(npz_buffer, data=field_data)
+                                        npz_buffer.seek(0)
+                                        zip_file.writestr(f"{base_filename}_{field_name}.npz", npz_buffer.read())
+                                
+                                # Add attention weights CSV
+                                if 'attention_weights' in st.session_state.prediction_results:
+                                    weights = st.session_state.prediction_results['attention_weights']
+                                    if hasattr(weights, 'flatten'):
+                                        weights = weights.flatten()
+                                    
+                                    weight_df = pd.DataFrame({
+                                        'source_id': [f'S{i+1}' for i in range(len(weights))],
+                                        'weight': weights,
+                                        'percent_contribution': 100 * weights / (np.sum(weights) + 1e-10)
+                                    })
+                                    csv_data = weight_df.to_csv(index=False)
+                                    zip_file.writestr(f"{base_filename}_attention_weights.csv", csv_data)
+                                
+                                # Add README
+                                readme_content = f"""# All Format Prediction Results
+Generated: {datetime.now().isoformat()}
+Includes: PKL, PT, NPZ, and CSV files
+Base filename: {base_filename}
+"""
+                                zip_file.writestr(f"README_{base_filename}.txt", readme_content)
+                            
+                            zip_buffer_all.seek(0)
+                            zip_data_all = zip_buffer_all.getvalue()
+                            
+                            st.download_button(
+                                label="📦 Download All Formats ZIP",
+                                data=zip_data_all,
+                                file_name=f"{base_filename}_ALL_FORMATS.zip",
+                                mime="application/zip",
+                                key="download_all_formats_zip",
+                                use_container_width=True
+                            )
+                            st.success("✅ All formats prepared and ready for download!")
+                            
+                        except Exception as e:
+                            st.error(f"❌ Error creating all formats archive: {str(e)}")
+            
+            with col_oneclick3:
+                st.caption("PKL + PT + NPZ + CSV")
           
             st.divider()
           
