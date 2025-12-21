@@ -913,7 +913,8 @@ class SpatialLocalityAttentionInterpolator:
             'param_embedding': torch.nn.Sequential(
                 torch.nn.Linear(self.input_dim, self.d_model * 2),
                 torch.nn.ReLU(),
-                torch.nn.Linear(self.d_model * 2, self.d_model)
+                torch.nn.Linear(self.d_model * 2, self.d_model),
+                torch.nn.LayerNorm(self.d_model)
             ),
             'attention': torch.nn.MultiheadAttention(
                 embed_dim=self.d_model,
@@ -926,7 +927,13 @@ class SpatialLocalityAttentionInterpolator:
                 torch.nn.ReLU(),
                 torch.nn.Linear(32, self.num_heads)
             ) if self.use_gaussian else None,
-            'norm1': torch.nn.LayerNorm(self.d_model),
+            'output_projection': torch.nn.Sequential(
+                torch.nn.Linear(self.d_model, self.d_model * 2),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(0.1),
+                torch.nn.Linear(self.d_model * 2, self.d_model),
+                torch.nn.LayerNorm(self.d_model)
+            ),
         })
         return model
 
@@ -941,6 +948,10 @@ class SpatialLocalityAttentionInterpolator:
         target_embed = self.model.param_embedding(target_param)  # (1, d_model)
         source_embeds = self.model.param_embedding(source_params)  # (N, d_model)
         
+        # Apply output projection
+        target_embed = self.model.output_projection(target_embed)  # (1, d_model)
+        source_embeds = self.model.output_projection(source_embeds)  # (N, d_model)
+        
         # For multi-head attention, we need to add sequence dimension
         # target_embed: (1, 1, d_model) [batch_size=1, seq_len=1, d_model]
         # source_embeds: (1, N, d_model) [batch_size=1, seq_len=N, d_model]
@@ -953,14 +964,15 @@ class SpatialLocalityAttentionInterpolator:
             target_embed_seq, 
             source_embeds_seq, 
             source_embeds_seq, 
-            average_attn_weights=True
+            average_attn_weights=True,
+            need_weights=True
         )
         
         # attn_weights shape: (1, 1, N) when average_attn_weights=True
         # Squeeze to get (N,)
         weights = attn_weights.squeeze(0).squeeze(0)  # (N,)
         
-        # Ensure weights sum to 1
+        # Ensure weights are positive and sum to 1
         weights = torch.softmax(weights, dim=0)
         
         return weights
@@ -971,21 +983,30 @@ class SpatialLocalityAttentionInterpolator:
             raise ValueError("Need at least 2 source simulations for leave-one-out training")
         
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=5, verbose=False
+        )
         losses = []
         N = source_params.size(0)
+        
+        # Enable training mode
+        self.model.train()
         
         for epoch in range(epochs):
             epoch_loss = 0.0
             valid_iterations = 0
             
-            for i in range(N):
-                # Leave-one-out: use all except i-th as sources
-                target_param = source_params[i].unsqueeze(0)  # (1, input_dim)
-                target_stress = source_stress[i]  # (3, H, W)
+            # Shuffle indices for stochastic training
+            indices = torch.randperm(N)
+            
+            for idx in indices:
+                # Leave-one-out: use all except current as sources
+                target_param = source_params[idx].unsqueeze(0)  # (1, input_dim)
+                target_stress = source_stress[idx]  # (3, H, W)
                 
-                # Create mask for sources
+                # Create mask for sources (all except current)
                 src_mask = torch.ones(N, dtype=torch.bool)
-                src_mask[i] = False
+                src_mask[idx] = False
                 
                 src_params = source_params[src_mask]  # (N-1, input_dim)
                 src_stress = source_stress[src_mask]  # (N-1, 3, H, W)
@@ -996,13 +1017,17 @@ class SpatialLocalityAttentionInterpolator:
                 # Get attention weights
                 weights = self.get_attention_weights(target_param, src_params)  # (N-1,)
                 
-                # Debug: check weights shape
+                # Debug: check weights shape and values
+                if torch.isnan(weights).any() or torch.isinf(weights).any():
+                    st.warning(f"Warning: NaN or Inf in weights at epoch {epoch}")
+                    weights = torch.softmax(torch.randn_like(weights), dim=0)
+                
+                # Check dimensions before einsum
                 if weights.dim() != 1:
                     st.warning(f"Warning: weights is not 1D, shape: {weights.shape}")
                     # Try to fix by squeezing
                     weights = weights.squeeze()
                 
-                # Check dimensions before einsum
                 if weights.dim() != 1:
                     raise ValueError(f"Expected 1D weights tensor, got shape {weights.shape}")
                 if src_stress.dim() != 4:
@@ -1013,25 +1038,44 @@ class SpatialLocalityAttentionInterpolator:
                 # Compute weighted sum: sum over n dimension
                 predicted_stress = torch.einsum('n,nchw->chw', weights, src_stress)
                 
-                # Compute loss
-                loss = torch.mean((predicted_stress - target_stress) ** 2)
+                # Compute loss with L2 regularization
+                mse_loss = torch.mean((predicted_stress - target_stress) ** 2)
+                
+                # Add L2 regularization to prevent overfitting
+                l2_lambda = 0.001
+                l2_reg = torch.tensor(0.).to(source_params.device)
+                for param in self.model.parameters():
+                    l2_reg += torch.norm(param)
+                
+                loss = mse_loss + l2_lambda * l2_reg
                 
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
+                
+                # Gradient clipping to prevent exploding gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
                 optimizer.step()
                 
-                epoch_loss += loss.item()
+                epoch_loss += mse_loss.item()  # Track only MSE for reporting
                 valid_iterations += 1
             
             if valid_iterations > 0:
-                losses.append(epoch_loss / valid_iterations)
+                avg_loss = epoch_loss / valid_iterations
+                losses.append(avg_loss)
+                scheduler.step(avg_loss)
             else:
                 losses.append(0.0)
+                avg_loss = 0.0
             
             # Print progress every 10 epochs
             if (epoch + 1) % 10 == 0:
-                st.info(f"Epoch {epoch+1}/{epochs}, Loss: {losses[-1]:.6f}")
+                current_lr = optimizer.param_groups[0]['lr']
+                st.info(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.6f}, LR: {current_lr:.6f}")
+        
+        # Switch to evaluation mode
+        self.model.eval()
         
         return losses
 
@@ -1040,20 +1084,29 @@ class SpatialLocalityAttentionInterpolator:
         if source_params.size(0) == 0:
             raise ValueError("No source parameters provided for prediction")
         
-        # Get attention weights
-        weights = self.get_attention_weights(target_param, source_params)
+        # Switch to evaluation mode
+        self.model.eval()
         
-        # Check dimension compatibility
-        if weights.size(0) != source_stress.size(0):
-            raise ValueError(
-                f"Dimension mismatch: weights ({weights.shape[0]}) vs "
-                f"stress ({source_stress.shape[0]}) sources"
-            )
+        # Ensure no gradient computation
+        with torch.no_grad():
+            # Get attention weights
+            weights = self.get_attention_weights(target_param, source_params)
+            
+            # Check dimension compatibility
+            if weights.size(0) != source_stress.size(0):
+                raise ValueError(
+                    f"Dimension mismatch: weights ({weights.shape[0]}) vs "
+                    f"stress ({source_stress.shape[0]}) sources"
+                )
+            
+            # Compute weighted sum
+            predicted_stress = torch.einsum('n,nchw->chw', weights, source_stress)
+            
+            # Detach tensors from computation graph before converting to numpy
+            predicted_stress_np = predicted_stress.detach().cpu().numpy()
+            weights_np = weights.detach().cpu().numpy()
         
-        # Compute weighted sum
-        predicted_stress = torch.einsum('n,nchw->chw', weights, source_stress)
-        
-        return predicted_stress.numpy(), weights.numpy()
+        return predicted_stress_np, weights_np
 
     def _read_pkl(self, file_content):
         buffer = BytesIO(file_content)
@@ -1663,8 +1716,8 @@ def create_attention_interface():
             col1, col2 = st.columns(2)
           
             with col1:
-                epochs = st.slider("Training Epochs", 10, 200, 50, 10)
-                learning_rate = st.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001)
+                epochs = st.slider("Training Epochs", 10, 500, 100, 10)
+                learning_rate = st.slider("Learning Rate", 0.00001, 0.01, 0.001, 0.00001)
           
             with col2:
                 batch_size = st.slider("Batch Size", 1, 16, 4, 1)
@@ -1713,9 +1766,18 @@ def create_attention_interface():
                         st.info(f"Training with {len(source_params)} sources, "
                                f"stress shape: {source_stress.shape}")
                       
+                        # Progress bar for training
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        # Custom training with progress updates
                         losses = st.session_state.interpolator.train(
                             source_params, source_stress, epochs=epochs, lr=learning_rate
                         )
+                        
+                        # Clear progress indicators
+                        progress_bar.empty()
+                        status_text.empty()
                       
                         target_vector, _ = st.session_state.interpolator.compute_parameter_vector(
                             {'params': st.session_state.target_params}
