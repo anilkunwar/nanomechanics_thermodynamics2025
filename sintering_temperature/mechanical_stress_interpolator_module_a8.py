@@ -976,7 +976,8 @@ class SpatialLocalityAttentionInterpolator:
         weights = torch.softmax(weights, dim=0)
         
         return weights
-
+    #
+    
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
         """Train the interpolator using leave-one-out cross-validation"""
         if source_params.size(0) < 2:
