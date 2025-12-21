@@ -182,6 +182,13 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa8-streamlit-red)](https://mechanicalstress-interpolator-module-a8.streamlit.app/) (Machine Learning for Single Target or Query)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa9-streamlit-red)](https://mechanicalstress-interpolator-module-a9.streamlit.app/) (Machine Learning for Single Target or Query)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa10-streamlit-red)](https://mechanicalstress-interpolator-module-a10.streamlit.app/) (Machine Learning for Single Target or Query, Allows Download of Training and Prediction Models)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa11-streamlit-red)](https://mechanicalstress-interpolator-module-a11.streamlit.app/) (Machine Learning for Multiple Targets or Query)
+
+
 
 
 
