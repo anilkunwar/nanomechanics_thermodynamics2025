@@ -976,16 +976,16 @@ class SpatialLocalityAttentionInterpolator:
         weights = torch.softmax(weights, dim=0)
         
         return weights
-    #
-    
+
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
         """Train the interpolator using leave-one-out cross-validation"""
         if source_params.size(0) < 2:
             raise ValueError("Need at least 2 source simulations for leave-one-out training")
         
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        # FIXED: Remove 'verbose' parameter for compatibility with older PyTorch versions
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5, verbose=False
+            optimizer, mode='min', factor=0.5, patience=5
         )
         losses = []
         N = source_params.size(0)
