@@ -26,16 +26,19 @@ import base64
 from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
 warnings.filterwarnings('ignore')
+
 # =============================================
 # PATH CONFIGURATION
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 NUMERICAL_SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
+
 if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
     os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
 if not os.path.exists(VISUALIZATION_OUTPUT_DIR):
     os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
+
 # =============================================
 # CUSTOM COLORMAPS
 # =============================================
@@ -60,6 +63,7 @@ def create_custom_colormaps():
     )
   
     return stress_cmap, attention_cmap, compare_cmap
+
 # =============================================
 # VISUALIZATION MANAGER
 # =============================================
@@ -368,6 +372,7 @@ class VisualizationManager:
         b64 = base64.b64encode(buf.read()).decode()
         href = f'<a href="data:image/png;base64,{b64}" download="{filename}">{caption}</a>'
         return href
+
 # =============================================
 # TIME FRAME VISUALIZATION MANAGER
 # =============================================
@@ -552,6 +557,7 @@ class TimeFrameVisualizationManager:
         fig.suptitle('Stress Evolution Metrics Analysis', fontsize=14, fontweight='bold')
       
         return fig
+
 # =============================================
 # PREDICTION RESULTS SAVING AND DOWNLOAD MANAGER
 # =============================================
@@ -739,6 +745,7 @@ For more information, see the documentation.
       
         zip_buffer.seek(0)
         return zip_buffer
+
 # =============================================
 # NUMERICAL SOLUTIONS MANAGER (UPDATED FOR NUMERICAL_SOLUTIONS)
 # =============================================
@@ -873,6 +880,7 @@ class NumericalSolutionsManager:
         except Exception as e:
             st.error(f"Error saving file: {str(e)}")
             return False
+
 # =============================================
 # ENHANCED SPATIAL LOCALITY REGULARIZATION ATTENTION INTERPOLATOR
 # =============================================
@@ -928,12 +936,8 @@ class SpatialLocalityAttentionInterpolator:
             raise ValueError("No source parameters provided for attention weights computation")
         
         # Prepare embeddings with correct dimensions
-        target_embed = self.model.param_embedding(target_param).unsqueeze(1)  # (1, 1, d_model)
-        source_embeds = self.model.param_embedding(source_params).unsqueeze(1)  # (N, 1, d_model)
-        
-        # Transpose for multi-head attention (batch_first=True expects [batch, seq_len, d_model])
-        target_embed = target_embed.transpose(0, 1)  # (1, 1, d_model) -> (1, 1, d_model) no change needed
-        source_embeds = source_embeds.transpose(0, 1)  # (N, 1, d_model) -> (1, N, d_model)
+        target_embed = self.model.param_embedding(target_param).unsqueeze(0)  # (1, d_model) -> (1, 1, d_model)
+        source_embeds = self.model.param_embedding(source_params).unsqueeze(0)  # (N, d_model) -> (1, N, d_model)
         
         # Compute attention
         _, attn_weights = self.model.attention(
@@ -962,6 +966,8 @@ class SpatialLocalityAttentionInterpolator:
         
         for epoch in range(epochs):
             epoch_loss = 0.0
+            valid_iterations = 0
+            
             for i in range(N):
                 # Leave-one-out: use all except i-th as sources
                 target_param = source_params[i].unsqueeze(0)  # (1, input_dim)
@@ -1000,9 +1006,10 @@ class SpatialLocalityAttentionInterpolator:
                 optimizer.step()
                 
                 epoch_loss += loss.item()
+                valid_iterations += 1
             
-            if N > 0:
-                losses.append(epoch_loss / N)
+            if valid_iterations > 0:
+                losses.append(epoch_loss / valid_iterations)
             else:
                 losses.append(0.0)
         
@@ -1092,8 +1099,7 @@ class SpatialLocalityAttentionInterpolator:
 
     def read_simulation_file(self, file_content, format_type='auto'):
         if format_type == 'auto':
-            # Try to auto-detect based on content or extension
-            format_type = 'pkl'  # Default
+            format_type = 'pkl'
       
         if format_type in self.readers:
             data = self.readers[format_type](file_content)
@@ -1249,13 +1255,14 @@ class SpatialLocalityAttentionInterpolator:
         else:
             angle_deg = angle_deg % 90
             return f"Custom ({angle_deg:.1f}°)"
-            
+
 # =============================================
 # GRID AND EXTENT CONFIGURATION
 # =============================================
 def get_grid_extent(N=128, dx=0.1):
     """Get grid extent for visualization"""
     return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+
 # =============================================
 # ATTENTION INTERFACE
 # =============================================
@@ -1649,28 +1656,42 @@ def create_attention_interface():
                         param_vectors = []
                         stress_data = []
                       
+                        # Filter simulations with history
+                        valid_simulations = 0
                         for sim_data in st.session_state.source_simulations:
+                            history = sim_data.get('history', [])
+                            if not history:
+                                st.warning(f"Skipping simulation without history: {sim_data.get('filename', 'unknown')}")
+                                continue
+                              
                             param_vector, _ = st.session_state.interpolator.compute_parameter_vector(sim_data)
                             param_vectors.append(param_vector)
                           
-                            history = sim_data.get('history', [])
-                            if history:
-                                eta, stress_fields = history[-1]
-                                stress_components = np.stack([
-                                    stress_fields.get('sigma_hydro', np.zeros_like(eta)),
-                                    stress_fields.get('sigma_mag', np.zeros_like(eta)),
-                                    stress_fields.get('von_mises', np.zeros_like(eta))
-                                ], axis=0)
-                                stress_data.append(stress_components)
+                            eta, stress_fields = history[-1]
+                            stress_components = np.stack([
+                                stress_fields.get('sigma_hydro', np.zeros_like(eta)),
+                                stress_fields.get('sigma_mag', np.zeros_like(eta)),
+                                stress_fields.get('von_mises', np.zeros_like(eta))
+                            ], axis=0)
+                            stress_data.append(stress_components)
+                            valid_simulations += 1
                       
-                        if len(param_vectors) < 1:
-                            raise ValueError("No valid source simulations available for prediction")
+                        if valid_simulations < 2:
+                            raise ValueError("Need at least 2 source simulations with history for training")
                       
                         param_vectors = np.array(param_vectors)
-                        stress_data = np.stack(stress_data) # (N, 3, H, W)
+                        stress_data = np.stack(stress_data)  # (N, 3, H, W)
+                        
+                        # Check dimensions
+                        if len(param_vectors) != len(stress_data):
+                            raise ValueError(f"Mismatch: {len(param_vectors)} params vs {len(stress_data)} stress tensors")
                       
                         source_params = torch.from_numpy(param_vectors).float()
                         source_stress = torch.from_numpy(stress_data).float()
+                      
+                        # Debug info
+                        st.info(f"Training with {len(source_params)} sources, "
+                               f"stress shape: {source_stress.shape}")
                       
                         losses = st.session_state.interpolator.train(
                             source_params, source_stress, epochs=epochs, lr=learning_rate
@@ -1681,9 +1702,10 @@ def create_attention_interface():
                         )
                         target_param = torch.from_numpy(target_vector).float().unsqueeze(0)
                       
-                        weights = st.session_state.interpolator.get_attention_weights(target_param, source_params)
-                      
-                        predicted_stress = torch.einsum('n,nchw->chw', weights, source_stress).numpy()
+                        # Use the predict method which handles dimension checking
+                        predicted_stress, attention_weights = st.session_state.interpolator.predict(
+                            target_param, source_params, source_stress
+                        )
                       
                         predicted = {
                             'sigma_hydro': predicted_stress[0],
@@ -1692,14 +1714,12 @@ def create_attention_interface():
                             'predicted': True
                         }
                       
-                        attention_weights = weights.numpy()
-                      
                         st.session_state.prediction_results = {
                             'stress_fields': predicted,
                             'attention_weights': attention_weights,
                             'target_params': st.session_state.target_params,
                             'training_losses': losses,
-                            'source_count': len(st.session_state.source_simulations),
+                            'source_count': valid_simulations,
                             'mode': 'single'
                         }
                       
@@ -1707,6 +1727,8 @@ def create_attention_interface():
                       
                     except Exception as e:
                         st.error(f"❌ Error during training/prediction: {str(e)}")
+                        import traceback
+                        st.error(f"Traceback: {traceback.format_exc()}")
   
     # Tab 4: Results & Visualization
     with tab4:
@@ -1848,7 +1870,7 @@ def create_attention_interface():
           
             if attention_weights is not None:
                 weights = attention_weights
-                source_names = [f'S{i+1}' for i in range(len(st.session_state.source_simulations))]
+                source_names = [f'S{i+1}' for i in range(st.session_state.prediction_results.get('source_count', 0))]
               
                 if viz_library == "Plotly (Interactive)":
                     fig_weights = px.bar(
@@ -2439,6 +2461,8 @@ def create_attention_interface():
                                 )
                             except Exception as e:
                                 st.error(f"Error reading {file_name}: {str(e)}")
+
 if __name__ == "__main__":
     create_attention_interface()
+
 st.caption(f"🔬 Attention Interpolation • PKL/PT/ZIP Support • Matplotlib & Plotly Visualizations • {datetime.now().year}")
