@@ -899,7 +899,7 @@ class SpatialLocalityAttentionInterpolator:
             'sql': self._read_sql,
             'json': self._read_json
         }
-  
+
     def _build_model(self):
         model = torch.nn.ModuleDict({
             'param_embedding': torch.nn.Sequential(
@@ -921,58 +921,121 @@ class SpatialLocalityAttentionInterpolator:
             'norm1': torch.nn.LayerNorm(self.d_model),
         })
         return model
-  
+
     def get_attention_weights(self, target_param, source_params):
+        """Get attention weights between target and source parameters"""
         if source_params.size(0) == 0:
             raise ValueError("No source parameters provided for attention weights computation")
-        target_embed = self.model.param_embedding(target_param) # (1, d_model)
-        source_embeds = self.model.param_embedding(source_params) # (N, d_model)
-        _, attn_weights = self.model.attention(target_embed, source_embeds, source_embeds, average_attn_weights=False) # (1, num_heads, 1, N)
-        weights = attn_weights.mean(dim=1).mean(dim=1).squeeze(0) # (N,)
-        weights = weights / (weights.sum() + 1e-8)
+        
+        # Prepare embeddings with correct dimensions
+        target_embed = self.model.param_embedding(target_param).unsqueeze(1)  # (1, 1, d_model)
+        source_embeds = self.model.param_embedding(source_params).unsqueeze(1)  # (N, 1, d_model)
+        
+        # Transpose for multi-head attention (batch_first=True expects [batch, seq_len, d_model])
+        target_embed = target_embed.transpose(0, 1)  # (1, 1, d_model) -> (1, 1, d_model) no change needed
+        source_embeds = source_embeds.transpose(0, 1)  # (N, 1, d_model) -> (1, N, d_model)
+        
+        # Compute attention
+        _, attn_weights = self.model.attention(
+            target_embed, 
+            source_embeds, 
+            source_embeds, 
+            average_attn_weights=False
+        )  # (num_heads, 1, N)
+        
+        # Average across heads to get single weight per source
+        weights = attn_weights.mean(dim=0)  # (1, N)
+        weights = weights.squeeze(0)  # (N,)
+        
+        # Normalize weights
+        weights = torch.softmax(weights, dim=0)
         return weights
-   
+
     def train(self, source_params, source_stress, epochs=50, lr=0.001):
+        """Train the interpolator using leave-one-out cross-validation"""
         if source_params.size(0) < 2:
             raise ValueError("Need at least 2 source simulations for leave-one-out training")
+        
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         losses = []
         N = source_params.size(0)
+        
         for epoch in range(epochs):
             epoch_loss = 0.0
             for i in range(N):
-                target_param = source_params[i].unsqueeze(0)
-                target_stress = source_stress[i]
-                src_mask = torch.ones(N, dtype=bool)
+                # Leave-one-out: use all except i-th as sources
+                target_param = source_params[i].unsqueeze(0)  # (1, input_dim)
+                target_stress = source_stress[i]  # (3, H, W)
+                
+                # Create mask for sources
+                src_mask = torch.ones(N, dtype=torch.bool)
                 src_mask[i] = False
-                src_params = source_params[src_mask]
-                src_stress = source_stress[src_mask]
+                
+                src_params = source_params[src_mask]  # (N-1, input_dim)
+                src_stress = source_stress[src_mask]  # (N-1, 3, H, W)
+                
                 if len(src_params) < 1:
                     continue
-                if src_stress.dim() != 4 or src_stress.size(0) == 0:
-                    st.warning(f"Skipping epoch {epoch}, invalid stress tensor dims: {src_stress.shape}")
-                    continue
-                weights = self.get_attention_weights(target_param, src_params)
+                
+                # Get attention weights
+                weights = self.get_attention_weights(target_param, src_params)  # (N-1,)
+                
+                # Check dimensions before einsum
+                if weights.dim() != 1:
+                    raise ValueError(f"Expected 1D weights tensor, got shape {weights.shape}")
+                if src_stress.dim() != 4:
+                    raise ValueError(f"Expected 4D stress tensor, got shape {src_stress.shape}")
+                if weights.size(0) != src_stress.size(0):
+                    raise ValueError(f"Dimension mismatch: weights ({weights.shape}) vs stress ({src_stress.shape})")
+                
+                # Compute weighted sum: sum over n dimension
                 predicted_stress = torch.einsum('n,nchw->chw', weights, src_stress)
-                loss = torch.mean((predicted_stress - target_stress)**2)
+                
+                # Compute loss
+                loss = torch.mean((predicted_stress - target_stress) ** 2)
+                
+                # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+                
                 epoch_loss += loss.item()
+            
             if N > 0:
                 losses.append(epoch_loss / N)
             else:
                 losses.append(0.0)
+        
         return losses
-  
+
+    def predict(self, target_param, source_params, source_stress):
+        """Predict stress field for target parameters"""
+        if source_params.size(0) == 0:
+            raise ValueError("No source parameters provided for prediction")
+        
+        # Get attention weights
+        weights = self.get_attention_weights(target_param, source_params)
+        
+        # Check dimension compatibility
+        if weights.size(0) != source_stress.size(0):
+            raise ValueError(
+                f"Dimension mismatch: weights ({weights.shape[0]}) vs "
+                f"stress ({source_stress.shape[0]}) sources"
+            )
+        
+        # Compute weighted sum
+        predicted_stress = torch.einsum('n,nchw->chw', weights, source_stress)
+        
+        return predicted_stress.numpy(), weights.numpy()
+
     def _read_pkl(self, file_content):
         buffer = BytesIO(file_content)
         return pickle.load(buffer)
-  
+
     def _read_pt(self, file_content):
         buffer = BytesIO(file_content)
         return torch.load(buffer, map_location=torch.device('cpu'))
-  
+
     def _read_h5(self, file_content):
         import h5py
         buffer = BytesIO(file_content)
@@ -988,12 +1051,12 @@ class SpatialLocalityAttentionInterpolator:
             for key in f.keys():
                 read_h5_obj(key, f[key])
         return data
-  
+
     def _read_npz(self, file_content):
         buffer = BytesIO(file_content)
         data = np.load(buffer, allow_pickle=True)
         return {key: data[key] for key in data.files}
-  
+
     def _read_sql(self, file_content):
         with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
             tmp.write(file_content)
@@ -1023,20 +1086,21 @@ class SpatialLocalityAttentionInterpolator:
         except Exception as e:
             os.unlink(tmp_path)
             raise e
-  
+
     def _read_json(self, file_content):
         return json.loads(file_content.decode('utf-8'))
-  
+
     def read_simulation_file(self, file_content, format_type='auto'):
         if format_type == 'auto':
-            format_type = 'pkl'
+            # Try to auto-detect based on content or extension
+            format_type = 'pkl'  # Default
       
         if format_type in self.readers:
             data = self.readers[format_type](file_content)
             return self._standardize_data(data, format_type, "uploaded_file")
         else:
             raise ValueError(f"Unsupported format: {format_type}")
-  
+
     def _standardize_data(self, data, format_type, file_path):
         standardized = {
             'params': {},
@@ -1057,7 +1121,7 @@ class SpatialLocalityAttentionInterpolator:
                         eta = frame.get('eta')
                         stresses = frame.get('stresses', {})
                         standardized['history'].append((eta, stresses))
-  
+
         elif format_type == 'pt':
             if isinstance(data, dict):
                 standardized['params'] = data.get('params', {})
@@ -1079,7 +1143,7 @@ class SpatialLocalityAttentionInterpolator:
                                 stress_dict[key] = value
                       
                         standardized['history'].append((eta, stress_dict))
-  
+
         elif format_type == 'h5':
             if 'params' in data:
                 standardized['params'] = data['params']
@@ -1089,7 +1153,7 @@ class SpatialLocalityAttentionInterpolator:
                 if 'history' in key.lower():
                     standardized['history'] = data[key]
                     break
-  
+
         elif format_type == 'npz':
             if 'params' in data:
                 standardized['params'] = data['params']
@@ -1097,21 +1161,23 @@ class SpatialLocalityAttentionInterpolator:
                 standardized['metadata'] = data['metadata']
             if 'history' in data:
                 standardized['history'] = data['history']
-  
+
         elif format_type == 'json':
             if isinstance(data, dict):
                 standardized['params'] = data.get('params', {})
                 standardized['metadata'] = data.get('metadata', {})
                 standardized['history'] = data.get('history', [])
-  
+
         return standardized
-  
+
     def compute_parameter_vector(self, sim_data):
+        """Compute parameter vector from simulation data"""
         params = sim_data.get('params', {})
       
         param_vector = []
         param_names = []
       
+        # Encode defect type (3 dimensions)
         defect_encoding = {
             'ISF': [1, 0, 0],
             'ESF': [0, 1, 0],
@@ -1121,6 +1187,7 @@ class SpatialLocalityAttentionInterpolator:
         param_vector.extend(defect_encoding.get(defect_type, [0, 0, 0]))
         param_names.extend(['defect_ISF', 'defect_ESF', 'defect_Twin'])
       
+        # Encode shape (5 dimensions)
         shape_encoding = {
             'Square': [1, 0, 0, 0, 0],
             'Horizontal Fault': [0, 1, 0, 0, 0],
@@ -1133,6 +1200,7 @@ class SpatialLocalityAttentionInterpolator:
         param_names.extend(['shape_square', 'shape_horizontal', 'shape_vertical',
                            'shape_rectangle', 'shape_ellipse'])
       
+        # Normalize continuous parameters
         eps0 = params.get('eps0', 0.707)
         kappa = params.get('kappa', 0.6)
         theta = params.get('theta', 0.0)
@@ -1149,6 +1217,7 @@ class SpatialLocalityAttentionInterpolator:
         param_vector.append(theta_norm)
         param_names.append('theta_norm')
       
+        # Encode orientation (4 dimensions)
         orientation = params.get('orientation', 'Horizontal {111} (0°)')
         orientation_encoding = {
             'Horizontal {111} (0°)': [1, 0, 0, 0],
@@ -1165,7 +1234,7 @@ class SpatialLocalityAttentionInterpolator:
         param_names.extend(['orient_0deg', 'orient_30deg', 'orient_60deg', 'orient_90deg'])
       
         return np.array(param_vector, dtype=np.float32), param_names
-  
+
     @staticmethod
     def get_orientation_from_angle(angle_deg: float) -> str:
         """Convert angle in degrees to orientation string with custom support"""
@@ -1180,6 +1249,7 @@ class SpatialLocalityAttentionInterpolator:
         else:
             angle_deg = angle_deg % 90
             return f"Custom ({angle_deg:.1f}°)"
+            
 # =============================================
 # GRID AND EXTENT CONFIGURATION
 # =============================================
