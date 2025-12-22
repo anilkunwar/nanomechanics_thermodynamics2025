@@ -188,6 +188,10 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa11-streamlit-red)](https://mechanicalstress-interpolator-module-a11.streamlit.app/) (Machine Learning for Multiple Targets or Query)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa12-streamlit-red)](https://mechanicalstress-interpolator-module-a12.streamlit.app/) (Radar chart visualization of interface stress)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa13-streamlit-red)](https://mechanicalstress-interpolator-module-a13.streamlit.app/) (Radar chart visualization of geometric center stress)
+
 
 
 
