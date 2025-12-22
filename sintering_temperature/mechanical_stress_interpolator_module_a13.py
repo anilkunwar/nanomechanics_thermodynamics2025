@@ -759,6 +759,9 @@ class EnhancedVisualizationManager:
 # =============================================
 # ENHANCED SUNBURST & RADAR VISUALIZER
 # =============================================
+# =============================================
+# ENHANCED SUNBURST & RADAR VISUALIZER
+# =============================================
 class EnhancedSunburstRadarVisualizer:
     """Enhanced sunburst and radar charts with multiple visualization options"""
     
@@ -802,52 +805,196 @@ class EnhancedSunburstRadarVisualizer:
         theta_deg = np.deg2rad(thetas)
         theta_grid, time_grid = np.meshgrid(theta_deg, times)
         
-        fig = go.Figure(data=go.Scatterpolar(
-            r=time_grid.flatten(),
-            theta=np.rad2deg(theta_grid).flatten(),
+        # Flatten the arrays for scatter plot
+        r_flat = time_grid.flatten()
+        theta_flat = np.rad2deg(theta_grid).flatten()
+        stress_flat = stress_matrix.flatten()
+        
+        # Create the plotly figure
+        fig = go.Figure()
+        
+        # Add scatter polar trace
+        fig.add_trace(go.Scatterpolar(
+            r=r_flat,
+            theta=theta_flat,
             mode='markers',
             marker=dict(
-                size=10,
-                color=stress_matrix.flatten(),
+                size=8,
+                color=stress_flat,
                 colorscale=cmap,
                 showscale=True,
                 colorbar=dict(
-                    title="Stress (GPa)",
-                    titlefont=dict(size=14),
-                    tickfont=dict(size=12)
+                    title=dict(text="Stress (GPa)", font=dict(size=12)),
+                    tickfont=dict(size=10),
+                    thickness=20,
+                    len=0.75,
+                    x=1.1,
+                    xpad=10
                 ),
-                line=dict(width=0.5, color='white')
+                line=dict(width=0.5, color='white'),
+                opacity=0.8
             ),
-            hovertemplate='<b>Time</b>: %{r:.1f}s<br>' +
-                         '<b>Orientation</b>: %{theta:.1f}°<br>' +
-                         '<b>Stress</b>: %{marker.color:.3f} GPa<br>' +
-                         '<extra></extra>'
+            hovertemplate=(
+                '<b>Time</b>: %{r:.1f}s<br>' +
+                '<b>Orientation</b>: %{theta:.1f}°<br>' +
+                '<b>Stress</b>: %{marker.color:.3f} GPa<br>' +
+                '<extra></extra>'
+            ),
+            name='Stress Distribution'
         ))
         
+        # Update layout
         fig.update_layout(
-            title=dict(text=title, font=dict(size=20, family="Arial, sans-serif")),
+            title=dict(
+                text=title,
+                font=dict(size=20, family="Arial, sans-serif", color='black'),
+                x=0.5,
+                xanchor='center'
+            ),
             polar=dict(
                 radialaxis=dict(
-                    title="Time (s)",
-                    titlefont=dict(size=14),
+                    title=dict(
+                        text="Time (s)",
+                        font=dict(size=14, color='black')
+                    ),
                     gridcolor="lightgray",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
                     showline=True,
-                    linewidth=1,
-                    linecolor="black"
+                    tickfont=dict(size=11, color='black'),
+                    tickformat='.1f',
+                    range=[0, max(times) * 1.05]
                 ),
                 angularaxis=dict(
                     gridcolor="lightgray",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
                     rotation=90,
                     direction="clockwise",
-                    tickfont=dict(size=12)
+                    tickfont=dict(size=11, color='black'),
+                    tickmode='array',
+                    tickvals=list(range(0, 360, 45)),
+                    ticktext=[f'{i}°' for i in range(0, 360, 45)]
                 ),
-                bgcolor="rgba(245, 245, 245, 0.8)"
+                bgcolor="rgba(245, 245, 245, 0.8)",
+                sector=[0, 360]
             ),
-            height=650,
             width=800,
+            height=650,
             showlegend=False,
             plot_bgcolor="white",
-            paper_bgcolor="white"
+            paper_bgcolor="white",
+            margin=dict(l=80, r=150, t=80, b=80),  # Extra right margin for colorbar
+            font=dict(family="Arial, sans-serif")
+        )
+        
+        # Add grid lines
+        fig.update_polars(
+            radialaxis_gridcolor="rgba(150, 150, 150, 0.3)",
+            angularaxis_gridcolor="rgba(150, 150, 150, 0.3)"
+        )
+        
+        return fig
+    
+    def create_advanced_plotly_sunburst(self, stress_matrix, times, thetas, title, cmap='Plasma'):
+        """Alternative advanced sunburst with multiple visualization options"""
+        
+        # Prepare data
+        theta_deg = np.deg2rad(thetas)
+        theta_grid, time_grid = np.meshgrid(theta_deg, times)
+        
+        # Create figure with subplots for different views
+        fig = make_subplots(
+            rows=2, cols=2,
+            specs=[[{'type': 'polar'}, {'type': 'xy'}],
+                   [{'type': 'polar', 'colspan': 2}, None]],
+            subplot_titles=('Polar Heatmap', 'Time Slice at Max Stress', 
+                           'Orientation Stress Profile'),
+            horizontal_spacing=0.1,
+            vertical_spacing=0.15
+        )
+        
+        # 1. Main polar heatmap (top-left)
+        fig.add_trace(
+            go.Scatterpolar(
+                r=time_grid.flatten(),
+                theta=np.rad2deg(theta_grid).flatten(),
+                mode='markers',
+                marker=dict(
+                    size=8,
+                    color=stress_matrix.flatten(),
+                    colorscale=cmap,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text="Stress (GPa)", font=dict(size=12)),
+                        x=1.05
+                    ),
+                    opacity=0.7
+                ),
+                name='Stress Distribution',
+                hovertemplate='Time: %{r:.1f}s<br>Orientation: %{theta:.1f}°<br>Stress: %{marker.color:.3f} GPa'
+            ),
+            row=1, col=1
+        )
+        
+        # 2. Time slice at max stress (top-right)
+        max_time_idx = np.argmax(np.mean(stress_matrix, axis=1))
+        time_slice = times[max_time_idx]
+        
+        fig.add_trace(
+            go.Scatter(
+                x=thetas,
+                y=stress_matrix[max_time_idx, :],
+                mode='lines+markers',
+                line=dict(width=2, color='firebrick'),
+                marker=dict(size=8, color='firebrick'),
+                name=f'Time = {time_slice:.1f}s',
+                hovertemplate='Orientation: %{x}°<br>Stress: %{y:.3f} GPa'
+            ),
+            row=1, col=2
+        )
+        
+        fig.update_xaxes(title_text="Orientation (°)", row=1, col=2)
+        fig.update_yaxes(title_text="Stress (GPa)", row=1, col=2)
+        
+        # 3. Orientation stress profile (bottom)
+        orientation_profiles = []
+        for theta_idx, theta in enumerate(thetas):
+            profile = go.Scatterpolar(
+                r=stress_matrix[:, theta_idx],
+                theta=times,
+                mode='lines',
+                line=dict(width=1, opacity=0.5),
+                name=f'{theta}°',
+                showlegend=False,
+                hovertemplate='Time: %{theta:.1f}s<br>Stress: %{r:.3f} GPa'
+            )
+            fig.add_trace(profile, row=2, col=1)
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=22, family="Arial")),
+            height=900,
+            showlegend=True,
+            legend=dict(
+                x=1.05,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.8)',
+                bordercolor='black',
+                borderwidth=1
+            ),
+            polar=dict(
+                row=1, col=1,
+                radialaxis=dict(title="Time (s)", gridcolor="lightgray"),
+                angularaxis=dict(gridcolor="lightgray", rotation=90)
+            ),
+            polar2=dict(
+                row=2, col=1,
+                radialaxis=dict(title="Stress (GPa)", gridcolor="lightgray"),
+                angularaxis=dict(title="Time (s)", gridcolor="lightgray")
+            )
         )
         
         return fig
@@ -893,6 +1040,76 @@ class EnhancedSunburstRadarVisualizer:
         plt.tight_layout()
         return fig
     
+    def create_plotly_radar(self, stress_values, thetas, component_name, time_point):
+        """Interactive radar chart with Plotly"""
+        
+        # Close the loop
+        angles = np.linspace(0, 2*np.pi, len(thetas), endpoint=False)
+        angles = np.concatenate([angles, [angles[0]]])
+        values = np.concatenate([stress_values, [stress_values[0]]])
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add radar trace
+        fig.add_trace(go.Scatterpolar(
+            r=values,
+            theta=np.deg2rad(np.concatenate([thetas, [thetas[0]]])),
+            fill='toself',
+            fillcolor='rgba(70, 130, 180, 0.3)',
+            line=dict(color='steelblue', width=3),
+            marker=dict(size=8, color='steelblue', symbol='circle'),
+            name=component_name,
+            hovertemplate='Orientation: %{theta:.1f}°<br>Stress: %{r:.3f} GPa'
+        ))
+        
+        # Add mean value line
+        mean_val = np.mean(stress_values)
+        fig.add_trace(go.Scatterpolar(
+            r=[mean_val] * (len(thetas) + 1),
+            theta=np.deg2rad(np.concatenate([thetas, [thetas[0]]])),
+            mode='lines',
+            line=dict(color='firebrick', width=2, dash='dash'),
+            name=f'Mean: {mean_val:.3f} GPa',
+            hovertemplate='Mean Stress: %{r:.3f} GPa'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=f'{component_name} at t={time_point:.1f}s',
+                font=dict(size=18, family="Arial")
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, max(values) * 1.2],
+                    gridcolor="lightgray",
+                    tickfont=dict(size=10)
+                ),
+                angularaxis=dict(
+                    gridcolor="lightgray",
+                    linecolor="black",
+                    rotation=90,
+                    direction="clockwise",
+                    tickvals=np.deg2rad(thetas),
+                    ticktext=[f'{t}°' for t in thetas],
+                    tickfont=dict(size=11)
+                ),
+                bgcolor="rgba(245, 245, 245, 0.5)"
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.05,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.8)'
+            ),
+            width=700,
+            height=600
+        )
+        
+        return fig
+    
     def create_comparison_radar(self, stress_matrices, thetas, component_names, 
                                time_point, title="Multiple Component Comparison"):
         """Create radar plot comparing multiple stress components"""
@@ -924,6 +1141,170 @@ class EnhancedSunburstRadarVisualizer:
         ax.grid(True, alpha=0.3)
         
         plt.tight_layout()
+        return fig
+    
+    def create_animated_sunburst(self, stress_matrix, times, thetas, title, cmap='Plasma'):
+        """Create animated sunburst visualization showing time evolution"""
+        
+        # Create frames for animation
+        frames = []
+        for t_idx, time_val in enumerate(times):
+            frame = go.Frame(
+                data=[go.Scatterpolar(
+                    r=[time_val] * len(thetas),
+                    theta=thetas,
+                    mode='markers',
+                    marker=dict(
+                        size=10,
+                        color=stress_matrix[t_idx, :],
+                        colorscale=cmap,
+                        showscale=True,
+                        colorbar=dict(
+                            title=dict(text="Stress (GPa)", font=dict(size=12))
+                        )
+                    )
+                )],
+                name=f"t={time_val:.1f}s"
+            )
+            frames.append(frame)
+        
+        # Create initial figure
+        fig = go.Figure(
+            data=[go.Scatterpolar(
+                r=[times[0]] * len(thetas),
+                theta=thetas,
+                mode='markers',
+                marker=dict(
+                    size=10,
+                    color=stress_matrix[0, :],
+                    colorscale=cmap,
+                    showscale=True,
+                    colorbar=dict(
+                        title=dict(text="Stress (GPa)", font=dict(size=12))
+                    )
+                ),
+                hovertemplate='Time: %{r:.1f}s<br>Orientation: %{theta:.1f}°<br>Stress: %{marker.color:.3f} GPa'
+            )],
+            frames=frames
+        )
+        
+        # Animation buttons
+        play_button = dict(
+            label="Play",
+            method="animate",
+            args=[None, dict(
+                frame=dict(duration=100, redraw=True),
+                fromcurrent=True,
+                mode="immediate"
+            )]
+        )
+        
+        pause_button = dict(
+            label="Pause",
+            method="animate",
+            args=[[None], dict(
+                mode="immediate",
+                frame=dict(duration=0, redraw=False)
+            )]
+        )
+        
+        # Slider
+        sliders = [dict(
+            steps=[
+                dict(
+                    method="animate",
+                    args=[
+                        [f.name],
+                        dict(mode="immediate", frame=dict(duration=0, redraw=True))
+                    ],
+                    label=f"t={times[i]:.1f}s"
+                )
+                for i, f in enumerate(frames)
+            ],
+            active=0,
+            currentvalue=dict(prefix="Time: ", font=dict(size=14)),
+            pad=dict(t=50),
+            len=0.9,
+            x=0.1,
+            y=0
+        )]
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=22)),
+            polar=dict(
+                radialaxis=dict(
+                    title="Time (s)",
+                    range=[0, max(times)],
+                    gridcolor="lightgray"
+                ),
+                angularaxis=dict(
+                    gridcolor="lightgray",
+                    rotation=90
+                )
+            ),
+            updatemenus=[dict(
+                type="buttons",
+                buttons=[play_button, pause_button],
+                direction="left",
+                pad=dict(r=10, t=87),
+                showactive=False,
+                x=0.1,
+                xanchor="right",
+                y=0,
+                yanchor="top"
+            )],
+            sliders=sliders,
+            height=700,
+            width=900
+        )
+        
+        return fig
+    
+    def create_3d_surface_plot(self, stress_matrix, times, thetas, title):
+        """Create 3D surface plot of stress vs orientation vs time"""
+        
+        # Create meshgrid
+        T, Theta = np.meshgrid(times, thetas)
+        
+        fig = go.Figure(data=[
+            go.Surface(
+                x=Theta,
+                y=T,
+                z=stress_matrix.T,
+                colorscale='Plasma',
+                opacity=0.9,
+                contours=dict(
+                    z=dict(
+                        show=True,
+                        usecolormap=True,
+                        project=dict(z=True)
+                    )
+                ),
+                hovertemplate=(
+                    'Orientation: %{x}°<br>' +
+                    'Time: %{y:.1f}s<br>' +
+                    'Stress: %{z:.3f} GPa<br>' +
+                    '<extra></extra>'
+                )
+            )
+        ])
+        
+        fig.update_layout(
+            title=dict(text=title, font=dict(size=20)),
+            scene=dict(
+                xaxis=dict(title='Orientation (°)', gridcolor="lightgray"),
+                yaxis=dict(title='Time (s)', gridcolor="lightgray"),
+                zaxis=dict(title='Stress (GPa)', gridcolor="lightgray"),
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.5)
+                )
+            ),
+            width=900,
+            height=700,
+            margin=dict(l=65, r=50, b=65, t=90)
+        )
+        
         return fig
 
 # =============================================
