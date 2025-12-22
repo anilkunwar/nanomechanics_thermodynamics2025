@@ -125,7 +125,7 @@ def extract_params_from_filename(filename):
         if defect_match:
             params['defect_type'] = defect_match.group(1).upper()
      
-        # Extract theta or orientation
+        # Extract theta
         theta_match = re.search(r'theta_([\d.]+)', filename.lower())
         if theta_match:
             params['theta'] = float(theta_match.group(1))
@@ -153,11 +153,14 @@ def extract_params_from_filename(filename):
 def load_solutions(solution_dir):
     solutions, params_list, load_logs = [], [], []
     for fname in os.listdir(solution_dir):
-        if not fname.endswith(".pkl"): continue
+        if not (fname.endswith(".pkl") or fname.endswith(".pt")): continue
         path = os.path.join(solution_dir, fname)
         try:
-            with open(path, "rb") as f:
-                sol = pickle.load(f)
+            if fname.endswith(".pt"):
+                sol = torch.load(path, map_location=torch.device('cpu'))
+            else:
+                with open(path, "rb") as f:
+                    sol = pickle.load(f)
             required = ['params', 'history']
             if not all(k in sol for k in required):
                 raise ValueError("Missing keys")
@@ -247,7 +250,7 @@ class MultiParamAttentionInterpolator(nn.Module):
             return None
         # Assume all histories have same length and shape
         history_len = len(solutions[0]['history'])
-        stress_shape = solutions[0]['history'][0][1]['von_mises'].shape
+        stress_shape = solutions[0]['history'][0]['stresses']['von_mises'].shape
         interpolated_history = []
         for t in range(history_len):
             sigma_hydro = np.zeros(stress_shape)
@@ -255,15 +258,19 @@ class MultiParamAttentionInterpolator(nn.Module):
             von_mises = np.zeros(stress_shape)
             for sol, w in zip(solutions, weights):
                 if w < 1e-8: continue
-                _, stress_fields = sol['history'][t]
-                sigma_hydro += w * stress_fields.get('sigma_hydro', np.zeros(stress_shape))
-                sigma_mag += w * stress_fields.get('sigma_mag', np.zeros(stress_shape))
-                von_mises += w * stress_fields.get('von_mises', np.zeros(stress_shape))
-            interpolated_history.append((None, {  # eta not interpolated
-                'sigma_hydro': sigma_hydro,
-                'sigma_mag': sigma_mag,
-                'von_mises': von_mises
-            }))
+                frame = sol['history'][t]
+                stresses = frame['stresses']
+                sigma_hydro += w * stresses.get('sigma_hydro', np.zeros(stress_shape))
+                sigma_mag += w * stresses.get('sigma_mag', np.zeros(stress_shape))
+                von_mises += w * stresses.get('von_mises', np.zeros(stress_shape))
+            interpolated_history.append({
+                'eta': np.zeros(stress_shape),  # Placeholder, as eta not used
+                'stresses': {
+                    'sigma_hydro': sigma_hydro,
+                    'sigma_mag': sigma_mag,
+                    'von_mises': von_mises
+                }
+            })
         param_set = solutions[0]['params'].copy()
         param_set.update({'defect_type': defect_target, 'theta': theta_target})
         return {
@@ -282,10 +289,10 @@ def get_center_stress(solution, stress_type='von_mises', center_fraction=0.5, th
     history = solution['history']
     if not history:
         return np.zeros(50)
-    shape = history[0][1][stress_type].shape
+    shape = history[0]['stresses'][stress_type].shape
     ix = shape[0] // 2
     iy = int(shape[1] * center_fraction)
-    stress_raw = np.array([stress_fields[stress_type][ix, iy] for _, stress_fields in history])
+    stress_raw = np.array([frame['stresses'][stress_type][ix, iy] for frame in history])
     # === APPLY TEMPORAL BIAS BASED ON theta INCREASE ===
     if temporal_bias_factor > 0 and theta_current is not None:
         # Reference theta = 0 deg
