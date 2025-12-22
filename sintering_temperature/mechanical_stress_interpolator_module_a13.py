@@ -111,6 +111,7 @@ class EnhancedSolutionLoader:
         self.solutions_dir = solutions_dir
         self._ensure_directory()
         self.cache = {}
+        self.pt_loading_method = "safe"  # "safe" or "unsafe"
         
     def _ensure_directory(self):
         """Create solutions directory if it doesn't exist"""
@@ -171,32 +172,71 @@ class EnhancedSolutionLoader:
     
     def _read_pkl(self, file_content):
         buffer = BytesIO(file_content)
-        return pickle.load(buffer)
+        try:
+            data = pickle.load(buffer)
+            if isinstance(data, Exception):
+                return data
+            return data
+        except Exception as e:
+            return e
     
     def _read_pt(self, file_content):
         buffer = BytesIO(file_content)
-        return torch.load(buffer, map_location=torch.device('cpu'))
+        try:
+            if self.pt_loading_method == "safe":
+                # Safer loading with allowlisted globals
+                try:
+                    torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+                except AttributeError:
+                    # Try the new numpy module path
+                    try:
+                        torch.serialization.add_safe_globals([np._core.multiarray.scalar])
+                    except:
+                        pass  # If it fails, we'll try loading anyway
+                data = torch.load(buffer, map_location='cpu', weights_only=True)
+            else:
+                # Unsafe loading (only use if you trust the source)
+                data = torch.load(buffer, map_location='cpu', weights_only=False)
+            
+            # Convert tensors to numpy arrays for compatibility
+            if isinstance(data, dict):
+                for key in list(data.keys()):
+                    if torch.is_tensor(data[key]):
+                        data[key] = data[key].cpu().numpy()
+                    elif isinstance(data[key], dict):
+                        for subkey in list(data[key].keys()):
+                            if torch.is_tensor(data[key][subkey]):
+                                data[key][subkey] = data[key][subkey].cpu().numpy()
+            return data
+        except Exception as e:
+            return e
     
     def _read_h5(self, file_content):
-        import h5py
-        buffer = BytesIO(file_content)
-        with h5py.File(buffer, 'r') as f:
-            data = {}
-            def read_h5_obj(name, obj):
-                if isinstance(obj, h5py.Dataset):
-                    data[name] = obj[()]
-                elif isinstance(obj, h5py.Group):
-                    data[name] = {}
-                    for key in obj.keys():
-                        read_h5_obj(f"{name}/{key}", obj[key])
-            for key in f.keys():
-                read_h5_obj(key, f[key])
-        return data
+        try:
+            import h5py
+            buffer = BytesIO(file_content)
+            with h5py.File(buffer, 'r') as f:
+                data = {}
+                def read_h5_obj(name, obj):
+                    if isinstance(obj, h5py.Dataset):
+                        data[name] = obj[()]
+                    elif isinstance(obj, h5py.Group):
+                        data[name] = {}
+                        for key in obj.keys():
+                            read_h5_obj(f"{name}/{key}", obj[key])
+                for key in f.keys():
+                    read_h5_obj(key, f[key])
+            return data
+        except Exception as e:
+            return e
     
     def _read_npz(self, file_content):
         buffer = BytesIO(file_content)
-        data = np.load(buffer, allow_pickle=True)
-        return {key: data[key] for key in data.files}
+        try:
+            data = np.load(buffer, allow_pickle=True)
+            return {key: data[key] for key in data.files}
+        except Exception as e:
+            return e
     
     def _read_sql(self, file_content):
         with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
@@ -225,16 +265,21 @@ class EnhancedSolutionLoader:
             os.unlink(tmp_path)
             return data
         except Exception as e:
-            os.unlink(tmp_path)
-            raise e
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return e
     
     def _read_json(self, file_content):
-        return json.loads(file_content.decode('utf-8'))
+        try:
+            return json.loads(file_content.decode('utf-8'))
+        except Exception as e:
+            return e
     
     def read_simulation_file(self, file_content, format_type='auto'):
-        """Read simulation file with format auto-detection"""
+        """Read simulation file with format auto-detection and error handling"""
         if format_type == 'auto':
-            format_type = 'pkl'
+            # Try to auto-detect based on content or extension
+            format_type = 'pkl'  # Default fallback
         
         readers = {
             'pkl': self._read_pkl,
@@ -247,12 +292,30 @@ class EnhancedSolutionLoader:
         
         if format_type in readers:
             data = readers[format_type](file_content)
-            return self._standardize_data(data, format_type)
+            
+            # Check if the reader returned an error/exception
+            if isinstance(data, Exception):
+                # Return a structured error object
+                return {
+                    'error': str(data),
+                    'format': format_type,
+                    'status': 'error'
+                }
+            
+            # Standardize the data
+            standardized = self._standardize_data(data, format_type)
+            standardized['status'] = 'success'
+            return standardized
         else:
-            raise ValueError(f"Unsupported format: {format_type}")
+            error_msg = f"Unsupported format: {format_type}"
+            return {
+                'error': error_msg,
+                'format': format_type,
+                'status': 'error'
+            }
     
     def _standardize_data(self, data, format_type):
-        """Standardize simulation data structure"""
+        """Standardize simulation data structure with robust error handling"""
         standardized = {
             'params': {},
             'history': [],
@@ -260,35 +323,73 @@ class EnhancedSolutionLoader:
             'format': format_type
         }
         
-        if format_type == 'pkl':
-            if isinstance(data, dict):
-                standardized['params'] = data.get('params', {})
-                standardized['metadata'] = data.get('metadata', {})
-                standardized['history'] = data.get('history', [])
-        
-        elif format_type == 'pt':
-            if isinstance(data, dict):
-                standardized['params'] = data.get('params', {})
-                standardized['metadata'] = data.get('metadata', {})
-                standardized['history'] = data.get('history', [])
-        
-        elif format_type == 'h5':
-            standardized.update(data)
-        
-        elif format_type == 'npz':
-            standardized.update(data)
-        
-        elif format_type == 'json':
-            if isinstance(data, dict):
-                standardized['params'] = data.get('params', {})
-                standardized['metadata'] = data.get('metadata', {})
-                standardized['history'] = data.get('history', [])
+        try:
+            if format_type == 'pkl':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"PKL data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'pt':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    
+                    # Handle history - may be stored differently
+                    history = data.get('history', [])
+                    if isinstance(history, list):
+                        standardized['history'] = history
+                    elif isinstance(history, dict):
+                        # Convert dict history to list format
+                        history_list = []
+                        for key in sorted(history.keys()):
+                            frame = history[key]
+                            if isinstance(frame, dict) and 'eta' in frame and 'stresses' in frame:
+                                history_list.append((frame['eta'], frame['stresses']))
+                        standardized['history'] = history_list
+                    
+                    # Additional cleanup for tensor data
+                    if 'params' in standardized:
+                        for key, value in standardized['params'].items():
+                            if torch.is_tensor(value):
+                                standardized['params'][key] = value.cpu().numpy()
+                else:
+                    standardized['error'] = f"PT data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'h5':
+                # Handle H5 format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"H5 data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'npz':
+                # Handle NPZ format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"NPZ data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'json':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"JSON data is not a dictionary: {type(data)}"
+            
+        except Exception as e:
+            standardized['error'] = f"Standardization error: {str(e)}"
         
         return standardized
     
-    def load_all_solutions(self, use_cache=True):
-        """Load all solutions with caching and progress tracking"""
+    def load_all_solutions(self, use_cache=True, pt_loading_method="safe"):
+        """Load all solutions with caching, progress tracking, and error handling"""
+        self.pt_loading_method = pt_loading_method
         solutions = []
+        failed_files = []
         
         if not os.path.exists(self.solutions_dir):
             st.warning(f"Directory {self.solutions_dir} not found. Creating it.")
@@ -310,10 +411,11 @@ class EnhancedSolutionLoader:
                 filename = file_info['filename']
                 
                 # Check cache
-                cache_key = f"{filename}_{os.path.getmtime(file_path)}"
+                cache_key = f"{filename}_{os.path.getmtime(file_path)}_{pt_loading_method}"
                 if use_cache and cache_key in self.cache:
                     sim = self.cache[cache_key]
-                    solutions.append(sim)
+                    if sim.get('status') == 'success':
+                        solutions.append(sim)
                     continue
                 
                 # Update progress
@@ -330,18 +432,40 @@ class EnhancedSolutionLoader:
                 sim['file_info'] = file_info
                 
                 # Validate structure
-                if 'params' in sim and 'history' in sim:
-                    # Cache the solution
-                    self.cache[cache_key] = sim
-                    solutions.append(sim)
+                if sim.get('status') == 'success' and 'params' in sim and 'history' in sim:
+                    # Validate params structure
+                    if isinstance(sim['params'], dict):
+                        # Cache the solution
+                        self.cache[cache_key] = sim
+                        solutions.append(sim)
+                    else:
+                        failed_files.append({
+                            'filename': filename,
+                            'error': f"Params is not a dictionary: {type(sim['params'])}"
+                        })
                 else:
-                    st.warning(f"⚠️ Skipped {filename}: Missing params/history")
+                    error_msg = sim.get('error', 'Unknown error or missing params/history')
+                    failed_files.append({
+                        'filename': filename,
+                        'error': error_msg
+                    })
                     
             except Exception as e:
-                st.error(f"❌ Error loading {file_info['filename']}: {str(e)}")
+                failed_files.append({
+                    'filename': file_info['filename'],
+                    'error': f"Loading error: {str(e)}"
+                })
         
         progress_bar.empty()
         status_text.empty()
+        
+        # Display failed files if any
+        if failed_files:
+            with st.expander(f"⚠️ Failed to load {len(failed_files)} files", expanded=False):
+                for failed in failed_files[:10]:  # Show first 10
+                    st.error(f"**{failed['filename']}**: {failed['error']}")
+                if len(failed_files) > 10:
+                    st.info(f"... and {len(failed_files) - 10} more files failed to load.")
         
         return solutions
 
@@ -371,16 +495,15 @@ class EnhancedAttentionInterpolator(nn.Module):
             'Ellipse': [0, 0, 0, 0, 1]
         }
     
-    @jit(nopython=True)
-    def compute_parameter_vector_numba(self, params_array):
-        """Numba-accelerated parameter vector computation"""
-        # This is a simplified version - for actual use, you'd need to adapt
-        # the parameter mapping to work with numba
-        return params_array  # Placeholder
-    
     def compute_parameter_vector(self, params):
-        """Convert parameters to numerical vector"""
+        """Convert parameters to numerical vector with error handling"""
         vector = []
+        
+        # Check if params is a dictionary
+        if not isinstance(params, dict):
+            st.warning(f"Parameters is not a dictionary: {type(params)}")
+            # Return default vector
+            return np.array([0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0.5, 0.0], dtype=np.float32)
         
         # Defect type
         defect = params.get('defect_type', 'ISF')
@@ -404,57 +527,114 @@ class EnhancedAttentionInterpolator(nn.Module):
     def interpolate(self, sources, target_params):
         """Interpolate stress field using attention weights with Numba acceleration"""
         
+        # Filter and validate sources
+        valid_sources = []
+        for src in sources:
+            # Check if source is a valid simulation dictionary
+            if not isinstance(src, dict):
+                continue
+            
+            # Check for required structure
+            if 'params' not in src or 'history' not in src:
+                continue
+            
+            # Check if params is a dictionary
+            if not isinstance(src.get('params'), dict):
+                continue
+            
+            valid_sources.append(src)
+        
+        if not valid_sources:
+            st.error("❌ Interpolation failed: No valid source simulations found.")
+            return None
+        
         # Get source parameter vectors
         source_vectors = []
         source_stresses_list = []
         
-        for src in sources:
+        for src in valid_sources:
             src_vec = self.compute_parameter_vector(src['params'])
             source_vectors.append(src_vec)
             
             # Get stress from final frame
-            if src['history']:
-                _, stress_fields = src['history'][-1]
+            history = src.get('history', [])
+            if history:
+                # Get the last frame
+                last_frame = history[-1]
+                
+                # Handle different frame formats
+                if isinstance(last_frame, tuple) and len(last_frame) >= 2:
+                    _, stress_fields = last_frame[0], last_frame[1]
+                elif isinstance(last_frame, dict):
+                    stress_fields = last_frame.get('stresses', {})
+                else:
+                    stress_fields = {}
+                
+                # Ensure stress_fields is a dictionary
+                if not isinstance(stress_fields, dict):
+                    stress_fields = {}
+                
+                # Extract stress components with defaults
                 source_stresses_list.append({
                     'von_mises': stress_fields.get('von_mises', np.zeros((128, 128))),
                     'sigma_hydro': stress_fields.get('sigma_hydro', np.zeros((128, 128))),
                     'sigma_mag': stress_fields.get('sigma_mag', np.zeros((128, 128)))
                 })
+            else:
+                # No history, use zero fields
+                source_stresses_list.append({
+                    'von_mises': np.zeros((128, 128)),
+                    'sigma_hydro': np.zeros((128, 128)),
+                    'sigma_mag': np.zeros((128, 128))
+                })
         
         if not source_vectors:
+            st.error("❌ Interpolation failed: Could not compute parameter vectors.")
             return None
         
         source_vectors = np.array(source_vectors)
         target_vector = self.compute_parameter_vector(target_params)
         
         # Compute attention weights with Numba acceleration
-        if self.use_numba:
-            weights = compute_gaussian_weights_numba(source_vectors, target_vector, self.sigma)
+        if self.use_numba and len(source_vectors) > 0:
+            try:
+                weights = compute_gaussian_weights_numba(source_vectors, target_vector, self.sigma)
+            except Exception as e:
+                st.warning(f"Numba acceleration failed, falling back to NumPy: {e}")
+                distances = np.sqrt(np.sum((source_vectors - target_vector) ** 2, axis=1))
+                weights = np.exp(-0.5 * (distances / self.sigma) ** 2)
+                weights = weights / (np.sum(weights) + 1e-8)
         else:
-            # Fallback to numpy
             distances = np.sqrt(np.sum((source_vectors - target_vector) ** 2, axis=1))
             weights = np.exp(-0.5 * (distances / self.sigma) ** 2)
             weights = weights / (np.sum(weights) + 1e-8)
         
         # Convert to numpy array for Numba acceleration
         if self.use_numba and source_stresses_list:
-            stress_components = ['von_mises', 'sigma_hydro', 'sigma_mag']
-            n_components = len(stress_components)
-            height, width = source_stresses_list[0]['von_mises'].shape
-            
-            source_stress_array = np.zeros((len(source_stresses_list), n_components, height, width))
-            for i, stresses in enumerate(source_stresses_list):
+            try:
+                stress_components = ['von_mises', 'sigma_hydro', 'sigma_mag']
+                n_components = len(stress_components)
+                height, width = source_stresses_list[0]['von_mises'].shape
+                
+                source_stress_array = np.zeros((len(source_stresses_list), n_components, height, width))
+                for i, stresses in enumerate(source_stresses_list):
+                    for j, comp in enumerate(stress_components):
+                        source_stress_array[i, j] = stresses[comp]
+                
+                combined_array = weighted_stress_combination_numba(source_stress_array, weights)
+                
+                result = {}
                 for j, comp in enumerate(stress_components):
-                    source_stress_array[i, j] = stresses[comp]
-            
-            # Use Numba-accelerated combination
-            combined_array = weighted_stress_combination_numba(source_stress_array, weights)
-            
-            result = {}
-            for j, comp in enumerate(stress_components):
-                result[comp] = combined_array[j]
+                    result[comp] = combined_array[j]
+            except Exception as e:
+                st.warning(f"Numba combination failed, using NumPy fallback: {e}")
+                result = {}
+                for key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                    combined = np.zeros_like(source_stresses_list[0][key])
+                    for w, stress in zip(weights, source_stresses_list):
+                        combined += w * stress[key]
+                    result[key] = combined
         else:
-            # Fallback to numpy combination
             result = {}
             for key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                 combined = np.zeros_like(source_stresses_list[0][key])
@@ -465,7 +645,8 @@ class EnhancedAttentionInterpolator(nn.Module):
         return {
             'stress_fields': result,
             'attention_weights': weights,
-            'target_params': target_params
+            'target_params': target_params,
+            'num_valid_sources': len(valid_sources)
         }
 
 # =============================================
@@ -879,6 +1060,14 @@ def main():
             use_numba = st.checkbox("Use Numba Acceleration", value=True)
             use_cache = st.checkbox("Use File Cache", value=True)
             
+            # PyTorch loading method selection
+            pt_loading_method = st.radio(
+                "PyTorch Load Method",
+                ["Safe (weights_only=True)", "Unsafe (weights_only=False)"],
+                index=0,
+                help="Safe loading is recommended for untrusted files. Unsafe loading may be needed for older files."
+            )
+            
             if use_numba != st.session_state.interpolator.use_numba:
                 st.session_state.interpolator.use_numba = use_numba
                 st.success("Numba setting updated!")
@@ -892,8 +1081,13 @@ def main():
                         help="Load all solutions from numerical_solutions directory"):
                 with st.spinner("Loading solutions..."):
                     start_time = time.time()
+                    
+                    # Determine loading method
+                    load_method = "safe" if pt_loading_method.startswith("Safe") else "unsafe"
+                    
                     st.session_state.solutions = st.session_state.loader.load_all_solutions(
-                        use_cache=use_cache
+                        use_cache=use_cache,
+                        pt_loading_method=load_method
                     )
                     load_time = time.time() - start_time
                     
