@@ -1,458 +1,143 @@
 import streamlit as st
 import numpy as np
-from numba import jit, prange
-import matplotlib.pyplot as plt
 import pandas as pd
-import zipfile
-from io import BytesIO
-import time
-import hashlib
-import json
-from datetime import datetime
-import warnings
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, Normalize, LogNorm
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import os
 import pickle
 import torch
+import torch.nn as nn
+from datetime import datetime
+from io import BytesIO
+import warnings
+import json
+import zipfile
+from numba import jit, prange
+import time
+import hashlib
 import sqlite3
 from pathlib import Path
 import tempfile
-import os
 import glob
 from typing import List, Dict, Any, Optional, Tuple, Union
 from itertools import product
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import base64
-from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
-import re
-from scipy.interpolate import interp1d
-import torch.nn as nn
-from matplotlib.colors import Normalize, LogNorm
+from scipy import ndimage
+
 warnings.filterwarnings('ignore')
 
 # =============================================
-# PATH CONFIGURATION
+# CONFIGURATION
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-NUMERICAL_SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
+SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
-FIGURE_DIR = os.path.join(SCRIPT_DIR, "figures")
-DB_PATH = os.path.join(SCRIPT_DIR, "sunburst_data.db")
-if not os.path.exists(NUMERICAL_SOLUTIONS_DIR):
-    os.makedirs(NUMERICAL_SOLUTIONS_DIR, exist_ok=True)
-if not os.path.exists(VISUALIZATION_OUTPUT_DIR):
-    os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
-if not os.path.exists(FIGURE_DIR):
-    os.makedirs(FIGURE_DIR, exist_ok=True)
+os.makedirs(SOLUTIONS_DIR, exist_ok=True)
+os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
+
+# Color schemes
+STRESS_CMAP = LinearSegmentedColormap.from_list(
+    'stress_cmap', ['#00008B', '#4169E1', '#87CEEB', '#FFFFFF', '#FFB6C1', '#FF6347', '#8B0000']
+)
+SUNBURST_CMAPS = ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'coolwarm', 'rainbow']
 
 # =============================================
-# CUSTOM COLORMAPS
+# NUMBA-ACCELERATED FUNCTIONS
 # =============================================
-def create_custom_colormaps():
-    """Create custom colormaps for stress visualization"""
-    # Stress colormap (blue to red)
-    stress_cmap = LinearSegmentedColormap.from_list(
-        'stress_cmap',
-        ['#00008B', '#4169E1', '#87CEEB', '#FFFFFF', '#FFB6C1', '#FF6347', '#8B0000']
-    )
-  
-    # Attention weight colormap
-    attention_cmap = LinearSegmentedColormap.from_list(
-        'attention_cmap',
-        ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D']
-    )
-  
-    # Comparison colormap (diverging)
-    compare_cmap = LinearSegmentedColormap.from_list(
-        'compare_cmap',
-        ['#0066CC', '#66CCFF', '#FFFFFF', '#FF9999', '#CC0000']
-    )
-  
-    return stress_cmap, attention_cmap, compare_cmap
+
+@jit(nopython=True, parallel=True)
+def compute_gaussian_weights_numba(source_vectors, target_vector, sigma):
+    """Numba-accelerated Gaussian weight computation"""
+    n_sources = source_vectors.shape[0]
+    weights = np.zeros(n_sources)
+    
+    for i in prange(n_sources):
+        dist_sq = 0.0
+        for j in range(source_vectors.shape[1]):
+            diff = source_vectors[i, j] - target_vector[j]
+            dist_sq += diff * diff
+        weights[i] = np.exp(-0.5 * dist_sq / (sigma * sigma))
+    
+    weight_sum = np.sum(weights)
+    if weight_sum > 0:
+        weights = weights / weight_sum
+    else:
+        weights = np.ones(n_sources) / n_sources
+    
+    return weights
+
+@jit(nopython=True, parallel=True)
+def weighted_stress_combination_numba(source_stresses, weights):
+    """Numba-accelerated weighted stress combination"""
+    n_sources = source_stresses.shape[0]
+    n_components = source_stresses.shape[1]
+    height = source_stresses.shape[2]
+    width = source_stresses.shape[3]
+    
+    result = np.zeros((n_components, height, width))
+    
+    for comp in prange(n_components):
+        for i in range(n_sources):
+            weight = weights[i]
+            for h in range(height):
+                for w in range(width):
+                    result[comp, h, w] += weight * source_stresses[i, comp, h, w]
+    
+    return result
+
+@jit(nopython=True)
+def compute_stress_statistics_numba(stress_matrix):
+    """Compute stress statistics efficiently"""
+    flat_stress = stress_matrix.flatten()
+    
+    max_val = np.max(flat_stress)
+    min_val = np.min(flat_stress)
+    mean_val = np.mean(flat_stress)
+    std_val = np.std(flat_stress)
+    percentile_95 = np.percentile(flat_stress, 95)
+    percentile_99 = np.percentile(flat_stress, 99)
+    
+    return max_val, min_val, mean_val, std_val, percentile_95, percentile_99
+
+@jit(nopython=True)
+def find_interface_stress_numba(stress_field, eta_field, threshold=0.1):
+    """Find maximum stress at material interface (where 0 < eta < 1)"""
+    height, width = stress_field.shape
+    max_stress = 0.0
+    
+    for i in range(height):
+        for j in range(width):
+            # Check if this is an interface point (eta between threshold and 1-threshold)
+            if eta_field[i, j] > threshold and eta_field[i, j] < (1.0 - threshold):
+                stress_val = abs(stress_field[i, j])
+                if stress_val > max_stress:
+                    max_stress = stress_val
+    
+    return max_stress
 
 # =============================================
-# EXTENDED COLORMAPS FOR SUNBURST
+# FIXED ENHANCED NUMERICAL SOLUTIONS LOADER
 # =============================================
-EXTENDED_CMAPS = [
-    'viridis', 'plasma', 'inferno', 'magma', 'cividis',
-    'Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
-    'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
-    'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
-    'binary', 'gist_yarg', 'gist_gray', 'gray', 'bone',
-    'pink', 'spring', 'summer', 'autumn', 'winter', 'cool',
-    'Wistia', 'hot', 'afmhot', 'gist_heat', 'copper',
-    'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu',
-    'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic',
-    'twilight', 'twilight_shifted', 'hsv',
-    'tab10', 'tab20', 'Set1', 'Set2', 'Set3',
-    'jet', 'turbo', 'nipy_spectral', 'gist_ncar', 'gist_rainbow'
-]
-
-# =============================================
-# VISUALIZATION MANAGER
-# =============================================
-class VisualizationManager:
-    """Manager for creating and exporting visualizations"""
-  
-    def __init__(self):
-        self.stress_cmap, self.attention_cmap, self.compare_cmap = create_custom_colormaps()
-        self.output_dir = VISUALIZATION_OUTPUT_DIR
-        self._ensure_directories()
-  
-    def _ensure_directories(self):
-        """Create necessary directories"""
-        subdirs = ['stress_fields', 'attention_plots', 'comparisons', 'animations']
-        for subdir in subdirs:
-            path = os.path.join(self.output_dir, subdir)
-            if not os.path.exists(path):
-                os.makedirs(path, exist_ok=True)
-  
-    def create_stress_field_plot_matplotlib(self, stress_data, title, component_name,
-                                          extent=None, vmin=None, vmax=None,
-                                          include_contour=True, include_colorbar=True):
-        fig, ax = plt.subplots(figsize=(10, 8), dpi=150)
-      
-        if extent is None:
-            extent = [-64, 64, -64, 64]
-      
-        if vmin is None:
-            vmin = np.nanmin(stress_data)
-        if vmax is None:
-            vmax = np.nanmax(stress_data)
-      
-        im = ax.imshow(stress_data,
-                      cmap=self.stress_cmap,
-                      extent=extent,
-                      origin='lower',
-                      aspect='equal',
-                      vmin=vmin,
-                      vmax=vmax)
-      
-        if include_contour and not np.all(stress_data == stress_data[0,0]):
-            try:
-                X, Y = np.meshgrid(np.linspace(extent[0], extent[1], stress_data.shape[1]),
-                                  np.linspace(extent[2], extent[3], stress_data.shape[0]))
-              
-                levels = np.linspace(vmin, vmax, 12)
-                contour = ax.contour(X, Y, stress_data,
-                                    levels=levels,
-                                    colors='black',
-                                    linewidths=0.5,
-                                    alpha=0.7)
-                ax.clabel(contour, inline=True, fontsize=8, fmt='%.2f')
-            except:
-                pass
-      
-        if include_colorbar:
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label('Stress (GPa)', rotation=270, labelpad=15)
-      
-        ax.set_xlabel('x (nm)', fontsize=12)
-        ax.set_ylabel('y (nm)', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-      
-        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
-      
-        plt.tight_layout()
-        return fig
-  
-    def create_attention_weights_plot_matplotlib(self, weights, source_names=None,
-                                               title="Attention Weights Distribution"):
-        fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
-      
-        if source_names is None:
-            source_names = [f'Source {i+1}' for i in range(len(weights))]
-      
-        x_pos = np.arange(len(weights))
-        bars = ax.bar(x_pos, weights,
-                     color=self.attention_cmap(np.linspace(0, 1, len(weights))),
-                     edgecolor='black',
-                     linewidth=1,
-                     alpha=0.8)
-      
-        for bar, weight in zip(bars, weights):
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                   f'{weight:.3f}', ha='center', va='bottom', fontsize=9)
-      
-        total = np.sum(weights)
-        for i, (bar, weight) in enumerate(zip(bars, weights)):
-            percentage = (weight / total) * 100
-            ax.text(bar.get_x() + bar.get_width()/2., -0.02,
-                   f'{percentage:.1f}%', ha='center', va='top', fontsize=8)
-      
-        ax.set_xlabel('Source Simulations', fontsize=12)
-        ax.set_ylabel('Attention Weight', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels(source_names, rotation=45, ha='right')
-        ax.set_ylim([0, max(weights) * 1.3])
-      
-        avg_weight = np.mean(weights)
-        ax.axhline(y=avg_weight, color='red', linestyle='--', alpha=0.7,
-                  label=f'Average: {avg_weight:.3f}')
-        ax.legend()
-      
-        ax.grid(True, alpha=0.3, axis='y', linestyle='--')
-      
-        plt.tight_layout()
-        return fig
-  
-    def create_training_loss_plot_matplotlib(self, losses, title="Training Loss Curve"):
-        fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
-      
-        epochs = range(1, len(losses) + 1)
-      
-        line = ax.plot(epochs, losses,
-                      color='#C73E1D',
-                      linewidth=2,
-                      marker='o',
-                      markersize=4,
-                      markerfacecolor='white',
-                      markeredgecolor='#C73E1D',
-                      markeredgewidth=1)
-      
-        if len(losses) > 5:
-            window_size = max(3, len(losses) // 10)
-            smooth_losses = pd.Series(losses).rolling(window=window_size,
-                                                     center=True,
-                                                     min_periods=1).mean()
-            ax.plot(epochs, smooth_losses,
-                   color='#2E86AB',
-                   linewidth=2,
-                   linestyle='--',
-                   alpha=0.7,
-                   label='Smoothed')
-      
-        ax.set_xlabel('Epoch', fontsize=12)
-        ax.set_ylabel('Loss', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
-        ax.set_yscale('log')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.legend()
-      
-        final_loss = losses[-1]
-        ax.annotate(f'Final: {final_loss:.4f}',
-                   xy=(epochs[-1], final_loss),
-                   xytext=(epochs[-1] * 0.7, losses[0] * 0.8),
-                   arrowprops=dict(arrowstyle='->', color='black', alpha=0.7),
-                   fontsize=10,
-                   bbox=dict(boxstyle="round,pad=0.3", facecolor="yellow", alpha=0.3))
-      
-        plt.tight_layout()
-        return fig
-  
-    def create_multi_frame_comparison(self, frames_data, titles, component_name,
-                                    nrows=2, ncols=3, figsize=(20, 12)):
-        fig, axes = plt.subplots(nrows=nrows, ncols=ncols,
-                                figsize=figsize,
-                                dpi=150,
-                                constrained_layout=True)
-      
-        if nrows == 1 and ncols == 1:
-            axes = np.array([[axes]])
-        axes = axes.flatten()
-      
-        all_data = np.concatenate([d.flatten() for d in frames_data if d is not None])
-        vmin, vmax = np.nanpercentile(all_data, [1, 99])
-      
-        for idx, (ax, data, title) in enumerate(zip(axes, frames_data, titles)):
-            if data is None or idx >= len(frames_data):
-                ax.axis('off')
-                continue
-              
-            im = ax.imshow(data,
-                          cmap=self.stress_cmap,
-                          extent=[-64, 64, -64, 64],
-                          origin='lower',
-                          aspect='equal',
-                          vmin=vmin,
-                          vmax=vmax)
-          
-            ax.set_title(title, fontsize=11, fontweight='bold', pad=10)
-            ax.set_xlabel('x (nm)')
-            ax.set_ylabel('y (nm)')
-            ax.grid(True, alpha=0.2)
-          
-            ax.text(0.02, 0.98, f'Frame {idx+1}',
-                   transform=ax.transAxes,
-                   fontsize=9,
-                   verticalalignment='top',
-                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-      
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-        cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label(f'{component_name} (GPa)', rotation=270, labelpad=20)
-      
-        fig.suptitle(f'{component_name.replace("_", " ").title()} - Frame Comparison',
-                    fontsize=16, fontweight='bold', y=1.02)
-      
-        return fig
-
-# =============================================
-# TIME FRAME VISUALIZATION MANAGER
-# =============================================
-class TimeFrameVisualizationManager:
-    def __init__(self, vis_manager=None):
-        self.vis_manager = vis_manager or VisualizationManager()
-  
-    def extract_time_frames(self, simulation_data, max_frames=10):
-        history = simulation_data.get('history', [])
-        if not history:
-            return {}
-      
-        n_frames = min(len(history), max_frames)
-        frame_indices = np.linspace(0, len(history)-1, n_frames, dtype=int)
-      
-        frames = {
-            'sigma_hydro': [],
-            'sigma_mag': [],
-            'von_mises': [],
-            'time_points': [],
-            'frame_numbers': []
-        }
-      
-        for idx in frame_indices:
-            eta, stress_fields = history[idx]
-            frames['sigma_hydro'].append(stress_fields.get('sigma_hydro', np.zeros_like(eta)))
-            frames['sigma_mag'].append(stress_fields.get('sigma_mag', np.zeros_like(eta)))
-            frames['von_mises'].append(stress_fields.get('von_mises', np.zeros_like(eta)))
-            frames['time_points'].append(idx)
-            frames['frame_numbers'].append(idx + 1)
-      
-        return frames
-  
-    def create_time_series_plot(self, frames_data, component_name,
-                              title="Time Evolution of Stress Field"):
-        component_frames = frames_data.get(component_name, [])
-        frame_numbers = frames_data.get('frame_numbers', [])
-      
-        if not component_frames:
-            return None
-      
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10), dpi=150,
-                                constrained_layout=True)
-        axes = axes.flatten()
-      
-        all_data = np.concatenate([f.flatten() for f in component_frames])
-        vmin, vmax = np.nanpercentile(all_data, [1, 99])
-      
-        selected_frames = np.linspace(0, len(component_frames)-1, 6, dtype=int)
-      
-        for idx, (frame_idx, ax) in enumerate(zip(selected_frames, axes)):
-            if frame_idx < len(component_frames):
-                data = component_frames[frame_idx]
-                frame_num = frame_numbers[frame_idx]
-              
-                im = ax.imshow(data,
-                              cmap=self.vis_manager.stress_cmap,
-                              extent=[-64, 64, 64, -64],
-                              origin='lower',
-                              aspect='equal',
-                              vmin=vmin,
-                              vmax=vmax)
-              
-                ax.set_title(f'Frame {frame_num}', fontsize=10, fontweight='bold')
-                ax.set_xlabel('x (nm)')
-                ax.set_ylabel('y (nm)')
-                ax.grid(True, alpha=0.2)
-      
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-        cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label(f'{component_name} (GPa)', rotation=270, labelpad=20)
-      
-        fig.suptitle(f'{title}\n{component_name.replace("_", " ").title()}',
-                    fontsize=14, fontweight='bold')
-      
-        return fig
-  
-    def create_stress_evolution_metrics(self, frames_data):
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10), dpi=150,
-                                constrained_layout=True)
-        axes = axes.flatten()
-      
-        frame_numbers = frames_data.get('frame_numbers', [])
-      
-        ax1 = axes[0]
-        for comp_name, comp_data in [('von_mises', 'Von Mises'),
-                                     ('sigma_hydro', 'Hydrostatic'),
-                                     ('sigma_mag', 'Magnitude')]:
-            if comp_name in frames_data:
-                max_stress = [np.max(frame) for frame in frames_data[comp_name]]
-                ax1.plot(frame_numbers, max_stress, 'o-', label=comp_data, linewidth=2)
-      
-        ax1.set_xlabel('Frame Number')
-        ax1.set_ylabel('Maximum Stress (GPa)')
-        ax1.set_title('Maximum Stress Evolution', fontweight='bold')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-      
-        ax2 = axes[1]
-        for comp_name, comp_data in [('von_mises', 'Von Mises'),
-                                     ('sigma_hydro', 'Hydrostatic'),
-                                     ('sigma_mag', 'Magnitude')]:
-            if comp_name in frames_data:
-                mean_stress = [np.mean(frame) for frame in frames_data[comp_name]]
-                ax2.plot(frame_numbers, mean_stress, 's-', label=comp_data, linewidth=2)
-      
-        ax2.set_xlabel('Frame Number')
-        ax2.set_ylabel('Mean Stress (GPa)')
-        ax2.set_title('Mean Stress Evolution', fontweight='bold')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-      
-        ax3 = axes[2]
-        threshold = 0.5
-        for comp_name, comp_data in [('von_mises', 'Von Mises'),
-                                     ('sigma_hydro', 'Hydrostatic'),
-                                     ('sigma_mag', 'Magnitude')]:
-            if comp_name in frames_data:
-                volume_above = [np.sum(frame > threshold) for frame in frames_data[comp_name]]
-                ax3.plot(frame_numbers, volume_above, '^-', label=comp_data, linewidth=2)
-      
-        ax3.set_xlabel('Frame Number')
-        ax3.set_ylabel(f'Pixels > {threshold} GPa')
-        ax3.set_title(f'High Stress Volume Evolution', fontweight='bold')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
-      
-        ax4 = axes[3]
-        for comp_name, comp_data in [('von_mises', 'Von Mises'),
-                                     ('sigma_hydro', 'Hydrostatic'),
-                                     ('sigma_mag', 'Magnitude')]:
-            if comp_name in frames_data:
-                std_stress = [np.std(frame) for frame in frames_data[comp_name]]
-                ax4.plot(frame_numbers, std_stress, 'D-', label=comp_data, linewidth=2)
-      
-        ax4.set_xlabel('Frame Number')
-        ax4.set_ylabel('Standard Deviation (GPa)')
-        ax4.set_title('Stress Distribution Width', fontweight='bold')
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-      
-        fig.suptitle('Stress Evolution Metrics Analysis', fontsize=14, fontweight='bold')
-      
-        return fig
-
-# =============================================
-# PREDICTION RESULTS MANAGER
-# =============================================
-# (original class)
-
-# =============================================
-# NUMERICAL SOLUTIONS MANAGER
-# =============================================
-class NumericalSolutionsManager:
-    def __init__(self, solutions_dir: str = NUMERICAL_SOLUTIONS_DIR):
+class EnhancedSolutionLoader:
+    """Enhanced solution loader with support for multiple formats and caching"""
+    
+    def __init__(self, solutions_dir: str = SOLUTIONS_DIR):
         self.solutions_dir = solutions_dir
         self._ensure_directory()
-  
+        self.cache = {}
+        self.pt_loading_method = "safe"  # "safe" or "unsafe"
+        
     def _ensure_directory(self):
+        """Create solutions directory if it doesn't exist"""
         if not os.path.exists(self.solutions_dir):
             os.makedirs(self.solutions_dir, exist_ok=True)
-  
-    def scan_directory(self) -> Dict[str, List[str]]:
+            st.info(f"Created directory: {self.solutions_dir}")
+    
+    def scan_solutions(self) -> Dict[str, List[str]]:
+        """Scan directory for solution files"""
         file_formats = {
             'pkl': [],
             'pt': [],
@@ -461,7 +146,7 @@ class NumericalSolutionsManager:
             'sql': [],
             'json': []
         }
-      
+        
         for format_type, extensions in [
             ('pkl', ['*.pkl', '*.pickle']),
             ('pt', ['*.pt', '*.pth']),
@@ -476,1732 +161,1503 @@ class NumericalSolutionsManager:
                 if files:
                     files.sort(key=os.path.getmtime, reverse=True)
                     file_formats[format_type].extend(files)
-      
+        
         return file_formats
-  
-    def get_all_files(self) -> List[Dict[str, Any]]:
+    
+    def get_all_files_info(self) -> List[Dict[str, Any]]:
+        """Get information about all solution files"""
         all_files = []
-        file_formats = self.scan_directory()
-      
+        file_formats = self.scan_solutions()
+        
         for format_type, files in file_formats.items():
             for file_path in files:
-                file_info = {
-                    'path': file_path,
-                    'filename': os.path.basename(file_path),
-                    'format': format_type,
-                    'size': os.path.getsize(file_path),
-                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
-                    'relative_path': os.path.relpath(file_path, self.solutions_dir)
-                }
-                all_files.append(file_info)
-      
+                try:
+                    file_info = {
+                        'path': file_path,
+                        'filename': os.path.basename(file_path),
+                        'format': format_type,
+                        'size': os.path.getsize(file_path),
+                        'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                        'relative_path': os.path.relpath(file_path, self.solutions_dir)
+                    }
+                    all_files.append(file_info)
+                except Exception as e:
+                    st.warning(f"Could not get info for {file_path}: {e}")
+        
         all_files.sort(key=lambda x: x['filename'].lower())
         return all_files
-  
-    def get_file_by_name(self, filename: str) -> Optional[str]:
-        for file_info in self.get_all_files():
-            if file_info['filename'] == filename:
-                return file_info['path']
-        return None
-  
-    def load_simulation(self, file_path: str, interpolator) -> Dict[str, Any]:
+    
+    def _read_pkl(self, file_content):
+        buffer = BytesIO(file_content)
         try:
-            ext = os.path.splitext(file_path)[1].lower().lstrip('.')
-            if ext in ['pkl', 'pickle']:
-                format_type = 'pkl'
-            elif ext in ['pt', 'pth']:
-                format_type = 'pt'
-            elif ext in ['h5', 'hdf5']:
-                format_type = 'h5'
-            elif ext == 'npz':
-                format_type = 'npz'
-            elif ext in ['sql', 'db']:
-                format_type = 'sql'
-            elif ext == 'json':
-                format_type = 'json'
-            else:
-                format_type = 'auto'
-          
-            with open(file_path, 'rb') as f:
-                file_content = f.read()
-          
-            sim_data = interpolator.read_simulation_file(file_content, format_type)
-            sim_data['loaded_from'] = 'numerical_solutions'
-            sim_data['filename'] = os.path.basename(file_path)
-            # Extract and update params from filename
-            file_params = extract_params_from_filename(sim_data['filename'])
-            sim_data['params'].update(file_params)
-            return sim_data
-          
+            data = pickle.load(buffer)
+            if isinstance(data, Exception):
+                return data
+            return data
         except Exception as e:
-            st.error(f"Error loading {file_path}: {str(e)}")
-            raise
-  
-    def save_simulation(self, data: Dict[str, Any], filename: str, format_type: str = 'pkl'):
-        if not filename.endswith(f'.{format_type}'):
-            filename = f"{filename}.{format_type}"
-      
-        file_path = os.path.join(self.solutions_dir, filename)
-      
+            return e
+    
+    def _read_pt(self, file_content):
+        buffer = BytesIO(file_content)
+        try:
+            if self.pt_loading_method == "safe":
+                # FIXED: Handle PyTorch 2.6 weights_only=True issue
+                # First try with weights_only=True and allowlist numpy globals
+                try:
+                    # Try to import the numpy scalar class
+                    import numpy as np
+                    # Different numpy versions have different paths
+                    try:
+                        from numpy._core.multiarray import scalar as np_scalar
+                    except ImportError:
+                        try:
+                            from numpy.core.multiarray import scalar as np_scalar
+                        except ImportError:
+                            np_scalar = None
+                    
+                    if np_scalar is not None:
+                        # Use safe_globals context manager
+                        import torch.serialization
+                        with torch.serialization.safe_globals([np_scalar]):
+                            data = torch.load(buffer, map_location='cpu', weights_only=True)
+                    else:
+                        # Fallback to weights_only=False with warning
+                        st.warning("Could not import numpy scalar, using weights_only=False")
+                        data = torch.load(buffer, map_location='cpu', weights_only=False)
+                except Exception as safe_error:
+                    # If safe loading fails, try unsafe as last resort
+                    st.warning(f"Safe loading failed: {safe_error}. Trying weights_only=False")
+                    data = torch.load(buffer, map_location='cpu', weights_only=False)
+            else:
+                # Unsafe loading (only use if you trust the source)
+                data = torch.load(buffer, map_location='cpu', weights_only=False)
+            
+            # Convert tensors to numpy arrays for compatibility
+            if isinstance(data, dict):
+                for key in list(data.keys()):
+                    if torch.is_tensor(data[key]):
+                        data[key] = data[key].cpu().numpy()
+                    elif isinstance(data[key], dict):
+                        for subkey in list(data[key].keys()):
+                            if torch.is_tensor(data[key][subkey]):
+                                data[key][subkey] = data[key][subkey].cpu().numpy()
+            return data
+        except Exception as e:
+            return e
+    
+    def _read_h5(self, file_content):
+        try:
+            import h5py
+            buffer = BytesIO(file_content)
+            with h5py.File(buffer, 'r') as f:
+                data = {}
+                def read_h5_obj(name, obj):
+                    if isinstance(obj, h5py.Dataset):
+                        data[name] = obj[()]
+                    elif isinstance(obj, h5py.Group):
+                        data[name] = {}
+                        for key in obj.keys():
+                            read_h5_obj(f"{name}/{key}", obj[key])
+                for key in f.keys():
+                    read_h5_obj(key, f[key])
+            return data
+        except Exception as e:
+            return e
+    
+    def _read_npz(self, file_content):
+        buffer = BytesIO(file_content)
+        try:
+            data = np.load(buffer, allow_pickle=True)
+            return {key: data[key] for key in data.files}
+        except Exception as e:
+            return e
+    
+    def _read_sql(self, file_content):
+        with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+        
+        try:
+            conn = sqlite3.connect(tmp_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            
+            data = {}
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(f"SELECT * FROM {table_name}")
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                data[table_name] = {
+                    'columns': columns,
+                    'rows': rows
+                }
+            
+            conn.close()
+            os.unlink(tmp_path)
+            return data
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return e
+    
+    def _read_json(self, file_content):
+        try:
+            return json.loads(file_content.decode('utf-8'))
+        except Exception as e:
+            return e
+    
+    def read_simulation_file(self, file_content, format_type='auto'):
+        """Read simulation file with format auto-detection and error handling"""
+        if format_type == 'auto':
+            # Try to auto-detect based on content or extension
+            format_type = 'pkl'  # Default fallback
+        
+        readers = {
+            'pkl': self._read_pkl,
+            'pt': self._read_pt,
+            'h5': self._read_h5,
+            'npz': self._read_npz,
+            'sql': self._read_sql,
+            'json': self._read_json
+        }
+        
+        if format_type in readers:
+            data = readers[format_type](file_content)
+            
+            # Check if the reader returned an error/exception
+            if isinstance(data, Exception):
+                # Return a structured error object
+                return {
+                    'error': str(data),
+                    'format': format_type,
+                    'status': 'error'
+                }
+            
+            # Standardize the data
+            standardized = self._standardize_data(data, format_type)
+            standardized['status'] = 'success'
+            return standardized
+        else:
+            error_msg = f"Unsupported format: {format_type}"
+            return {
+                'error': error_msg,
+                'format': format_type,
+                'status': 'error'
+            }
+    
+    def _standardize_data(self, data, format_type):
+        """Standardize simulation data structure with robust error handling"""
+        standardized = {
+            'params': {},
+            'history': [],
+            'metadata': {},
+            'format': format_type
+        }
+        
         try:
             if format_type == 'pkl':
-                with open(file_path, 'wb') as f:
-                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-          
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"PKL data is not a dictionary: {type(data)}"
+            
             elif format_type == 'pt':
-                torch.save(data, file_path)
-          
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    
+                    # Handle history - may be stored differently
+                    history = data.get('history', [])
+                    if isinstance(history, list):
+                        standardized['history'] = history
+                    elif isinstance(history, dict):
+                        # Convert dict history to list format
+                        history_list = []
+                        for key in sorted(history.keys()):
+                            frame = history[key]
+                            if isinstance(frame, dict) and 'eta' in frame and 'stresses' in frame:
+                                history_list.append((frame['eta'], frame['stresses']))
+                        standardized['history'] = history_list
+                    
+                    # Additional cleanup for tensor data
+                    if 'params' in standardized:
+                        for key, value in standardized['params'].items():
+                            if torch.is_tensor(value):
+                                standardized['params'][key] = value.cpu().numpy()
+                else:
+                    standardized['error'] = f"PT data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'h5':
+                # Handle H5 format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"H5 data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'npz':
+                # Handle NPZ format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"NPZ data is not a dictionary: {type(data)}"
+            
             elif format_type == 'json':
-                def convert_for_json(obj):
-                    if isinstance(obj, np.ndarray):
-                        return obj.tolist()
-                    elif isinstance(obj, np.generic):
-                        return obj.item()
-                    elif isinstance(obj, dict):
-                        return {k: convert_for_json(v) for k, v in obj.items()}
-                    elif isinstance(obj, list):
-                        return [convert_for_json(item) for item in obj]
-                    else:
-                        return obj
-              
-                json_data = convert_for_json(data)
-                with open(file_path, 'w') as f:
-                    json.dump(json_data, f, indent=2)
-          
-            else:
-                st.warning(f"Format {format_type} not supported for saving")
-                return False
-          
-            st.success(f"✅ Saved simulation to: {filename}")
-            return True
-          
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"JSON data is not a dictionary: {type(data)}"
+            
         except Exception as e:
-            st.error(f"Error saving file: {str(e)}")
-            return False
-
-# =============================================
-# MULTI-TARGET PREDICTION MANAGER
-# =============================================
-class MultiTargetPredictionManager:
-    @staticmethod
-    def create_parameter_grid(base_params, ranges_config):
-        param_grid = []
-      
-        param_values = {}
-      
-        for param_name, config in ranges_config.items():
-            if 'values' in config:
-                param_values[param_name] = config['values']
-            elif 'min' in config and 'max' in config:
-                steps = config.get('steps', 10)
-                param_values[param_name] = np.linspace(
-                    config['min'], config['max'], steps
-                ).tolist()
-            else:
-                param_values[param_name] = [config.get('value', base_params.get(param_name))]
-      
-        param_names = list(param_values.keys())
-        value_arrays = [param_values[name] for name in param_names]
-      
-        for combination in product(*value_arrays):
-            param_dict = base_params.copy()
-            for name, value in zip(param_names, combination):
-                param_dict[name] = float(value) if isinstance(value, (int, float, np.number)) else value
-          
-            param_grid.append(param_dict)
-      
-        return param_grid
-  
-    @staticmethod
-    def batch_predict(source_simulations, target_params_list, interpolator):
-        predictions = {}
-      
-        source_param_vectors = []
-        source_histories = []
-      
-        for sim_data in source_simulations:
-            param_vector, _ = interpolator.compute_parameter_vector(sim_data)
-            source_param_vectors.append(param_vector)
-          
-            history = sim_data.get('history', [])
-            source_histories.append(history)
-      
-        source_param_vectors = np.array(source_param_vectors)
-      
-        for idx, target_params in enumerate(target_params_list):
-            target_vector, _ = interpolator.compute_parameter_vector(
-                {'params': target_params}
-            )
-          
-            distances = np.sqrt(np.sum((source_param_vectors - target_vector) ** 2, axis=1))
-            weights = np.exp(-0.5 * (distances / 0.3) ** 2)
-            weights = weights / (np.sum(weights) + 1e-8)
-          
-            predicted_history = []
-            max_len = max(len(h) for h in source_histories)
-            for t in range(max_len):
-                sigma_hydro = None
-                sigma_mag = None
-                von_mises = None
-                shape = None
-                for h, w in zip(source_histories, weights):
-                    if t >= len(h):
-                        continue
-                    eta, stress_fields = h[t]
-                    if sigma_hydro is None:
-                        sigma_hydro = w * stress_fields.get('sigma_hydro', 0)
-                        sigma_mag = w * stress_fields.get('sigma_mag', 0)
-                        von_mises = w * stress_fields.get('von_mises', 0)
-                        shape = sigma_hydro.shape if isinstance(sigma_hydro, np.ndarray) else None
-                    else:
-                        sigma_hydro += w * stress_fields.get('sigma_hydro', np.zeros(shape))
-                        sigma_mag += w * stress_fields.get('sigma_mag', np.zeros(shape))
-                        von_mises += w * stress_fields.get('von_mises', np.zeros(shape))
-                if shape is not None:
-                    predicted_history.append((np.zeros(shape), {
-                        'sigma_hydro': sigma_hydro,
-                        'sigma_mag': sigma_mag,
-                        'von_mises': von_mises
-                    }))
-          
-            predicted = {
-                'params': target_params,
-                'history': predicted_history,
-                'predicted': True,
-                'attention_weights': weights,
-                'target_index': idx
-            }
-          
-            predictions[f"target_{idx:03d}"] = predicted
-      
-        return predictions
-
-# =============================================
-# SUNBURST AND RADAR FUNCTIONS
-# =============================================
-def init_database():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sunburst_sessions (
-            session_id TEXT PRIMARY KEY,
-            parameters TEXT,
-            von_mises_matrix BLOB,
-            sigma_hydro_matrix BLOB,
-            sigma_mag_matrix BLOB,
-            times BLOB,
-            theta_spokes BLOB,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def save_sunburst_data(session_id, parameters, von_mises_matrix, sigma_hydro_matrix, sigma_mag_matrix, times, theta_spokes):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR REPLACE INTO sunburst_sessions
-        (session_id, parameters, von_mises_matrix, sigma_hydro_matrix, sigma_mag_matrix, times, theta_spokes)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (session_id, json.dumps(parameters),
-          pickle.dumps(von_mises_matrix), pickle.dumps(sigma_hydro_matrix), pickle.dumps(sigma_mag_matrix),
-          pickle.dumps(times), pickle.dumps(theta_spokes)))
-    conn.commit()
-    conn.close()
-
-def load_sunburst_data(session_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT parameters, von_mises_matrix, sigma_hydro_matrix, sigma_mag_matrix, times, theta_spokes FROM sunburst_sessions WHERE session_id = ?', (session_id,))
-    result = cursor.fetchone()
-    conn.close()
-    if result:
-        p, vm, sh, sm, t, ts = result
-        return json.loads(p), pickle.loads(vm), pickle.loads(sh), pickle.loads(sm), pickle.loads(t), pickle.loads(ts)
-    return None
-
-def get_recent_sessions(limit=10):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT session_id, created_at FROM sunburst_sessions ORDER BY created_at DESC LIMIT ?', (limit,))
-    sessions = cursor.fetchall()
-    conn.close()
-    return sessions
-
-def extract_params_from_filename(filename):
-    params = {
-        'defect_type': 'ISF',
-        'theta': 0.0,
-        'orientation': 'Horizontal {111} (0°)'
-    }
-    try:
-        defect_match = re.search(r'(ISF|ESF|Twin)', filename, re.IGNORECASE)
-        if defect_match:
-            params['defect_type'] = defect_match.group(1).upper()
-    
-        theta_match = re.search(r'theta_([\d.]+)', filename.lower())
-        if theta_match:
-            params['theta'] = float(theta_match.group(1))
-    
-        orient_match = re.search(r'(horizontal|tilted 30|tilted 60|vertical)', filename.lower())
-        if orient_match:
-            orient_str = orient_match.group(1).lower()
-            angle_map = {
-                'horizontal': 0.0,
-                'tilted 30': 30.0,
-                'tilted 60': 60.0,
-                'vertical': 90.0
-            }
-            params['theta'] = np.deg2rad(angle_map.get(orient_str, 0.0))
-            params['orientation'] = orient_match.group(0)
+            standardized['error'] = f"Standardization error: {str(e)}"
         
-    except Exception as e:
-        pass  # Silent fail
-    return params
+        return standardized
+    
+    def load_all_solutions(self, use_cache=True, pt_loading_method="safe"):
+        """Load all solutions with caching, progress tracking, and error handling"""
+        self.pt_loading_method = pt_loading_method
+        solutions = []
+        failed_files = []
+        
+        if not os.path.exists(self.solutions_dir):
+            st.warning(f"Directory {self.solutions_dir} not found. Creating it.")
+            os.makedirs(self.solutions_dir, exist_ok=True)
+            return solutions
+        
+        all_files_info = self.get_all_files_info()
+        
+        if not all_files_info:
+            st.info(f"No solution files found in {self.solutions_dir}")
+            return solutions
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for idx, file_info in enumerate(all_files_info):
+            try:
+                file_path = file_info['path']
+                filename = file_info['filename']
+                
+                # Check cache
+                cache_key = f"{filename}_{os.path.getmtime(file_path)}_{pt_loading_method}"
+                if use_cache and cache_key in self.cache:
+                    sim = self.cache[cache_key]
+                    if sim.get('status') == 'success':
+                        solutions.append(sim)
+                    continue
+                
+                # Update progress
+                progress = (idx + 1) / len(all_files_info)
+                progress_bar.progress(progress)
+                status_text.text(f"Loading {filename}...")
+                
+                # Load file
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                sim = self.read_simulation_file(file_content, file_info['format'])
+                sim['filename'] = filename
+                sim['file_info'] = file_info
+                
+                # Validate structure
+                if sim.get('status') == 'success' and 'params' in sim and 'history' in sim:
+                    # Validate params structure
+                    if isinstance(sim['params'], dict):
+                        # Cache the solution
+                        self.cache[cache_key] = sim
+                        solutions.append(sim)
+                    else:
+                        failed_files.append({
+                            'filename': filename,
+                            'error': f"Params is not a dictionary: {type(sim['params'])}"
+                        })
+                else:
+                    error_msg = sim.get('error', 'Unknown error or missing params/history')
+                    failed_files.append({
+                        'filename': filename,
+                        'error': error_msg
+                    })
+                    
+            except Exception as e:
+                failed_files.append({
+                    'filename': file_info['filename'],
+                    'error': f"Loading error: {str(e)}"
+                })
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Display failed files if any
+        if failed_files:
+            with st.expander(f"⚠️ Failed to load {len(failed_files)} files", expanded=False):
+                for failed in failed_files[:10]:  # Show first 10
+                    st.error(f"**{failed['filename']}**: {failed['error']}")
+                if len(failed_files) > 10:
+                    st.info(f"... and {len(failed_files) - 10} more files failed to load.")
+        
+        return solutions
 
-def display_extracted_parameters(solutions):
-    if not solutions:
-        return
-    data = []
-    for sol in solutions:
-        fname = sol.get('filename', 'unknown')
-        params = sol['params']
-        data.append({
-            'Filename': fname,
-            'Defect Type': params.get('defect_type', 'Unknown'),
-            'Orientation': params.get('orientation', 'Unknown'),
-            'θ (deg)': f"{np.rad2deg(params.get('theta', 0)):.1f}"
-        })
-    st.table(data)
-
-class SunburstInterpolator(nn.Module):
-    def __init__(self, sigma=0.2, num_heads=4, d_head=8):
+# =============================================
+# UPDATED ATTENTION INTERPOLATOR WITH INTERFACE STRESS
+# =============================================
+class EnhancedAttentionInterpolator(nn.Module):
+    """Enhanced attention-based interpolator with interface stress analysis"""
+    
+    def __init__(self, sigma=0.3, use_numba=True, interface_threshold=0.1):
         super().__init__()
         self.sigma = sigma
-        self.num_heads = num_heads
-        self.d_head = d_head
-        self.W_q = nn.Linear(2, num_heads * d_head)
-        self.W_k = nn.Linear(2, num_heads * d_head)
-
-    def forward(self, solutions, params_list, defect_target, theta_target):
-        if len(solutions) == 0:
+        self.use_numba = use_numba
+        self.interface_threshold = interface_threshold  # Threshold for interface detection (0 < eta < 1-threshold)
+        
+        # Parameter mappings
+        self.defect_map = {
+            'ISF': [1, 0, 0],
+            'ESF': [0, 1, 0],
+            'Twin': [0, 0, 1]
+        }
+        
+        self.shape_map = {
+            'Square': [1, 0, 0, 0, 0],
+            'Horizontal Fault': [0, 1, 0, 0, 0],
+            'Vertical Fault': [0, 0, 1, 0, 0],
+            'Rectangle': [0, 0, 0, 1, 0],
+            'Ellipse': [0, 0, 0, 0, 1]
+        }
+    
+    def compute_parameter_vector(self, params):
+        """Convert parameters to numerical vector with error handling"""
+        vector = []
+        
+        # Check if params is a dictionary
+        if not isinstance(params, dict):
+            st.warning(f"Parameters is not a dictionary: {type(params)}")
+            # Return default vector
+            return np.array([0, 0, 0, 1, 0, 0, 0, 0, 0.5, 0.5, 0.0], dtype=np.float32)
+        
+        # Defect type
+        defect = params.get('defect_type', 'ISF')
+        vector.extend(self.defect_map.get(defect, [0, 0, 0]))
+        
+        # Shape
+        shape = params.get('shape', 'Square')
+        vector.extend(self.shape_map.get(shape, [0, 0, 0, 0, 0]))
+        
+        # Numeric parameters (normalized)
+        eps0 = params.get('eps0', 0.707)
+        kappa = params.get('kappa', 0.6)
+        theta = params.get('theta', 0.0)
+        
+        vector.append((eps0 - 0.3) / (3.0 - 0.3))  # eps0 normalized
+        vector.append((kappa - 0.1) / (2.0 - 0.1))  # kappa normalized
+        vector.append(theta / (np.pi / 2))  # theta normalized 0-pi/2
+        
+        return np.array(vector, dtype=np.float32)
+    
+    def extract_interface_stress(self, eta, stress_fields):
+        """Extract maximum stress at material interface (where 0 < eta < 1)"""
+        if eta is None or not isinstance(eta, np.ndarray):
+            return {
+                'von_mises': 0.0,
+                'sigma_hydro': 0.0,
+                'sigma_mag': 0.0
+            }
+        
+        # Find interface region (where eta is between threshold values)
+        interface_mask = (eta > self.interface_threshold) & (eta < (1.0 - self.interface_threshold))
+        
+        if not np.any(interface_mask):
+            # If no interface found, use a broader definition
+            interface_mask = (eta > 0.001) & (eta < 0.999)
+        
+        results = {}
+        
+        for key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+            stress_data = stress_fields.get(key, np.zeros_like(eta))
+            
+            if np.any(interface_mask):
+                # Extract stress values at interface
+                interface_stress = stress_data[interface_mask]
+                
+                # Take absolute value for maximum magnitude
+                abs_stress = np.abs(interface_stress)
+                
+                # Get maximum stress at interface
+                max_stress = np.max(abs_stress) if len(abs_stress) > 0 else 0.0
+                
+                # Alternative: take 95th percentile to avoid outliers
+                # max_stress = np.percentile(abs_stress, 95) if len(abs_stress) > 5 else np.max(abs_stress)
+            else:
+                max_stress = 0.0
+            
+            results[key] = float(max_stress)
+        
+        return results
+    
+    def interpolate(self, sources, target_params):
+        """Interpolate stress field and extract interface stresses"""
+        
+        # Filter and validate sources
+        valid_sources = []
+        for src in sources:
+            # Check if source is a valid simulation dictionary
+            if not isinstance(src, dict):
+                continue
+            
+            # Check for required structure
+            if 'params' not in src or 'history' not in src:
+                continue
+            
+            # Check if params is a dictionary
+            if not isinstance(src.get('params'), dict):
+                continue
+            
+            valid_sources.append(src)
+        
+        if not valid_sources:
+            st.error("❌ Interpolation failed: No valid source simulations found.")
             return None
-        defects = np.array([p[0] for p in params_list])
-        thetas = np.array([p[1] for p in params_list])
-        theta_norm = thetas / (np.pi / 2)
-        tgt_theta_norm = theta_target / (np.pi / 2)
-        defect_map = {'ISF': 0, 'ESF': 1, 'Twin': 2}
-        defect_nums = np.array([defect_map.get(d, 0) for d in defects])
-        tgt_defect_num = defect_map.get(defect_target, 0)
-        params_tensor = torch.tensor(np.stack([defect_nums, theta_norm], axis=1), dtype=torch.float32)
-        target_tensor = torch.tensor([[tgt_defect_num, tgt_theta_norm]], dtype=torch.float32)
-        Q = self.W_q(target_tensor).view(1, self.num_heads, self.d_head)
-        K = self.W_k(params_tensor).view(-1, self.num_heads, self.d_head)
-        attn = torch.einsum('mhd,nhd->mnh', K, Q) / np.sqrt(self.d_head)
-        attn_w = torch.softmax(attn, dim=0).mean(dim=2).squeeze(1)
-        dist = np.sqrt(
-            ((defect_nums - tgt_defect_num) / self.sigma)**2 +
-            ((theta_norm - tgt_theta_norm) / self.sigma)**2
-        )
-        spatial_w = np.exp(-dist**2 / 2)
-        spatial_w = spatial_w / (spatial_w.sum() + 1e-12)
-        w = attn_w.numpy() * spatial_w
-        w = w / (w.sum() + 1e-12)
-        return self._physics_aware_interpolation(solutions, w, defect_target, theta_target)
-
-    def _physics_aware_interpolation(self, solutions, weights, defect_target, theta_target):
-        if len(solutions) == 0:
-            return None
-        stress_shape = None
-        for sol in solutions:
-            for entry in sol.get('history', []):
-                if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                    stresses = entry[1]
-                elif isinstance(entry, dict):
-                    stresses = entry
+        
+        # Get source parameter vectors
+        source_vectors = []
+        source_interface_stresses = []  # Store interface stresses instead of full fields
+        
+        for src in valid_sources:
+            src_vec = self.compute_parameter_vector(src['params'])
+            source_vectors.append(src_vec)
+            
+            # Get stress from final frame
+            history = src.get('history', [])
+            if history:
+                # Get the last frame
+                last_frame = history[-1]
+                
+                # Handle different frame formats
+                if isinstance(last_frame, tuple) and len(last_frame) >= 2:
+                    eta, stress_fields = last_frame[0], last_frame[1]
+                elif isinstance(last_frame, dict):
+                    eta = last_frame.get('eta', np.zeros((128, 128)))
+                    stress_fields = last_frame.get('stresses', {})
                 else:
-                    continue
-                if isinstance(stresses, dict) and 'von_mises' in stresses:
-                    stress_shape = stresses['von_mises'].shape
-                    break
-            if stress_shape is not None:
-                break
-        if stress_shape is None:
+                    eta = np.zeros((128, 128))
+                    stress_fields = {}
+                
+                # Extract interface stress
+                interface_stress = self.extract_interface_stress(eta, stress_fields)
+                source_interface_stresses.append(interface_stress)
+            else:
+                # No history, use zero stresses
+                source_interface_stresses.append({
+                    'von_mises': 0.0,
+                    'sigma_hydro': 0.0,
+                    'sigma_mag': 0.0
+                })
+        
+        if not source_vectors:
+            st.error("❌ Interpolation failed: Could not compute parameter vectors.")
             return None
-        history_len = len(solutions[0]['history'])
-        interpolated_history = []
-        for t in range(history_len):
-            sigma_hydro = np.zeros(stress_shape)
-            sigma_mag = np.zeros(stress_shape)
-            von_mises = np.zeros(stress_shape)
-            for sol, w in zip(solutions, weights):
-                if w < 1e-8: continue
-                entry = sol['history'][t] if t < len(sol['history']) else sol['history'][-1]
-                if isinstance(entry, (list, tuple)) and len(entry) == 2:
-                    stresses = entry[1]
-                elif isinstance(entry, dict):
-                    stresses = entry
-                else:
-                    continue
-                sigma_hydro += w * stresses.get('sigma_hydro', np.zeros(stress_shape))
-                sigma_mag += w * stresses.get('sigma_mag', np.zeros(stress_shape))
-                von_mises += w * stresses.get('von_mises', np.zeros(stress_shape))
-            interpolated_history.append((np.zeros(stress_shape), {
-                'sigma_hydro': sigma_hydro,
-                'sigma_mag': sigma_mag,
-                'von_mises': von_mises
-            }))
-        param_set = solutions[0]['params'].copy()
-        param_set.update({'defect_type': defect_target, 'theta': theta_target})
+        
+        source_vectors = np.array(source_vectors)
+        target_vector = self.compute_parameter_vector(target_params)
+        
+        # Compute attention weights with Numba acceleration
+        if self.use_numba and len(source_vectors) > 0:
+            try:
+                weights = compute_gaussian_weights_numba(source_vectors, target_vector, self.sigma)
+            except Exception as e:
+                st.warning(f"Numba acceleration failed, falling back to NumPy: {e}")
+                distances = np.sqrt(np.sum((source_vectors - target_vector) ** 2, axis=1))
+                weights = np.exp(-0.5 * (distances / self.sigma) ** 2)
+                weights = weights / (np.sum(weights) + 1e-8)
+        else:
+            distances = np.sqrt(np.sum((source_vectors - target_vector) ** 2, axis=1))
+            weights = np.exp(-0.5 * (distances / self.sigma) ** 2)
+            weights = weights / (np.sum(weights) + 1e-8)
+        
+        # Weighted combination of interface stresses
+        result_stress = {}
+        for key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+            weighted_sum = 0.0
+            for w, stress_dict in zip(weights, source_interface_stresses):
+                weighted_sum += w * stress_dict.get(key, 0.0)
+            result_stress[key] = weighted_sum
+        
         return {
-            'params': param_set,
-            'history': interpolated_history,
-            'interpolated': True
+            'interface_stress': result_stress,  # Changed from stress_fields
+            'attention_weights': weights,
+            'target_params': target_params,
+            'num_valid_sources': len(valid_sources),
+            'source_interface_stresses': source_interface_stresses  # For debugging/analysis
         }
 
-def get_center_stress(solution, stress_type='von_mises', center_fraction=0.5, theta_current=None, temporal_bias_factor=0.0):
-    if solution is None or 'params' not in solution or 'history' not in solution:
-        return np.zeros(50)
-    history = solution['history']
-    if not history:
-        return np.zeros(50)
-    stress_raw = []
-    for entry in history:
-        if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            stresses = entry[1]
-        elif isinstance(entry, dict):
-            stresses = entry
-        else:
-            continue
-        if isinstance(stresses, dict) and stress_type in stresses:
-            shape = stresses[stress_type].shape
-            ix = shape[0] // 2
-            iy = int(shape[1] * center_fraction)
-            stress_raw.append(stresses[stress_type][ix, iy])
-    stress_raw = np.array(stress_raw)
-    if temporal_bias_factor > 0 and theta_current is not None:
-        theta_ref = 0.0
-        delay_scale = 1.0 + temporal_bias_factor * (np.rad2deg(theta_current) - theta_ref) / 10.0
-        delay_scale = max(delay_scale, 1.0)
-        times = np.linspace(0, len(stress_raw) - 1, len(stress_raw))
-        t_stretched = times * delay_scale
-        stress_interp = interp1d(t_stretched, stress_raw, kind='linear',
-                                 bounds_error=False, fill_value=(stress_raw[0], stress_raw[-1]))
-        t_original = times
-        stress = stress_interp(t_original)
-    else:
-        stress = stress_raw
-    return stress
-
-def build_sunburst_matrices(solutions, params_list, interpolator,
-                           defect_target, stress_type, center_fraction, theta_spokes,
-                           time_log_scale=False, temporal_bias_factor=0.0):
-    N_TIME = 50
-    stress_mat = np.zeros((N_TIME, len(theta_spokes)))
-    times = np.logspace(-1, np.log10(200), N_TIME) if time_log_scale else np.linspace(0, 200.0, N_TIME)
-    filtered_solutions = [s for s, p in zip(solutions, params_list) if p[0] == defect_target]
-    filtered_params = [p for p in params_list if p[0] == defect_target]
-    if len(filtered_solutions) == 0:
-        return None, None
-    for j, theta in enumerate(theta_spokes):
-        sol = interpolator.forward(filtered_solutions, filtered_params, defect_target, theta)
-        stress = get_center_stress(sol, stress_type, center_fraction, theta_current=theta, temporal_bias_factor=temporal_bias_factor)
-        if len(stress) < N_TIME:
-            stress = np.pad(stress, (0, N_TIME - len(stress)), mode='constant', constant_values=stress[-1] if len(stress) > 0 else 0)
-        elif len(stress) > N_TIME:
-            stress = stress[:N_TIME]
-        stress_mat[:, j] = stress
-    return stress_mat, times
-
-def plot_sunburst(data, title, cmap, vmin, vmax, log_scale, time_log_scale,
-                 theta_dir, fname, times, theta_spokes):
-    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
-    theta_edges = np.linspace(0, 2*np.pi, len(theta_spokes) + 1)
-    if time_log_scale:
-        r_normalized = (np.log10(times) - np.log10(times[0])) / (np.log10(times[-1]) - np.log10(times[0]))
-        r_edges = np.concatenate([[0], r_normalized])
-    else:
-        r_edges = np.linspace(0, 1, len(times) + 1)
-    Theta, R = np.meshgrid(theta_edges, r_edges)
-    if theta_dir == "top→bottom":
-        R = R[::-1]
-        data = data[::-1, :]
-    norm = LogNorm(vmin=max(vmin, 1e-9), vmax=vmax) if log_scale else Normalize(vmin=vmin, vmax=vmax)
-    im = ax.pcolormesh(Theta, R, data, cmap=cmap, norm=norm, shading='auto')
-    theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
-    ax.set_xticks(theta_centers)
-    ax.set_xticklabels([f"{np.rad2deg(theta):.0f}°" for theta in theta_spokes], fontsize=16, fontweight='bold')
-    if time_log_scale:
-        ticks = [0.1, 1, 10, 100, 200]
-        r_ticks = [(np.log10(t) - np.log10(times[0])) / (np.log10(times[-1]) - np.log10(times[0])) for t in ticks if times[0] <= t <= times[-1]]
-        ax.set_yticks(r_ticks)
-        ax.set_yticklabels([f'{t}' for t in ticks if times[0] <= t <= times[-1]], fontsize=14)
-    else:
-        ax.set_yticks([0, 0.25, 0.5, 0.75, 1.0])
-        ax.set_yticklabels(['0', '50', '100', '150', '200'], fontsize=14)
-    ax.set_ylim(0, 1)
-    ax.grid(True, color='w', linewidth=2.0, alpha=0.8)
-    ax.set_title(title, fontsize=20, fontweight='bold', pad=30)
-    cbar = fig.colorbar(im, ax=ax, shrink=0.6, pad=0.08)
-    label = 'Stress (GPa)'
-    cbar.set_label(label, fontsize=16)
-    ticks = cbar.get_ticks()
-    cbar.set_ticklabels([f"{t:.1e}" for t in ticks])
-    cbar.ax.tick_params(labelsize=14)
-    plt.tight_layout()
-    png = os.path.join(FIGURE_DIR, f"{fname}.png")
-    pdf = os.path.join(FIGURE_DIR, f"{fname}.pdf")
-    plt.savefig(png, dpi=300, bbox_inches='tight')
-    plt.savefig(pdf, bbox_inches='tight')
-    plt.close()
-    return fig, png, pdf
-
-def plot_radar_single(data, stress_type, t_val, fname, theta_spokes, show_labels=True, show_radial_labels=True):
-    angles = np.linspace(0, 2*np.pi, len(theta_spokes), endpoint=False)
-    angles = np.concatenate([angles, [angles[0]]])
-    data_cyclic = np.concatenate([data, [data[0]]])
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection='polar'))
-    color = 'red' if stress_type == 'von_mises' else 'blue' if stress_type == 'sigma_hydro' else 'green'
-    ax.plot(angles, data_cyclic, 'o-', linewidth=3, markersize=8, color=color, label=stress_type)
-    ax.fill(angles, data_cyclic, alpha=0.25, color=color)
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels([f"{np.rad2deg(theta):.0f}°" for theta in theta_spokes], fontsize=14)
-    ax.set_ylim(0, max(np.max(data), 1e-6) * 1.2)
-    ax.set_title(f"{stress_type} at t = {t_val:.1f} s", fontsize=18, pad=25)
-    ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0), fontsize=14)
-    ax.grid(True, linewidth=1.5)
-    if show_radial_labels:
-        ax.set_yticklabels([f"{y:.2e}" for y in ax.get_yticks()], fontsize=12)
-    if show_labels:
-        for a, v in zip(angles[:-1], data):
-            if v > max(data) * 0.1:
-                ax.annotate(f'{v:.1e}', (a, v), xytext=(0, 10), textcoords='offset points',
-                            ha='center', fontsize=10, fontweight='bold',
-                            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7))
-    png = os.path.join(FIGURE_DIR, f"{fname}.png")
-    plt.savefig(png, dpi=300, bbox_inches='tight')
-    plt.close()
-    return fig, png, None
-
-def generate_session_id(parameters):
-    s = f"{parameters.get('defect_target','ISF')}_{parameters.get('center_fraction',0.5)}"
-    return f"session_{datetime.now():%Y%m%d_%H%M%S}_{hash(s)%10000:04d}"
+# =============================================
+# ENHANCED VISUALIZATION MANAGER
+# =============================================
+class EnhancedVisualizationManager:
+    """Enhanced visualization manager with multiple plot types"""
+    
+    def __init__(self):
+        self.stress_cmap = STRESS_CMAP
+        self.sunburst_cmaps = SUNBURST_CMAPS
+        
+    def create_stress_field_plot(self, stress_data, title, component_name,
+                                extent=None, vmin=None, vmax=None,
+                                include_contour=True, include_colorbar=True):
+        """Create matplotlib plot for stress field"""
+        fig, ax = plt.subplots(figsize=(10, 8), dpi=150)
+        
+        if extent is None:
+            extent = [-64, 64, -64, 64]
+        
+        if vmin is None:
+            vmin = np.nanmin(stress_data)
+        if vmax is None:
+            vmax = np.nanmax(stress_data)
+        
+        # Create heatmap
+        im = ax.imshow(stress_data,
+                      cmap=self.stress_cmap,
+                      extent=extent,
+                      origin='lower',
+                      aspect='equal',
+                      vmin=vmin,
+                      vmax=vmax)
+        
+        # Add contour lines
+        if include_contour and not np.all(stress_data == stress_data[0, 0]):
+            try:
+                X, Y = np.meshgrid(np.linspace(extent[0], extent[1], stress_data.shape[1]),
+                                  np.linspace(extent[2], extent[3], stress_data.shape[0]))
+                
+                levels = np.linspace(vmin, vmax, 12)
+                contour = ax.contour(X, Y, stress_data,
+                                    levels=levels,
+                                    colors='black',
+                                    linewidths=0.5,
+                                    alpha=0.7)
+                ax.clabel(contour, inline=True, fontsize=8, fmt='%.2f')
+            except:
+                pass
+        
+        # Add colorbar
+        if include_colorbar:
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label('Stress (GPa)', rotation=270, labelpad=15)
+        
+        # Set labels and title
+        ax.set_xlabel('x (nm)', fontsize=12)
+        ax.set_ylabel('y (nm)', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
+        
+        plt.tight_layout()
+        return fig
+    
+    def create_attention_weights_plot(self, weights, source_names=None,
+                                     title="Attention Weights Distribution"):
+        """Create bar plot for attention weights"""
+        fig, ax = plt.subplots(figsize=(12, 6), dpi=150)
+        
+        if source_names is None:
+            source_names = [f'Source {i+1}' for i in range(len(weights))]
+        
+        # Create bar plot
+        x_pos = np.arange(len(weights))
+        bars = ax.bar(x_pos, weights,
+                     color=plt.cm.viridis(np.linspace(0, 1, len(weights))),
+                     edgecolor='black',
+                     linewidth=1,
+                     alpha=0.8)
+        
+        # Add value labels on top of bars
+        for bar, weight in zip(bars, weights):
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                   f'{weight:.3f}', ha='center', va='bottom', fontsize=9)
+        
+        # Customize plot
+        ax.set_xlabel('Source Simulations', fontsize=12)
+        ax.set_ylabel('Attention Weight', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(source_names, rotation=45, ha='right')
+        ax.set_ylim([0, max(weights) * 1.3])
+        
+        # Add horizontal line for average
+        avg_weight = np.mean(weights)
+        ax.axhline(y=avg_weight, color='red', linestyle='--', alpha=0.7,
+                  label=f'Average: {avg_weight:.3f}')
+        ax.legend()
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, axis='y', linestyle='--')
+        
+        plt.tight_layout()
+        return fig
 
 # =============================================
-# GRID AND EXTENT CONFIGURATION
+# ENHANCED SUNBURST & RADAR VISUALIZER
 # =============================================
-def get_grid_extent(N=128, dx=0.1):
-    return [-N*dx/2, N*dx/2, -N*dx/2, N*dx/2]
+class EnhancedSunburstRadarVisualizer:
+    """Enhanced sunburst and radar charts with multiple visualization options"""
+    
+    def __init__(self):
+        self.vis_manager = EnhancedVisualizationManager()
+    
+    def create_sunburst_plot(self, stress_matrix, times, thetas, title, cmap='plasma'):
+        """Create polar heatmap (sunburst) visualization"""
+        
+        # Create polar plot
+        theta_deg = np.deg2rad(thetas)
+        theta_mesh, time_mesh = np.meshgrid(theta_deg, times)
+        
+        fig, ax = plt.subplots(figsize=(10, 8), subplot_kw={'projection': 'polar'}, dpi=150)
+        
+        # Plot heatmap
+        im = ax.pcolormesh(theta_mesh, time_mesh, stress_matrix, 
+                          cmap=cmap, shading='auto', alpha=0.8)
+        
+        # Customize
+        ax.set_title(title, fontsize=16, pad=20, fontweight='bold')
+        ax.set_xlabel('Orientation (degrees)', labelpad=20, fontsize=12)
+        ax.set_ylabel('Time (s)', labelpad=20, fontsize=12)
+        ax.set_xticks(theta_deg)
+        ax.set_xticklabels([f'{t:.0f}°' for t in thetas], fontsize=10)
+        
+        # Add radial grid
+        ax.grid(True, alpha=0.3, linestyle='--')
+        
+        # Colorbar
+        cbar = plt.colorbar(im, ax=ax, pad=0.1)
+        cbar.set_label('Interface Stress (GPa)', rotation=270, labelpad=25, fontsize=12)
+        
+        plt.tight_layout()
+        return fig
+    
+    def create_plotly_sunburst(self, stress_matrix, times, thetas, title, cmap='Plasma'):
+        """Interactive sunburst with Plotly - enhanced version"""
+        
+        # Prepare data for polar scatter
+        theta_deg = np.deg2rad(thetas)
+        theta_grid, time_grid = np.meshgrid(theta_deg, times)
+        
+        # Flatten the arrays for scatter plot
+        r_flat = time_grid.flatten()
+        theta_flat = np.rad2deg(theta_grid).flatten()
+        stress_flat = stress_matrix.flatten()
+        
+        # Create the plotly figure
+        fig = go.Figure()
+        
+        # Add scatter polar trace
+        fig.add_trace(go.Scatterpolar(
+            r=r_flat,
+            theta=theta_flat,
+            mode='markers',
+            marker=dict(
+                size=8,
+                color=stress_flat,
+                colorscale=cmap,
+                showscale=True,
+                colorbar=dict(
+                    title=dict(text="Interface Stress (GPa)", font=dict(size=12)),
+                    tickfont=dict(size=10),
+                    thickness=20,
+                    len=0.75,
+                    x=1.1,
+                    xpad=10
+                ),
+                line=dict(width=0.5, color='white'),
+                opacity=0.8
+            ),
+            hovertemplate=(
+                '<b>Time</b>: %{r:.1f}s<br>' +
+                '<b>Orientation</b>: %{theta:.1f}°<br>' +
+                '<b>Interface Stress</b>: %{marker.color:.3f} GPa<br>' +
+                '<extra></extra>'
+            ),
+            name='Interface Stress Distribution'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=20, family="Arial, sans-serif", color='black'),
+                x=0.5,
+                xanchor='center'
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    title=dict(
+                        text="Time (s)",
+                        font=dict(size=14, color='black')
+                    ),
+                    gridcolor="lightgray",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    showline=True,
+                    tickfont=dict(size=11, color='black'),
+                    tickformat='.1f',
+                    range=[0, max(times) * 1.05]
+                ),
+                angularaxis=dict(
+                    gridcolor="lightgray",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    rotation=90,
+                    direction="clockwise",
+                    tickfont=dict(size=11, color='black'),
+                    tickmode='array',
+                    tickvals=list(range(0, 360, 45)),
+                    ticktext=[f'{i}°' for i in range(0, 360, 45)]
+                ),
+                bgcolor="rgba(245, 245, 245, 0.8)",
+                sector=[0, 360]
+            ),
+            width=800,
+            height=650,
+            showlegend=False,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            margin=dict(l=80, r=150, t=80, b=80),  # Extra right margin for colorbar
+            font=dict(family="Arial, sans-serif")
+        )
+        
+        # Add grid lines
+        fig.update_polars(
+            radialaxis_gridcolor="rgba(150, 150, 150, 0.3)",
+            angularaxis_gridcolor="rgba(150, 150, 150, 0.3)"
+        )
+        
+        return fig
+    
+    def create_radar_plot(self, stress_values, thetas, component_name, time_point):
+        """Enhanced radar/spider chart for interface stress"""
+        
+        # Close the loop
+        angles = np.linspace(0, 2*np.pi, len(thetas), endpoint=False)
+        angles = np.concatenate([angles, [angles[0]]])
+        values = np.concatenate([stress_values, [stress_values[0]]])
+        
+        fig, ax = plt.subplots(figsize=(8, 8), subplot_kw={'projection': 'polar'}, dpi=150)
+        
+        # Plot with gradient fill
+        ax.plot(angles, values, 'o-', linewidth=3, markersize=8, 
+                color='steelblue', markerfacecolor='white', markeredgewidth=2)
+        
+        # Gradient fill
+        ax.fill(angles, values, alpha=0.25, color='steelblue')
+        
+        # Add grid
+        ax.grid(True, alpha=0.3, linestyle='--')
+        
+        # Labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels([f'{t:.0f}°' for t in thetas], fontsize=11)
+        
+        # Title with metrics
+        mean_val = np.mean(stress_values)
+        max_val = np.max(stress_values)
+        ax.set_title(f'{component_name} Interface Stress\nt={time_point:.1f}s | Mean: {mean_val:.2f} GPa | Max: {max_val:.2f} GPa',
+                    fontsize=14, fontweight='bold', pad=25)
+        
+        # Add value annotations
+        for angle, value in zip(angles[:-1], stress_values):
+            x_pos = angle
+            y_pos = value * 1.05
+            ax.text(x_pos, y_pos, f'{value:.2f}', 
+                   ha='center', va='center', fontsize=9,
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+        
+        plt.tight_layout()
+        return fig
+    
+    def create_comparison_radar(self, stress_matrices, thetas, component_names, 
+                               time_point, title="Interface Stress Comparison"):
+        """Create radar plot comparing multiple stress components at interface"""
+        
+        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={'projection': 'polar'}, dpi=150)
+        
+        colors = plt.cm.Set3(np.linspace(0, 1, len(stress_matrices)))
+        
+        for idx, (stress_matrix, comp_name, color) in enumerate(zip(stress_matrices, component_names, colors)):
+            # Get values for the selected time point
+            time_idx = np.argmin(np.abs(np.arange(len(stress_matrix)) - time_point))
+            values = stress_matrix[time_idx, :]
+            
+            # Close the loop
+            angles = np.linspace(0, 2*np.pi, len(thetas), endpoint=False)
+            angles = np.concatenate([angles, [angles[0]]])
+            values_loop = np.concatenate([values, [values[0]]])
+            
+            # Plot
+            ax.plot(angles, values_loop, 'o-', linewidth=2, markersize=6,
+                    color=color, label=comp_name, alpha=0.8)
+            ax.fill(angles, values_loop, alpha=0.15, color=color)
+        
+        # Customize
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels([f'{t:.0f}°' for t in thetas], fontsize=11)
+        ax.set_title(f'{title}\nt={time_point:.1f}s', fontsize=16, fontweight='bold', pad=25)
+        ax.legend(loc='upper right', bbox_to_anchor=(1.3, 1.0))
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        return fig
 
 # =============================================
-# ATTENTION INTERFACE
+# RESULTS MANAGER
 # =============================================
-def create_attention_interface():
-    st.header("🤖 Spatial-Attention Stress Interpolation")
-  
+class ResultsManager:
+    """Manager for saving and exporting results"""
+    
+    @staticmethod
+    def prepare_prediction_data(prediction_results, source_simulations, target_params):
+        """Prepare prediction data for export"""
+        export_data = {
+            'metadata': {
+                'generated_at': datetime.now().isoformat(),
+                'num_sources': len(source_simulations),
+                'target_params': target_params,
+                'software_version': '2.0.0'
+            },
+            'prediction_results': prediction_results,
+            'source_summary': []
+        }
+        
+        # Add source simulation summaries
+        for i, sim in enumerate(source_simulations):
+            params = sim.get('params', {})
+            export_data['source_summary'].append({
+                'id': i,
+                'defect_type': params.get('defect_type'),
+                'shape': params.get('shape'),
+                'eps0': float(params.get('eps0', 0)),
+                'kappa': float(params.get('kappa', 0)),
+                'theta': float(params.get('theta', 0))
+            })
+        
+        return export_data
+    
+    @staticmethod
+    def create_results_archive(stress_matrix, times, thetas, metadata):
+        """Create ZIP archive with all results"""
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Save stress matrix as NPY
+            stress_buffer = BytesIO()
+            np.save(stress_buffer, stress_matrix)
+            zip_file.writestr('interface_stress_matrix.npy', stress_buffer.getvalue())
+            
+            # Save times and thetas
+            times_buffer = BytesIO()
+            np.save(times_buffer, times)
+            zip_file.writestr('times.npy', times_buffer.getvalue())
+            
+            thetas_buffer = BytesIO()
+            np.save(thetas_buffer, thetas)
+            zip_file.writestr('thetas.npy', thetas_buffer.getvalue())
+            
+            # Save metadata as JSON
+            metadata_json = json.dumps(metadata, indent=2)
+            zip_file.writestr('metadata.json', metadata_json)
+            
+            # Save CSV version
+            csv_data = []
+            for t_idx, time_val in enumerate(times):
+                for theta_idx, theta_val in enumerate(thetas):
+                    csv_data.append({
+                        'time_s': time_val,
+                        'orientation_deg': theta_val,
+                        'interface_stress_gpa': stress_matrix[t_idx, theta_idx]
+                    })
+            
+            df = pd.DataFrame(csv_data)
+            csv_str = df.to_csv(index=False)
+            zip_file.writestr('interface_stress_data.csv', csv_str)
+            
+            # Add README
+            readme = f"""# Interface Stress Interpolation Results
+Generated: {datetime.now().isoformat()}
+
+Files:
+1. interface_stress_matrix.npy - 2D stress matrix (time × orientation)
+2. times.npy - Time points array
+3. thetas.npy - Orientation angles array
+4. metadata.json - Simulation metadata
+5. interface_stress_data.csv - Tabular data for analysis
+
+Parameters:
+- Defect Type: {metadata.get('defect_type', 'Unknown')}
+- Orientation Range: {metadata.get('theta_range', 'Unknown')}
+- ε*: {metadata.get('eps0', 'Unknown')}
+- κ: {metadata.get('kappa', 'Unknown')}
+- Stress Type: Maximum at Material Interface (0 < eta < 1)
+"""
+            zip_file.writestr('README.txt', readme)
+        
+        zip_buffer.seek(0)
+        return zip_buffer
+
+# =============================================
+# MAIN APPLICATION WITH INTERFACE STRESS ANALYSIS
+# =============================================
+def main():
+    st.set_page_config(
+        page_title="Interface Stress Interpolation Visualizer",
+        layout="wide",
+        page_icon="🔬"
+    )
+    
+    st.title("🔬 Interface Stress Field Interpolation")
+    st.markdown("""
+    This app analyzes **maximum stress at material interfaces** (where 0 < eta < 1) 
+    instead of center points. More physically meaningful for defect analysis!
+    """)
+    
+    # Initialize session state
+    if 'solutions' not in st.session_state:
+        st.session_state.solutions = []
+    if 'loader' not in st.session_state:
+        st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
     if 'interpolator' not in st.session_state:
-        st.session_state.interpolator = SpatialLocalityAttentionInterpolator()
-  
-    if 'solutions_manager' not in st.session_state:
-        st.session_state.solutions_manager = NumericalSolutionsManager()
-  
-    if 'multi_target_manager' not in st.session_state:
-        st.session_state.multi_target_manager = MultiTargetPredictionManager()
-  
-    if 'prediction_results_manager' not in st.session_state:
-        st.session_state.prediction_results_manager = PredictionResultsManager()
-  
-    if 'visualization_manager' not in st.session_state:
-        st.session_state.visualization_manager = VisualizationManager()
-  
-    if 'time_frame_manager' not in st.session_state:
-        st.session_state.time_frame_manager = TimeFrameVisualizationManager(
-            st.session_state.visualization_manager
-        )
-  
-    if 'source_simulations' not in st.session_state:
-        st.session_state.source_simulations = []
-        st.session_state.uploaded_files = {}
-        st.session_state.loaded_from_numerical = []
-  
-    if 'multi_target_predictions' not in st.session_state:
-        st.session_state.multi_target_predictions = {}
-        st.session_state.multi_target_params = []
-  
-    if 'matplotlib_figures' not in st.session_state:
-        st.session_state.matplotlib_figures = {}
-  
-    extent = get_grid_extent()
-  
-    st.sidebar.header("🔮 Attention Interpolator Settings")
-  
-    with st.sidebar.expander("⚙️ Model Parameters", expanded=False):
-        num_heads = st.slider("Number of Attention Heads", 1, 8, 4, 1)
-        sigma_spatial = st.slider("Spatial Sigma (σ_spatial)", 0.05, 1.0, 0.2, 0.05)
-        sigma_param = st.slider("Parameter Sigma (σ_param)", 0.05, 1.0, 0.3, 0.05)
-        use_gaussian = st.checkbox("Use Gaussian Spatial Regularization", True)
-      
-        if st.button("🔄 Update Model Parameters"):
-            st.session_state.interpolator = SpatialLocalityAttentionInterpolator(
-                num_heads=num_heads,
-                sigma_spatial=sigma_spatial,
-                sigma_param=sigma_param,
-                use_gaussian=use_gaussian
-            )
-            st.success("Model parameters updated!")
-  
-    with st.sidebar.expander("🎨 Visualization Settings", expanded=False):
-        viz_library = st.radio(
-            "Primary Visualization Library",
-            ["Plotly (Interactive)", "Matplotlib (Static)"],
-            index=0
-        )
-      
-        default_colormap = st.selectbox(
-            "Default Colormap",
-            ["viridis", "plasma", "coolwarm", "RdBu", "Spectral", "custom_stress"],
-            index=5
-        )
-      
-        include_contours = st.checkbox("Include Contour Lines", value=True)
-        figure_dpi = st.slider("Figure DPI", 100, 300, 150, 10)
-  
-    with st.sidebar.expander("🌞 Sunburst & Radar Settings", expanded=False):
-        theta_min = st.number_input("Min Orientation (°)", 0.0, 90.0, 0.0)
-        theta_max = st.number_input("Max Orientation (°)", 0.0, 90.0, 90.0)
-        theta_step = st.number_input("Step (°)", 1.0, 30.0, 10.0)
-        log_scale = st.checkbox("Log Scale", False)
-        time_log = st.checkbox("Log Time Scale", True)
-        theta_dir = st.radio("Time Flow", ["bottom→top", "top→bottom"])
-        show_labels = st.checkbox("Show Radar Labels", True)
-        show_radial = st.checkbox("Show Radial Labels", True)
-        center_fraction = st.select_slider("Center Fraction", options=[0.2, 0.25, 0.33, 0.5], value=0.5)
-        temporal_bias_factor = st.slider("Temporal Delay Bias", 0.0, 0.02, 0.0, 0.005)
-  
-    tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "📤 Load Source Data",
-        "🎯 Configure Multiple Targets",
-        "🚀 Train & Predict",
-        "📊 Results & Visualization",
-        "⏱️ Time Frame Analysis",
-        "💾 Export Results"
-    ])
-  
-    with tab1:
-        st.subheader("Load Source Simulation Files")
-      
-        col1, col2 = st.columns([1, 1])
-      
-        with col1:
-            st.markdown("### 📂 From numerical_solutions Directory")
-            st.info(f"Loading from: `{NUMERICAL_SOLUTIONS_DIR}`")
-          
-            file_formats = st.session_state.solutions_manager.scan_directory()
-            all_files_info = st.session_state.solutions_manager.get_all_files()
-          
-            if not all_files_info:
-                st.warning(f"No simulation files found in `{NUMERICAL_SOLUTIONS_DIR}`")
-            else:
-                file_groups = {}
-                for file_info in all_files_info:
-                    format_type = file_info['format']
-                    if format_type not in file_groups:
-                        file_groups[format_type] = []
-                    file_groups[format_type].append(file_info)
-              
-                for format_type, files in file_groups.items():
-                    with st.expander(f"{format_type.upper()} Files ({len(files)})", expanded=True):
-                        file_options = {}
-                        for file_info in files:
-                            display_name = f"{file_info['filename']} ({file_info['size'] // 1024}KB)"
-                            file_options[display_name] = file_info['path']
-                      
-                        selected_files = st.multiselect(
-                            f"Select {format_type} files",
-                            options=list(file_options.keys()),
-                            key=f"select_{format_type}"
-                        )
-                      
-                        if selected_files:
-                            if st.button(f"📥 Load Selected {format_type} Files", key=f"load_{format_type}"):
-                                with st.spinner(f"Loading {len(selected_files)} files..."):
-                                    loaded_count = 0
-                                    for display_name in selected_files:
-                                        file_path = file_options[display_name]
-                                        try:
-                                            sim_data = st.session_state.solutions_manager.load_simulation(
-                                                file_path,
-                                                st.session_state.interpolator
-                                            )
-                                          
-                                            if file_path not in st.session_state.loaded_from_numerical:
-                                                st.session_state.source_simulations.append(sim_data)
-                                                st.session_state.loaded_from_numerical.append(file_path)
-                                                loaded_count += 1
-                                                st.success(f"✅ Loaded: {os.path.basename(file_path)}")
-                                            else:
-                                                st.warning(f"⚠️ Already loaded: {os.path.basename(file_path)}")
-                                              
-                                        except Exception as e:
-                                            st.error(f"❌ Error loading {os.path.basename(file_path)}: {str(e)}")
-                                  
-                                    if loaded_count > 0:
-                                        st.success(f"Successfully loaded {loaded_count} new files!")
-                                        st.rerun()
-  
-        with col2:
-            st.markdown("### 📤 Upload Local Files")
-          
-            uploaded_files = st.file_uploader(
-                "Upload simulation files (PKL, PT, H5, NPZ, SQL, JSON)",
-                type=['pkl', 'pt', 'h5', 'hdf5', 'npz', 'sql', 'db', 'json'],
-                accept_multiple_files=True
-            )
-          
-            format_type = st.selectbox(
-                "File Format (for upload)",
-                ["Auto Detect", "PKL", "PT", "H5", "NPZ", "SQL", "JSON"],
-                index=0
-            )
-          
-            if uploaded_files and st.button("📥 Load Uploaded Files", type="primary"):
-                with st.spinner("Loading uploaded files..."):
-                    loaded_sims = []
-                    for uploaded_file in uploaded_files:
-                        try:
-                            file_content = uploaded_file.getvalue()
-                            actual_format = format_type.lower() if format_type != "Auto Detect" else "auto"
-                            if actual_format == "auto":
-                                filename = uploaded_file.name.lower()
-                                if filename.endswith('.pkl'):
-                                    actual_format = 'pkl'
-                                elif filename.endswith('.pt'):
-                                    actual_format = 'pt'
-                                elif filename.endswith('.h5') or filename.endswith('.hdf5'):
-                                    actual_format = 'h5'
-                                elif filename.endswith('.npz'):
-                                    actual_format = 'npz'
-                                elif filename.endswith('.sql') or filename.endswith('.db'):
-                                    actual_format = 'sql'
-                                elif filename.endswith('.json'):
-                                    actual_format = 'json'
-                          
-                            sim_data = st.session_state.interpolator.read_simulation_file(
-                                file_content, actual_format
-                            )
-                            sim_data['loaded_from'] = 'upload'
-                            sim_data['filename'] = uploaded_file.name
-                            # Extract params from filename for uploaded files as well
-                            file_params = extract_params_from_filename(sim_data['filename'])
-                            sim_data['params'].update(file_params)
-                          
-                            file_id = f"{uploaded_file.name}_{hashlib.md5(file_content).hexdigest()[:8]}"
-                            st.session_state.uploaded_files[file_id] = {
-                                'filename': uploaded_file.name,
-                                'data': sim_data,
-                                'format': actual_format
-                            }
-                          
-                            st.session_state.source_simulations.append(sim_data)
-                            loaded_sims.append(uploaded_file.name)
-                          
-                        except Exception as e:
-                            st.error(f"Error loading {uploaded_file.name}: {str(e)}")
-                  
-                    if loaded_sims:
-                        st.success(f"Successfully loaded {len(loaded_sims)} uploaded files!")
-      
-        if st.session_state.source_simulations:
-            st.subheader("📋 Loaded Source Simulations")
-          
-            summary_data = []
-            for i, sim_data in enumerate(st.session_state.source_simulations):
-                params = sim_data.get('params', {})
-                metadata = sim_data.get('metadata', {})
-                source = sim_data.get('loaded_from', 'unknown')
-              
-                summary_data.append({
-                    'ID': i+1,
-                    'Source': source,
-                    'Defect Type': params.get('defect_type', 'Unknown'),
-                    'Shape': params.get('shape', 'Unknown'),
-                    'Orientation': params.get('orientation', 'Unknown'),
-                    'ε*': params.get('eps0', 'Unknown'),
-                    'κ': params.get('kappa', 'Unknown'),
-                    'Frames': len(sim_data.get('history', [])),
-                    'Format': sim_data.get('format', 'Unknown')
-                })
-          
-            if summary_data:
-                df_summary = pd.DataFrame(summary_data)
-                st.dataframe(df_summary, use_container_width=True)
-              
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    if st.button("🗑️ Clear All Source Simulations", type="secondary"):
-                        st.session_state.source_simulations = []
-                        st.session_state.uploaded_files = {}
-                        st.session_state.loaded_from_numerical = []
-                        st.success("All source simulations cleared!")
-                        st.rerun()
-                with col2:
-                    st.info(f"**Total loaded simulations:** {len(st.session_state.source_simulations)}")
-  
-    with tab3:
-        st.subheader("Configure Multiple Target Parameters")
-      
-        if len(st.session_state.source_simulations) < 2:
-            st.warning("⚠️ Please load at least 2 source simulations first")
-        else:
-            st.info("Configure ranges for parameters to create multiple target predictions")
-          
-            st.markdown("### 🎯 Base Parameters")
-            col1, col2 = st.columns(2)
-          
-            with col1:
-                base_defect = st.selectbox(
-                    "Base Defect Type",
-                    ["ISF", "ESF", "Twin"],
-                    index=0,
-                    key="base_defect_multi"
-                )
-              
-                base_shape = st.selectbox(
-                    "Base Shape",
-                    ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle", "Ellipse"],
-                    index=0,
-                    key="base_shape_multi"
-                )
-          
-            with col2:
-                orientation_mode = st.radio(
-                    "Orientation Mode",
-                    ["Predefined", "Custom Angles"],
-                    horizontal=True,
-                    key="orientation_mode_multi"
-                )
-              
-                if orientation_mode == "Predefined":
-                    base_orientation = st.selectbox(
-                        "Base Orientation",
-                        ["Horizontal {111} (0°)",
-                         "Tilted 30° (1¯10 projection)",
-                         "Tilted 60°",
-                         "Vertical {111} (90°)"],
-                        index=0,
-                        key="base_orientation_multi"
-                    )
-                  
-                    angle_map = {
-                        "Horizontal {111} (0°)": 0,
-                        "Tilted 30° (1¯10 projection)": 30,
-                        "Tilted 60°": 60,
-                        "Vertical {111} (90°)": 90,
-                    }
-                    base_theta = np.deg2rad(angle_map.get(base_orientation, 0))
-                    st.info(f"**Base θ:** {np.rad2deg(base_theta):.1f}°")
-                  
-                else:
-                    base_angle = st.slider(
-                        "Base Angle (degrees)",
-                        0.0, 90.0, 0.0, 0.5,
-                        key="base_angle_custom_multi"
-                    )
-                    base_theta = np.deg2rad(base_angle)
-                    base_orientation = st.session_state.interpolator.get_orientation_from_angle(base_angle)
-                    st.info(f"**Base θ:** {base_angle:.1f}°")
-                    st.info(f"**Orientation:** {base_orientation}")
-          
-            base_params = {
-                'defect_type': base_defect,
-                'shape': base_shape,
-                'orientation': base_orientation,
-                'theta': base_theta
-            }
-          
-            # Parameter ranges
-            st.markdown("### 📊 Parameter Ranges")
-          
-            st.markdown("#### ε* Range")
-            eps0_range_col1, eps0_range_col2, eps0_range_col3 = st.columns(3)
-            with eps0_range_col1:
-                eps0_min = st.number_input("Min ε*", 0.3, 3.0, 0.5, 0.1, key="eps0_min")
-            with eps0_range_col2:
-                eps0_max = st.number_input("Max ε*", 0.3, 3.0, 2.5, 0.1, key="eps0_max")
-            with eps0_range_col3:
-                eps0_steps = st.number_input("Steps", 2, 100, 10, 1, key="eps0_steps")
-          
-            st.markdown("#### κ Range")
-            kappa_range_col1, kappa_range_col2, kappa_range_col3 = st.columns(3)
-            with kappa_range_col1:
-                kappa_min = st.number_input("Min κ", 0.1, 2.0, 0.2, 0.05, key="kappa_min")
-            with kappa_range_col2:
-                kappa_max = st.number_input("Max κ", 0.1, 2.0, 1.5, 0.05, key="kappa_max")
-            with kappa_range_col3:
-                kappa_steps = st.number_input("Steps", 2, 50, 8, 1, key="kappa_steps")
-          
-            st.markdown("#### Orientation Range (Optional)")
-            use_orientation_range = st.checkbox("Vary orientation", value=False, key="use_orientation_range")
-          
-            if use_orientation_range:
-                if orientation_mode == "Predefined":
-                    orientation_options = st.multiselect(
-                        "Select orientations to include",
-                        ["Horizontal {111} (0°)", "Tilted 30° (1¯10 projection)", "Tilted 60°", "Vertical {111} (90°)"],
-                        default=["Horizontal {111} (0°)", "Vertical {111} (90°)"],
-                        key="orientation_multi_select"
-                    )
-                else:
-                    orientation_range_col1, orientation_range_col2, orientation_range_col3 = st.columns(3)
-                    with orientation_range_col1:
-                        angle_min = st.number_input("Min Angle (°)", 0.0, 90.0, 0.0, 1.0, key="angle_min")
-                    with orientation_range_col2:
-                        angle_max = st.number_input("Max Angle (°)", 0.0, 90.0, 90.0, 1.0, key="angle_max")
-                    with orientation_range_col3:
-                        angle_steps = st.number_input("Steps", 2, 20, 5, 1, key="angle_steps")
-          
-            # Generate parameter grid
-            if st.button("🔄 Generate Parameter Grid", type="primary"):
-                ranges_config = {}
-              
-                if eps0_max > eps0_min:
-                    ranges_config['eps0'] = {
-                        'min': float(eps0_min),
-                        'max': float(eps0_max),
-                        'steps': int(eps0_steps)
-                    }
-              
-                if kappa_max > kappa_min:
-                    ranges_config['kappa'] = {
-                        'min': float(kappa_min),
-                        'max': float(kappa_max),
-                        'steps': int(kappa_steps)
-                    }
-              
-                if use_orientation_range:
-                    if orientation_mode == "Predefined" and orientation_options:
-                        angle_map_rev = {
-                            "Horizontal {111} (0°)": 0,
-                            "Tilted 30° (1¯10 projection)": 30,
-                            "Tilted 60°": 60,
-                            "Vertical {111} (90°)": 90,
-                        }
-                        orientation_angles = [angle_map_rev[orient] for orient in orientation_options]
-                        ranges_config['theta'] = {
-                            'values': [np.deg2rad(angle) for angle in orientation_angles]
-                        }
-                    else:
-                        if angle_max > angle_min:
-                            angles = np.linspace(angle_min, angle_max, angle_steps)
-                            ranges_config['theta'] = {
-                                'values': [np.deg2rad(angle) for angle in angles]
-                            }
-              
-                param_grid = st.session_state.multi_target_manager.create_parameter_grid(
-                    base_params, ranges_config
-                )
-              
-                for param_set in param_grid:
-                    angle = np.rad2deg(param_set.get('theta', 0))
-                    param_set['orientation'] = st.session_state.interpolator.get_orientation_from_angle(angle)
-              
-                st.session_state.multi_target_params = param_grid
-              
-                st.success(f"✅ Generated {len(param_grid)} parameter combinations!")
-              
-                st.subheader("📋 Generated Parameter Grid")
-              
-                grid_data = []
-                for i, params in enumerate(param_grid):
-                    grid_data.append({
-                        'ID': i+1,
-                        'Defect': params.get('defect_type', 'Unknown'),
-                        'Shape': params.get('shape', 'Unknown'),
-                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                        'Orientation': params.get('orientation', 'Unknown'),
-                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
-                    })
-              
-                if grid_data:
-                    df_grid = pd.DataFrame(grid_data)
-                    st.dataframe(df_grid, use_container_width=True)
-          
-            if st.session_state.multi_target_params:
-                st.subheader("📊 Current Parameter Grid")
-              
-                grid_data = []
-                for i, params in enumerate(st.session_state.multi_target_params):
-                    grid_data.append({
-                        'ID': i+1,
-                        'Defect': params.get('defect_type', 'Unknown'),
-                        'Shape': params.get('shape', 'Unknown'),
-                        'ε*': f"{params.get('eps0', 'Unknown'):.3f}",
-                        'κ': f"{params.get('kappa', 'Unknown'):.3f}",
-                        'Orientation': params.get('orientation', 'Unknown'),
-                        'θ°': f"{np.rad2deg(params.get('theta', 0)):.1f}"
-                    })
-              
-                if grid_data:
-                    df_grid = pd.DataFrame(grid_data)
-                    st.dataframe(df_grid, use_container_width=True)
-                  
-                    if st.button("🗑️ Clear Parameter Grid", type="secondary"):
-                        st.session_state.multi_target_params = []
-                        st.session_state.multi_target_predictions = {}
-                        st.success("Parameter grid cleared!")
-                        st.rerun()
-  
-    with tab4:
-        st.subheader("Train Model and Predict")
-      
-        if len(st.session_state.source_simulations) < 2:
-            st.warning("⚠️ Please load at least 2 source simulations first")
-        elif not st.session_state.multi_target_params:
-            st.warning("⚠️ Please generate a parameter grid first")
-        else:
-            col1, col2 = st.columns(2)
-          
-            with col1:
-                epochs = st.slider("Training Epochs", 10, 200, 50, 10)
-                learning_rate = st.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001)
-          
-            with col2:
-                batch_size = st.slider("Batch Size", 1, 16, 4, 1)
-                validation_split = st.slider("Validation Split", 0.0, 0.5, 0.2, 0.05)
-          
-            if st.button("🚀 Train & Predict (Multiple Targets)", type="primary"):
-                with st.spinner(f"Running batch predictions for {len(st.session_state.multi_target_params)} targets..."):
-                    try:
-                        predictions = st.session_state.multi_target_manager.batch_predict(
-                            st.session_state.source_simulations,
-                            st.session_state.multi_target_params,
-                            st.session_state.interpolator
-                        )
-                      
-                        st.session_state.multi_target_predictions = predictions
-                      
-                        if predictions:
-                            first_key = list(predictions.keys())[0]
-                            st.session_state.prediction_results = {
-                                'stress_fields': predictions[first_key],
-                                'attention_weights': predictions[first_key]['attention_weights'],
-                                'target_params': predictions[first_key]['target_params'],
-                                'training_losses': np.random.rand(epochs) * 0.1 * (1 - np.linspace(0, 1, epochs)),
-                                'source_count': len(st.session_state.source_simulations),
-                                'mode': 'multi',
-                                'current_target_index': 0,
-                                'total_targets': len(predictions)
-                            }
-                      
-                        st.success(f"✅ Batch predictions complete! Generated {len(predictions)} predictions")
-                      
-                    except Exception as e:
-                        st.error(f"❌ Error during batch prediction: {str(e)}")
-  
-    with tab5:
-        st.subheader("Prediction Results Visualization")
-      
-        if 'prediction_results' not in st.session_state:
-            st.info("👈 Please train the model and make predictions first")
-        else:
-            results = st.session_state.prediction_results
-          
-            # Handle multi-target selection
-            target_keys = list(st.session_state.multi_target_predictions.keys())
-            selected_target_key = st.selectbox(
-                "Select Target Prediction",
-                options=target_keys,
-                index=results.get('current_target_index', 0),
-                key="multi_target_selector"
-            )
-            selected_results = st.session_state.multi_target_predictions[selected_target_key]
-          
-            # Update current index for next time
-            results['current_target_index'] = target_keys.index(selected_target_key)
-          
-            # Unify access: multi-target predictions lack 'stress_fields' wrapper
-            if 'stress_fields' in selected_results:
-                stress_fields = selected_results['stress_fields']
-            else:
-                # Direct stress components at top level
-                stress_fields = {
-                    'sigma_hydro': selected_results.get('sigma_hydro'),
-                    'sigma_mag': selected_results.get('sigma_mag'),
-                    'von_mises': selected_results.get('von_mises')
-                }
-          
-            attention_weights = selected_results.get('attention_weights')
-            target_params = selected_results.get('target_params', {})
-            training_losses = results.get('training_losses')
-          
-            # Visualization controls
-            col_viz1, col_viz2, col_viz3 = st.columns(3)
-            with col_viz1:
-                stress_component = st.selectbox(
-                    "Select Stress Component",
-                    ['von_mises', 'sigma_hydro', 'sigma_mag'],
-                    index=0
-                )
-            with col_viz2:
-                if viz_library == "Plotly (Interactive)":
-                    colormap = st.selectbox(
-                        "Colormap",
-                        ['viridis', 'plasma', 'coolwarm', 'RdBu', 'Spectral'],
-                        index=0
-                    )
-                else:
-                    colormap = st.selectbox(
-                        "Colormap",
-                        ['custom_stress', 'viridis', 'plasma', 'coolwarm', 'RdBu', 'Spectral'],
-                        index=0
-                    )
-            with col_viz3:
-                show_contour = st.checkbox("Show Contour Lines", value=include_contours)
-          
-            # Store matplotlib figures for download
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-          
-            if stress_component in stress_fields:
-                stress_data = stress_fields[stress_component]
-              
-                if viz_library == "Plotly (Interactive)":
-                    fig_heat = px.imshow(
-                        stress_data,
-                        color_continuous_scale=colormap,
-                        origin='lower',
-                        aspect='equal',
-                        title=f'{stress_component.replace("_", " ").title()} (GPa) - Orientation: {target_params.get("orientation", "Unknown")}'
-                    )
-                    fig_heat.update_layout(
-                        xaxis_title='x (nm)',
-                        yaxis_title='y (nm)',
-                        coloraxis_colorbar=dict(title='Stress (GPa)')
-                    )
-                  
-                    if show_contour:
-                        fig_heat.add_trace(
-                            go.Contour(
-                                z=stress_data,
-                                showscale=False,
-                                contours=dict(
-                                    coloring='lines',
-                                    showlabels=True,
-                                    labelfont=dict(size=8)
-                                ),
-                                line=dict(color='black', width=0.5),
-                                ncontours=10
-                            )
-                        )
-                  
-                    st.plotly_chart(fig_heat, use_container_width=True)
-                  
-                else:
-                    title = f'{stress_component.replace("_", " ").title()} (GPa)\nOrientation: {target_params.get("orientation", "Unknown")}'
-                  
-                    fig_matplotlib = st.session_state.visualization_manager.create_stress_field_plot_matplotlib(
-                        stress_data=stress_data,
-                        title=title,
-                        component_name=stress_component,
-                        extent=extent,
-                        include_contour=show_contour,
-                        include_colorbar=True
-                    )
-                  
-                    st.pyplot(fig_matplotlib)
-                  
-                    st.session_state.matplotlib_figures['stress_field'] = fig_matplotlib
-                  
-                    col_dl1, col_dl2, col_dl3 = st.columns(3)
-                    with col_dl1:
-                        buf = BytesIO()
-                        fig_matplotlib.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
-                            file_name=f"stress_field_{stress_component}_{timestamp}.png",
-                            mime="image/png",
-                            key=f"download_stress_png_{timestamp}"
-                        )
-                    with col_dl2:
-                        buf = BytesIO()
-                        fig_matplotlib.savefig(buf, format="pdf", bbox_inches='tight')
-                        pdf_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=f"stress_field_{stress_component}_{timestamp}.pdf",
-                            mime="application/pdf",
-                            key=f"download_stress_pdf_{timestamp}"
-                        )
-                    with col_dl3:
-                        buf = BytesIO()
-                        fig_matplotlib.savefig(buf, format="svg", bbox_inches='tight')
-                        svg_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download SVG",
-                            data=svg_data,
-                            file_name=f"stress_field_{stress_component}_{timestamp}.svg",
-                            mime="image/svg+xml",
-                            key=f"download_stress_svg_{timestamp}"
-                        )
-          
-            st.subheader("🔍 Attention Weights")
-          
-            if attention_weights is not None:
-                weights = attention_weights
-                source_names = [f'S{i+1}' for i in range(len(st.session_state.source_simulations))]
-              
-                if viz_library == "Plotly (Interactive)":
-                    fig_weights = px.bar(
-                        x=source_names,
-                        y=weights,
-                        labels={'x': 'Source Simulations', 'y': 'Attention Weight'},
-                        title='Attention Weights Distribution'
-                    )
-                    fig_weights.update_traces(marker_color='steelblue', opacity=0.7)
-                    fig_weights.update_layout(yaxis_range=[0, max(weights) * 1.2])
-                  
-                    for i, weight in enumerate(weights):
-                        fig_weights.add_annotation(
-                            x=source_names[i],
-                            y=weight,
-                            text=f'{weight:.3f}',
-                            showarrow=False,
-                            yshift=10,
-                            font=dict(size=9)
-                        )
-                  
-                    st.plotly_chart(fig_weights, use_container_width=True)
-                else:
-                    fig_weights = st.session_state.visualization_manager.create_attention_weights_plot_matplotlib(
-                        weights=weights,
-                        source_names=source_names,
-                        title="Attention Weights Distribution"
-                    )
-                  
-                    st.pyplot(fig_weights)
-                  
-                    st.session_state.matplotlib_figures['attention_weights'] = fig_weights
-                  
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        buf = BytesIO()
-                        fig_weights.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
-                            file_name=f"attention_weights_{timestamp}.png",
-                            mime="image/png",
-                            key=f"download_attention_png_{timestamp}"
-                        )
-                    with col_dl2:
-                        buf = BytesIO()
-                        fig_weights.savefig(buf, format="pdf", bbox_inches='tight')
-                        pdf_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=f"attention_weights_{timestamp}.pdf",
-                            mime="application/pdf",
-                            key=f"download_attention_pdf_{timestamp}"
-                        )
-          
-            st.subheader("📉 Training Losses")
-            if training_losses is not None:
-                if viz_library == "Plotly (Interactive)":
-                    fig_losses = px.line(
-                        x=range(len(training_losses)),
-                        y=training_losses,
-                        labels={'x': 'Epoch', 'y': 'Loss'},
-                        title='Training Loss Curve'
-                    )
-                    fig_losses.update_traces(line_color='firebrick')
-                    st.plotly_chart(fig_losses, use_container_width=True)
-                else:
-                    fig_losses = st.session_state.visualization_manager.create_training_loss_plot_matplotlib(
-                        losses=training_losses,
-                        title="Training Loss Curve"
-                    )
-                  
-                    st.pyplot(fig_losses)
-                  
-                    st.session_state.matplotlib_figures['training_losses'] = fig_losses
-                  
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        buf = BytesIO()
-                        fig_losses.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
-                            file_name=f"training_losses_{timestamp}.png",
-                            mime="image/png",
-                            key=f"download_losses_png_{timestamp}"
-                        )
-                    with col_dl2:
-                        buf = BytesIO()
-                        fig_losses.savefig(buf, format="pdf", bbox_inches='tight')
-                        pdf_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=f"training_losses_{timestamp}.pdf",
-                            mime="application/pdf",
-                            key=f"download_losses_pdf_{timestamp}"
-                        )
-          
-            st.subheader("📊 Stress Statistics")
-          
-            stats_data = []
-            for comp_name, comp_data in stress_fields.items():
-                if isinstance(comp_data, np.ndarray):
-                    stats_data.append({
-                        'Component': comp_name.replace('_', ' ').title(),
-                        'Max (GPa)': float(np.max(comp_data)),
-                        'Min (GPa)': float(np.min(comp_data)),
-                        'Mean (GPa)': float(np.mean(comp_data)),
-                        'Std Dev': float(np.std(comp_data)),
-                        '95th %ile': float(np.percentile(comp_data, 95))
-                    })
-          
-            if stats_data:
-                df_stats = pd.DataFrame(stats_data)
-                st.dataframe(df_stats.style.format({
-                    'Max (GPa)': '{:.3f}',
-                    'Min (GPa)': '{:.3f}',
-                    'Mean (GPa)': '{:.3f}',
-                    'Std Dev': '{:.3f}',
-                    '95th %ile': '{:.3f}'
-                }), use_container_width=True)
-              
-                csv_data = df_stats.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Statistics CSV",
-                    data=csv_data,
-                    file_name=f"stress_statistics_{timestamp}.csv",
-                    mime="text/csv",
-                    key=f"download_stats_{timestamp}"
-                )
-          
-            st.subheader("🌞 Sunburst & Radar Charts for Interpolated Predictions")
-          
-            defect_type = st.selectbox("Defect Type for Sunburst", ["ISF", "ESF", "Twin"])
-            stress_category = st.selectbox("Stress Category for Sunburst", ["von_mises", "sigma_hydro", "sigma_mag"])
-          
-            theta_min = st.number_input("Min Orientation (°)", 0.0, 90.0, 0.0, step=1.0)
-            theta_max = st.number_input("Max Orientation (°)", 0.0, 90.0, 90.0, step=1.0)
-            theta_step = st.number_input("Orientation Step (°)", 1.0, 30.0, 10.0, step=1.0)
-          
-            center_fraction = st.select_slider("Center Fraction", options=[0.2, 0.25, 0.33, 0.5], value=0.5)
-            temporal_bias_factor = st.slider("Temporal Delay Bias (per 10°)", 0.0, 0.02, 0.0, 0.005)
-            log_scale = st.checkbox("Log Scale for Sunburst", False)
-            time_log = st.checkbox("Log Time Scale for Sunburst", True)
-            theta_dir = st.radio("Time Flow Direction", ["bottom→top", "top→bottom"])
-            show_labels = st.checkbox("Show Radar Labels", True)
-            show_radial = st.checkbox("Show Radial Labels", True)
-            cmap = st.selectbox("Sunburst Colormap", EXTENDED_CMAPS, index=EXTENDED_CMAPS.index('jet'))
-          
-            if st.button("Generate Sunburst & Radar from Predictions"):
-                with st.spinner("Generating visualizations from predictions..."):
-                    # Use multi_target_predictions as 'solutions'
-                    sols = list(st.session_state.multi_target_predictions.values())
-                    params_list = []
-                    for sol in sols:
-                        params = sol.get('params', sol.get('target_params', {}))
-                        params_list.append((params.get('defect_type', defect_type), params.get('theta', 0.0)))
-                  
-                    theta_spokes = np.deg2rad(np.arange(theta_min, theta_max + theta_step/2, theta_step))
-                  
-                    interpolator = SunburstInterpolator()
-                  
-                    stress_mat, times = build_sunburst_matrices(
-                        sols, params_list, interpolator, defect_type, stress_category,
-                        center_fraction, theta_spokes, time_log_scale=time_log, temporal_bias_factor=temporal_bias_factor
-                    )
-                  
-                    if stress_mat is not None:
-                        fig_sun, png_sun, pdf_sun = plot_sunburst(
-                            stress_mat, f"{stress_category.replace('_', ' ').title()} — {defect_type}",
-                            cmap, np.min(stress_mat), np.max(stress_mat), log_scale, time_log,
-                            theta_dir, f"sunburst_{stress_category}", times, theta_spokes
-                        )
-                        st.pyplot(fig_sun)
-                        col_dl1, col_dl2 = st.columns(2)
-                        with col_dl1:
-                            st.download_button("📥 Download Sunburst PNG", open(png_sun, 'rb').read(), os.path.basename(png_sun), "image/png")
-                        with col_dl2:
-                            st.download_button("📥 Download Sunburst PDF", open(pdf_sun, 'rb').read(), os.path.basename(pdf_sun), "application/pdf")
-                      
-                        t_idx = st.slider("Radar Time Index", 0, len(times)-1, len(times)//2, key="radar_t_idx_pred")
-                        fig_radar, png_radar, _ = plot_radar_single(
-                            stress_mat[t_idx], stress_category, times[t_idx],
-                            f"radar_{stress_category}", theta_spokes, show_labels, show_radial
-                        )
-                        st.pyplot(fig_radar)
-                        st.download_button("📥 Download Radar PNG", open(png_radar, 'rb').read(), os.path.basename(png_radar), "image/png")
-
-    with tab6:
-        st.subheader("⏱️ Time Frame Analysis")
-      
-        if not st.session_state.source_simulations:
-            st.warning("⚠️ Please load source simulations first")
-        else:
-            sim_options = {}
-            for i, sim_data in enumerate(st.session_state.source_simulations):
-                params = sim_data.get('params', {})
-                sim_name = f"Sim {i+1}: {params.get('defect_type', 'Unknown')} - {params.get('shape', 'Unknown')}"
-                sim_options[sim_name] = i
-          
-            selected_sim_name = st.selectbox(
-                "Select Source Simulation for Time Analysis",
-                options=list(sim_options.keys()),
+        st.session_state.interpolator = EnhancedAttentionInterpolator(sigma=0.3, use_numba=True, interface_threshold=0.1)
+    if 'visualizer' not in st.session_state:
+        st.session_state.visualizer = EnhancedSunburstRadarVisualizer()
+    if 'vis_manager' not in st.session_state:
+        st.session_state.vis_manager = EnhancedVisualizationManager()
+    if 'results_manager' not in st.session_state:
+        st.session_state.results_manager = ResultsManager()
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("⚙️ Settings")
+        
+        # Performance settings
+        with st.expander("🚀 Performance Settings", expanded=True):
+            use_numba = st.checkbox("Use Numba Acceleration", value=True)
+            use_cache = st.checkbox("Use File Cache", value=True)
+            
+            # PyTorch loading method selection
+            pt_loading_method = st.radio(
+                "PyTorch Load Method",
+                ["Safe (with fix)", "Unsafe (weights_only=False)"],
                 index=0,
-                key="time_sim_selector"
+                help="Safe loading with numpy scalar fix. Unsafe loading may be needed for older files."
             )
-          
-            selected_sim_idx = sim_options[selected_sim_name]
-            selected_sim = st.session_state.source_simulations[selected_sim_idx]
-          
-            max_frames = st.slider("Maximum number of frames to analyze", 5, 50, 10, 1)
-          
-            if st.button("📊 Extract Time Frames", type="primary"):
-                with st.spinner("Extracting time frames..."):
-                    time_frames = st.session_state.time_frame_manager.extract_time_frames(
-                        selected_sim, max_frames
-                    )
-                    st.session_state.time_frames = time_frames
-                    st.success(f"✅ Extracted {len(time_frames.get('frame_numbers', []))} time frames!")
-          
-            if 'time_frames' in st.session_state and st.session_state.time_frames:
-                time_frames = st.session_state.time_frames
-              
-                time_component = st.selectbox(
-                    "Select Stress Component for Time Analysis",
-                    ['von_mises', 'sigma_hydro', 'sigma_mag'],
-                    index=0,
-                    key="time_component"
-                )
-              
-                st.subheader("📈 Time Evolution")
-              
-                fig_time_series = st.session_state.time_frame_manager.create_time_series_plot(
-                    time_frames, time_component
-                )
-              
-                if fig_time_series:
-                    st.pyplot(fig_time_series)
-                  
-                    col_dl1, col_dl2, col_dl3 = st.columns(3)
-                    with col_dl1:
-                        buf = BytesIO()
-                        fig_time_series.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
-                            file_name=f"time_series_{time_component}_{timestamp}.png",
-                            mime="image/png",
-                            key=f"download_time_png_{timestamp}"
-                        )
-                    with col_dl2:
-                        buf = BytesIO()
-                        fig_time_series.savefig(buf, format="pdf", bbox_inches='tight')
-                        pdf_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=f"time_series_{time_component}_{timestamp}.pdf",
-                            mime="application/pdf",
-                            key=f"download_time_pdf_{timestamp}"
-                        )
-                    with col_dl3:
-                        buf = BytesIO()
-                        fig_time_series.savefig(buf, format="svg", bbox_inches='tight')
-                        svg_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download SVG",
-                            data=svg_data,
-                            file_name=f"time_series_{time_component}_{timestamp}.svg",
-                            mime="image/svg+xml",
-                            key=f"download_time_svg_{timestamp}"
-                        )
-                  
-                    plt.close(fig_time_series)
-              
-                st.subheader("📊 Stress Evolution Metrics")
-              
-                fig_metrics = st.session_state.time_frame_manager.create_stress_evolution_metrics(time_frames)
-              
-                if fig_metrics:
-                    st.pyplot(fig_metrics)
-                  
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        buf = BytesIO()
-                        fig_metrics.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PNG",
-                            data=png_data,
-                            file_name=f"stress_metrics_{timestamp}.png",
-                            mime="image/png",
-                            key=f"download_metrics_png_{timestamp}"
-                        )
-                    with col_dl2:
-                        buf = BytesIO()
-                        fig_metrics.savefig(buf, format="pdf", bbox_inches='tight')
-                        pdf_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Download PDF",
-                            data=pdf_data,
-                            file_name=f"stress_metrics_{timestamp}.pdf",
-                            mime="application/pdf",
-                            key=f"download_metrics_pdf_{timestamp}"
-                        )
-                  
-                    plt.close(fig_metrics)
-              
-                st.subheader("📥 Download Individual Time Frames")
-              
-                if time_component in time_frames:
-                    frames = time_frames[time_component]
-                    frame_numbers = time_frames.get('frame_numbers', [])
-                  
-                    cols = st.columns(4)
-                    for idx, (frame_num, frame_data) in enumerate(zip(frame_numbers, frames)):
-                        col_idx = idx % 4
-                        with cols[col_idx]:
-                            fig_mini, ax_mini = plt.subplots(figsize=(3, 3), dpi=80)
-                            im = ax_mini.imshow(frame_data, cmap='viridis', aspect='auto')
-                            ax_mini.axis('off')
-                            ax_mini.set_title(f"Frame {frame_num}", fontsize=8)
-                            plt.colorbar(im, ax=ax_mini, fraction=0.046, pad=0.04)
-                            plt.tight_layout()
-                          
-                            st.pyplot(fig_mini)
-                            plt.close(fig_mini)
-                          
-                            buf = BytesIO()
-                            np.save(buf, frame_data)
-                            npy_data = buf.getvalue()
-                          
-                            st.download_button(
-                                label=f"📥 Frame {frame_num} (NPY)",
-                                data=npy_data,
-                                file_name=f"frame_{frame_num}_{time_component}_{timestamp}.npy",
-                                mime="application/octet-stream",
-                                key=f"download_frame_{frame_num}_{timestamp}"
-                            )
-  
-    with tab7:
-        st.subheader("💾 Export Prediction Results")
-      
-        has_multi_predictions = ('multi_target_predictions' in st.session_state and
-                                len(st.session_state.multi_target_predictions) > 0)
-      
-        if not has_multi_predictions:
-            st.warning("⚠️ No prediction results available to save. Please run predictions first.")
-        else:
-            st.success("✅ Prediction results available for export!")
-          
-            if has_multi_predictions:
-                st.info(f"**Multiple Target Predictions:** {len(st.session_state.multi_target_predictions)} available")
-          
-            st.divider()
-          
-            st.subheader("⬇️ Direct Download")
-          
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            base_filename = st.text_input(
-                "Base filename for downloads",
-                value=f"prediction_{timestamp}",
-                help="All files will use this base name"
+            
+            # Interface threshold
+            interface_threshold = st.slider(
+                "Interface Threshold (eta)",
+                0.001, 0.5, 0.1, 0.01,
+                help="Define interface as threshold < eta < 1-threshold"
             )
-          
-            st.markdown("### 📁 Download Results in Various Formats")
-          
-            col1, col2, col3 = st.columns(3)
-          
-            with col3:
-                zip_buffer = st.session_state.prediction_results_manager.create_multi_prediction_archive(
-                    st.session_state.multi_target_predictions,
-                    st.session_state.source_simulations
-                )
-                zip_data = zip_buffer.getvalue()
-              
-                st.download_button(
-                    label="📦 Download ZIP Archive",
-                    data=zip_data,
-                    file_name=f"{base_filename}_complete.zip",
-                    mime="application/zip",
-                    key=f"download_zip_{timestamp}",
-                    use_container_width=True
-                )
-                st.caption("Complete results package")
-          
-            st.divider()
-          
-            st.markdown("### 📄 Download Individual Components")
-          
-            st.divider()
-          
-            if has_multi_predictions:
-                st.markdown("### 🎯 Multi-Target Predictions")
-              
-                col1, col2 = st.columns(2)
-              
-                with col1:
-                    zip_buffer = st.session_state.prediction_results_manager.create_multi_prediction_archive(
-                        st.session_state.multi_target_predictions,
-                        st.session_state.source_simulations
+            
+            if interface_threshold != st.session_state.interpolator.interface_threshold:
+                st.session_state.interpolator.interface_threshold = interface_threshold
+                st.success("Interface threshold updated!")
+            
+            if use_numba != st.session_state.interpolator.use_numba:
+                st.session_state.interpolator.use_numba = use_numba
+                st.success("Numba setting updated!")
+        
+        # Load solutions
+        st.subheader("📂 Load Solutions")
+        
+        col_load1, col_load2 = st.columns(2)
+        with col_load1:
+            if st.button("🔄 Load Solutions", use_container_width=True, 
+                        help="Load all solutions from numerical_solutions directory"):
+                with st.spinner("Loading solutions..."):
+                    start_time = time.time()
+                    
+                    # Determine loading method
+                    load_method = "safe" if "Safe" in pt_loading_method else "unsafe"
+                    
+                    st.session_state.solutions = st.session_state.loader.load_all_solutions(
+                        use_cache=use_cache,
+                        pt_loading_method=load_method
                     )
-                    zip_data = zip_buffer.getvalue()
-                  
-                    st.download_button(
-                        label="📦 Download Multi-Target ZIP",
-                        data=zip_data,
-                        file_name=f"{base_filename}_multi_target.zip",
-                        mime="application/zip",
-                        key=f"download_multi_zip_{timestamp}",
-                        use_container_width=True
-                    )
-              
-                with col2:
-                    summary_rows = []
-                    for pred_key, pred_data in st.session_state.multi_target_predictions.items():
-                        target_params = pred_data.get('target_params', {})
-                        summary_rows.append({
-                            'prediction_id': pred_key,
-                            'defect_type': target_params.get('defect_type', 'Unknown'),
-                            'shape': target_params.get('shape', 'Unknown'),
-                            'orientation': target_params.get('orientation', 'Unknown'),
-                            'eps0': float(target_params.get('eps0', 0)),
-                            'kappa': float(target_params.get('kappa', 0)),
-                            'theta_deg': float(np.rad2deg(target_params.get('theta', 0)))
-                        })
-                  
-                    if summary_rows:
-                        summary_df = pd.DataFrame(summary_rows)
-                        csv_data = summary_df.to_csv(index=False)
-                      
-                        st.download_button(
-                            label="📥 Multi-Target Summary CSV",
-                            data=csv_data,
-                            file_name=f"{base_filename}_multi_summary.csv",
-                            mime="text/csv",
-                            key=f"download_multi_summary_{timestamp}",
-                            use_container_width=True
-                        )
-          
-            st.divider()
-          
-            st.markdown("### 🎨 Download Visualizations")
-          
-            if 'matplotlib_figures' in st.session_state and st.session_state.matplotlib_figures:
-                col1, col2, col3 = st.columns(3)
-              
-                with col1:
-                    if 'stress_field' in st.session_state.matplotlib_figures:
-                        fig = st.session_state.matplotlib_figures['stress_field']
-                        buf = BytesIO()
-                        fig.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Stress Field PNG",
-                            data=png_data,
-                            file_name=f"{base_filename}_stress_field.png",
-                            mime="image/png",
-                            key=f"download_stress_png_{timestamp}"
-                        )
-              
-                with col2:
-                    if 'attention_weights' in st.session_state.matplotlib_figures:
-                        fig = st.session_state.matplotlib_figures['attention_weights']
-                        buf = BytesIO()
-                        fig.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Attention Weights PNG",
-                            data=png_data,
-                            file_name=f"{base_filename}_attention_weights.png",
-                            mime="image/png",
-                            key=f"download_attention_png_{timestamp}"
-                        )
-              
-                with col3:
-                    if 'training_losses' in st.session_state.matplotlib_figures:
-                        fig = st.session_state.matplotlib_figures['training_losses']
-                        buf = BytesIO()
-                        fig.savefig(buf, format="png", dpi=figure_dpi, bbox_inches='tight')
-                        png_data = buf.getvalue()
-                      
-                        st.download_button(
-                            label="📥 Training Losses PNG",
-                            data=png_data,
-                            file_name=f"{base_filename}_training_losses.png",
-                            mime="image/png",
-                            key=f"download_losses_png_{timestamp}"
-                        )
-          
-            st.divider()
-          
-            st.subheader("📥 Download Files from numerical_solutions Directory")
-            all_files_info = st.session_state.solutions_manager.get_all_files()
-            all_files_info.sort(key=lambda x: datetime.fromisoformat(x['modified']), reverse=True)
-          
-            if not all_files_info:
-                st.info("No files found in the numerical_solutions directory.")
-            else:
-                with st.expander("📂 Files in Directory (Click to expand)", expanded=False):
-                    for file_info in all_files_info[:10]: # Limit to 10 files
-                        file_path = file_info['path']
-                        file_name = file_info['filename']
-                        file_size_kb = file_info['size'] // 1024
-                      
-                        col_file1, col_file2 = st.columns([3, 1])
-                        with col_file1:
-                            st.write(f"**{file_name}** ({file_size_kb}KB)")
-                      
-                        with col_file2:
-                            with open(file_path, 'rb') as f:
-                                file_data = f.read()
-                          
-                            st.download_button(
-                                label="📥 Download",
-                                data=file_data,
-                                file_name=file_name,
-                                mime="application/octet-stream",
-                                key=f"download_dir_{file_name}_{hash(file_path)}",
-                                use_container_width=True
-                            )
-      
+                    load_time = time.time() - start_time
+                    
+                    if st.session_state.solutions:
+                        st.success(f"Loaded {len(st.session_state.solutions)} solutions in {load_time:.2f}s")
+                    else:
+                        st.warning("No solutions found or loaded")
+        
+        with col_load2:
+            if st.button("🗑️ Clear Cache", use_container_width=True, 
+                        help="Clear file cache"):
+                st.session_state.loader.cache.clear()
+                st.success("Cache cleared!")
+        
+        # Show solution info
+        if st.session_state.solutions:
+            st.subheader("📋 Loaded Solutions")
+            with st.expander(f"View {len(st.session_state.solutions)} solutions"):
+                for i, sol in enumerate(st.session_state.solutions[:10]):  # Limit to 10
+                    params = sol.get('params', {})
+                    st.caption(f"{i+1}. {sol.get('filename', 'Unknown')}")
+                    st.write(f"   • Type: {params.get('defect_type', 'Unknown')}")
+                    st.write(f"   • θ: {np.rad2deg(params.get('theta', 0)):.1f}°")
+                    st.write(f"   • ε*: {params.get('eps0', 0):.3f}")
+                    st.divider()
+                
+                if len(st.session_state.solutions) > 10:
+                    st.info(f"... and {len(st.session_state.solutions) - 10} more")
+        
         st.divider()
-        if st.button("🗑️ Clear All Download Caches", type="secondary"):
-            if 'matplotlib_figures' in st.session_state:
-                st.session_state.matplotlib_figures = {}
-          
-            st.success("✅ Download caches cleared!")
-            st.rerun()
+        
+        # Interpolation settings
+        st.subheader("🎯 Target Parameters")
+        
+        defect_type = st.selectbox("Defect Type", ["ISF", "ESF", "Twin"], index=0)
+        
+        col_shape, col_eps = st.columns(2)
+        with col_shape:
+            shape = st.selectbox("Shape", 
+                                ["Square", "Horizontal Fault", "Vertical Fault", 
+                                 "Rectangle", "Ellipse"], index=0)
+        with col_eps:
+            eps0 = st.slider("ε*", 0.3, 3.0, 0.707, 0.01,
+                            help="Strain parameter")
+        
+        col_kappa, col_sigma = st.columns(2)
+        with col_kappa:
+            kappa = st.slider("κ", 0.1, 2.0, 0.6, 0.01,
+                             help="Shape parameter")
+        with col_sigma:
+            sigma = st.slider("σ", 0.1, 1.0, 0.3, 0.05,
+                             help="Attention sigma parameter")
+        
+        # Update sigma if changed
+        if sigma != st.session_state.interpolator.sigma:
+            st.session_state.interpolator.sigma = sigma
+        
+        # Orientation sweep settings
+        st.subheader("🌐 Orientation Sweep")
+        
+        theta_min = st.slider("Min Angle (°)", 0, 360, 0, 5,
+                             help="Minimum orientation angle")
+        theta_max = st.slider("Max Angle (°)", 0, 360, 360, 5,
+                             help="Maximum orientation angle")
+        theta_step = st.slider("Step Size (°)", 5, 45, 15, 5,
+                              help="Angle step size")
+        
+        # Time settings
+        st.subheader("⏱️ Time Settings")
+        
+        n_times = st.slider("Time Points", 10, 200, 50, 10,
+                           help="Number of time points to simulate")
+        max_time = st.slider("Max Time (s)", 50, 500, 200, 10,
+                            help="Maximum simulation time")
+        
+        # Visualization settings
+        st.subheader("🎨 Visualization")
+        
+        stress_component = st.selectbox(
+            "Stress Component",
+            ["von_mises", "sigma_hydro", "sigma_mag"],
+            index=0,
+            help="Select which stress component to visualize"
+        )
+        
+        viz_type = st.radio("Chart Type", ["Sunburst", "Radar", "Both", "Comparison"], 
+                           help="Select visualization type")
+        cmap = st.selectbox("Color Map", SUNBURST_CMAPS, index=1)
+        
+        col_viz1, col_viz2 = st.columns(2)
+        with col_viz1:
+            use_plotly = st.checkbox("Use Plotly (Interactive)", value=True)
+        with col_viz2:
+            show_metrics = st.checkbox("Show Metrics", value=True)
+    
+    # Main content area
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        st.subheader("🚀 Generate Interface Stress Visualizations")
+        
+        if not st.session_state.solutions:
+            st.warning("Please load solutions first using the button in the sidebar.")
+            
+            # Show directory info
+            with st.expander("📁 Directory Information"):
+                file_formats = st.session_state.loader.scan_solutions()
+                total_files = sum(len(files) for files in file_formats.values())
+                
+                if total_files > 0:
+                    st.info(f"Found {total_files} files in {SOLUTIONS_DIR}:")
+                    for fmt, files in file_formats.items():
+                        if files:
+                            st.write(f"• {fmt.upper()}: {len(files)} files")
+                else:
+                    st.write(f"Directory: `{SOLUTIONS_DIR}`")
+                    st.write("Expected file formats: `.pkl`, `.pt`, `.h5`, `.npz`, `.sql`, `.json`")
+                    
+                    st.info("""
+                    **Expected file structure:**
+                    - Place simulation files in the `numerical_solutions/` directory
+                    - Each file should contain simulation data with:
+                      - `params` dictionary (defect_type, theta, eps0, kappa, shape)
+                      - `history` list with (eta, stress_fields) tuples
+                    """)
+        else:
+            if st.button("✨ Generate Interface Stress Charts", type="primary", use_container_width=True):
+                with st.spinner("Generating orientation sweep for interface stress..."):
+                    try:
+                        # Generate theta range
+                        thetas = np.arange(theta_min, theta_max + theta_step, theta_step)
+                        theta_rad = np.deg2rad(thetas)
+                        
+                        # Generate time points
+                        times = np.linspace(0, max_time, n_times)
+                        
+                        # Generate predictions for each orientation
+                        predictions = []
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        for i, theta in enumerate(theta_rad):
+                            status_text.text(f"Processing orientation {i+1}/{len(theta_rad)}...")
+                            
+                            # Target parameters
+                            target_params = {
+                                'defect_type': defect_type,
+                                'theta': float(theta),
+                                'eps0': eps0,
+                                'kappa': kappa,
+                                'shape': shape
+                            }
+                            
+                            # Interpolate - now returns interface stress
+                            result = st.session_state.interpolator.interpolate(
+                                st.session_state.solutions, target_params
+                            )
+                            
+                            if result:
+                                # Extract interface stress evolution
+                                time_evolution = []
+                                
+                                # Create time evolution using interface stress
+                                interface_stress = result['interface_stress'][stress_component]
+                                
+                                # Create synthetic time evolution based on interface stress
+                                for t in times:
+                                    # Use interface stress as base, with time-dependent scaling
+                                    stress_at_t = interface_stress * (1 - np.exp(-t / 50))
+                                    time_evolution.append(stress_at_t)
+                                
+                                predictions.append(time_evolution)
+                            
+                            progress_bar.progress((i + 1) / len(theta_rad))
+                        
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                        # Create stress matrix (time x theta)
+                        if predictions:
+                            stress_matrix = np.array(predictions).T  # Shape: (n_times, n_thetas)
+                            
+                            # Store for visualization
+                            st.session_state.stress_matrix = stress_matrix
+                            st.session_state.times = times
+                            st.session_state.thetas = thetas
+                            st.session_state.stress_component = stress_component
+                            
+                            # Store metadata
+                            st.session_state.metadata = {
+                                'defect_type': defect_type,
+                                'shape': shape,
+                                'eps0': eps0,
+                                'kappa': kappa,
+                                'sigma': sigma,
+                                'interface_threshold': interface_threshold,
+                                'stress_component': stress_component,
+                                'theta_range': f"{theta_min}-{theta_max}°",
+                                'theta_step': theta_step,
+                                'n_times': n_times,
+                                'max_time': max_time,
+                                'generated_at': datetime.now().isoformat(),
+                                'analysis_type': 'interface_stress'
+                            }
+                            
+                            st.success(f"✅ Generated {len(thetas)} orientations × {len(times)} time points")
+                            st.info(f"**Analysis:** Maximum {stress_component} stress at material interface (η ∈ [{interface_threshold}, {1-interface_threshold}])")
+                            
+                            # Display results
+                            if viz_type in ["Sunburst", "Both", "Comparison"]:
+                                st.subheader("🌅 Sunburst Chart - Interface Stress")
+                                
+                                title = f"{stress_component.replace('_', ' ').title()} Interface Stress - {defect_type}"
+                                
+                                if use_plotly:
+                                    fig = st.session_state.visualizer.create_plotly_sunburst(
+                                        stress_matrix, times, thetas,
+                                        title=title,
+                                        cmap=cmap
+                                    )
+                                    st.plotly_chart(fig, use_container_width=True)
+                                else:
+                                    fig = st.session_state.visualizer.create_sunburst_plot(
+                                        stress_matrix, times, thetas,
+                                        title=title,
+                                        cmap=cmap
+                                    )
+                                    st.pyplot(fig)
+                                    
+                                    # Download button
+                                    col_dl1, col_dl2 = st.columns(2)
+                                    with col_dl1:
+                                        buf = BytesIO()
+                                        fig.savefig(buf, format="png", dpi=300, bbox_inches='tight')
+                                        st.download_button(
+                                            "📥 Download Sunburst PNG",
+                                            data=buf.getvalue(),
+                                            file_name=f"interface_sunburst_{stress_component}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                                            mime="image/png",
+                                            use_container_width=True
+                                        )
+                                    with col_dl2:
+                                        buf = BytesIO()
+                                        fig.savefig(buf, format="pdf", bbox_inches='tight')
+                                        st.download_button(
+                                            "📥 Download Sunburst PDF",
+                                            data=buf.getvalue(),
+                                            file_name=f"interface_sunburst_{stress_component}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                                            mime="application/pdf",
+                                            use_container_width=True
+                                        )
+                            
+                            if viz_type in ["Radar", "Both", "Comparison"]:
+                                st.subheader("📡 Radar Charts - Interface Stress")
+                                
+                                # Select time point
+                                time_idx = st.slider("Select Time Point", 0, len(times)-1, len(times)//2,
+                                                    key="radar_time_slider")
+                                selected_time = times[time_idx]
+                                
+                                if viz_type == "Comparison":
+                                    # For comparison, we would need multiple stress components
+                                    # For now, show single component
+                                    fig_radar = st.session_state.visualizer.create_radar_plot(
+                                        stress_matrix[time_idx, :], thetas, 
+                                        stress_component.replace('_', ' ').title(), 
+                                        selected_time
+                                    )
+                                    st.pyplot(fig_radar)
+                                else:
+                                    # Create radar for the selected stress component
+                                    fig_radar = st.session_state.visualizer.create_radar_plot(
+                                        stress_matrix[time_idx, :], thetas, 
+                                        stress_component.replace('_', ' ').title(), 
+                                        selected_time
+                                    )
+                                    st.pyplot(fig_radar)
+                            
+                            # Enhanced Statistics with Numba acceleration
+                            if show_metrics:
+                                st.subheader("📊 Interface Stress Statistics")
+                                
+                                # Compute statistics with Numba
+                                start_time = time.time()
+                                max_val, min_val, mean_val, std_val, p95, p99 = compute_stress_statistics_numba(
+                                    stress_matrix
+                                )
+                                compute_time = time.time() - start_time
+                                
+                                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                                
+                                with col_stat1:
+                                    st.metric("Max Interface Stress", f"{max_val:.3f} GPa")
+                                with col_stat2:
+                                    st.metric("Mean Interface Stress", f"{mean_val:.3f} GPa")
+                                with col_stat3:
+                                    st.metric("Std Dev", f"{std_val:.3f} GPa")
+                                with col_stat4:
+                                    st.metric("95th %ile", f"{p95:.3f} GPa")
+                                
+                                st.caption(f"Statistics computed in {compute_time*1000:.2f} ms with Numba acceleration")
+                                
+                                # Distribution plot
+                                fig_dist, ax_dist = plt.subplots(figsize=(10, 4))
+                                ax_dist.hist(stress_matrix.flatten(), bins=50, 
+                                           edgecolor='black', alpha=0.7, color='steelblue')
+                                ax_dist.set_xlabel('Interface Stress (GPa)', fontsize=12)
+                                ax_dist.set_ylabel('Frequency', fontsize=12)
+                                ax_dist.set_title(f'{stress_component.replace("_", " ").title()} Interface Stress Distribution', 
+                                                fontsize=14, fontweight='bold')
+                                ax_dist.grid(True, alpha=0.3)
+                                
+                                # Add vertical lines for statistics
+                                ax_dist.axvline(mean_val, color='red', linestyle='--', label=f'Mean: {mean_val:.3f}')
+                                ax_dist.axvline(p95, color='orange', linestyle=':', label=f'95th %ile: {p95:.3f}')
+                                ax_dist.axvline(p99, color='green', linestyle='-.', label=f'99th %ile: {p99:.3f}')
+                                ax_dist.legend()
+                                
+                                st.pyplot(fig_dist)
+                            
+                            # Enhanced Data export
+                            st.subheader("📤 Enhanced Export Options")
+                            
+                            export_col1, export_col2, export_col3 = st.columns(3)
+                            
+                            with export_col1:
+                                # CSV export
+                                if st.button("💾 Export as CSV", use_container_width=True):
+                                    export_data = []
+                                    for t_idx, time_val in enumerate(times):
+                                        for theta_idx, theta_val in enumerate(thetas):
+                                            export_data.append({
+                                                'time_s': time_val,
+                                                'orientation_deg': theta_val,
+                                                'interface_stress_gpa': stress_matrix[t_idx, theta_idx]
+                                            })
+                                    
+                                    df = pd.DataFrame(export_data)
+                                    csv = df.to_csv(index=False)
+                                    
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download CSV",
+                                        data=csv,
+                                        file_name=f"interface_stress_{stress_component}_{timestamp}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                            
+                            with export_col2:
+                                # JSON export
+                                if st.button("📊 Export as JSON", use_container_width=True):
+                                    export_dict = {
+                                        'metadata': st.session_state.metadata,
+                                        'times': times.tolist(),
+                                        'thetas': thetas.tolist(),
+                                        'interface_stress_matrix': stress_matrix.tolist()
+                                    }
+                                    
+                                    json_str = json.dumps(export_dict, indent=2)
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download JSON",
+                                        data=json_str,
+                                        file_name=f"interface_stress_{stress_component}_{timestamp}.json",
+                                        mime="application/json",
+                                        use_container_width=True
+                                    )
+                            
+                            with export_col3:
+                                # ZIP archive export
+                                if st.button("📦 Export as ZIP", use_container_width=True):
+                                    zip_buffer = st.session_state.results_manager.create_results_archive(
+                                        stress_matrix, times, thetas, st.session_state.metadata
+                                    )
+                                    
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download ZIP Archive",
+                                        data=zip_buffer.getvalue(),
+                                        file_name=f"interface_stress_results_{stress_component}_{timestamp}.zip",
+                                        mime="application/zip",
+                                        use_container_width=True
+                                    )
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+                        st.exception(e)
+    
+    with col2:
+        st.subheader("📈 Dashboard")
+        
+        if 'stress_matrix' in st.session_state:
+            stress_matrix = st.session_state.stress_matrix
+            
+            st.metric("Time Points", len(st.session_state.times))
+            st.metric("Orientations", len(st.session_state.thetas))
+            
+            # Quick statistics
+            max_val = np.max(stress_matrix)
+            mean_val = np.mean(stress_matrix)
+            min_val = np.min(stress_matrix)
+            
+            st.metric("Max Interface Stress", f"{max_val:.3f} GPa", 
+                     delta=f"{(max_val - mean_val):.3f} from mean")
+            st.metric("Mean Interface Stress", f"{mean_val:.3f} GPa")
+            st.metric("Min Interface Stress", f"{min_val:.3f} GPa")
+            
+            # Stress range
+            stress_range = max_val - min_val
+            if stress_range > 0:
+                progress_value = (mean_val - min_val) / stress_range
+                progress_text = f"Mean position in range: {((mean_val - min_val) / stress_range * 100):.1f}%"
+            else:
+                progress_value = 0.5
+                progress_text = "No stress variation"
+            
+            st.progress(progress_value, text=progress_text)
+            
+            # Orientation distribution
+            st.subheader("🌐 Orientation Stats")
+            
+            mean_by_theta = np.mean(stress_matrix, axis=0)
+            max_theta_idx = np.argmax(mean_by_theta)
+            min_theta_idx = np.argmin(mean_by_theta)
+            
+            st.write(f"**Max stress at:** {st.session_state.thetas[max_theta_idx]:.0f}°")
+            st.write(f"**Min stress at:** {st.session_state.thetas[min_theta_idx]:.0f}°")
+            
+            # Time evolution
+            st.subheader("⏱️ Time Evolution")
+            
+            mean_by_time = np.mean(stress_matrix, axis=1)
+            time_of_max = st.session_state.times[np.argmax(mean_by_time)]
+            
+            st.write(f"**Peak at:** {time_of_max:.1f}s")
+            
+            # Quick plot
+            fig_quick, ax_quick = plt.subplots(figsize=(4, 3))
+            ax_quick.plot(st.session_state.times, mean_by_time, 'b-', linewidth=2)
+            ax_quick.fill_between(st.session_state.times, mean_by_time, alpha=0.3, color='blue')
+            ax_quick.set_xlabel('Time (s)')
+            ax_quick.set_ylabel('Mean Interface Stress (GPa)')
+            ax_quick.set_title('Interface Stress Evolution', fontsize=10)
+            ax_quick.grid(True, alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(fig_quick)
+            
+        else:
+            st.info("No data generated yet.")
+            st.write("Click 'Generate Interface Stress Charts' to analyze material interface stresses.")
+            
+            # Show analysis explanation
+            with st.expander("🔬 About Interface Stress Analysis"):
+                st.write("""
+                **Why interface stress is more meaningful:**
+                1. **Material Interface** (0 < η < 1) is where defects actually occur
+                2. **Maximum stress** at interface drives defect propagation
+                3. **Center point** may not capture true mechanical behavior
+                4. **Comparison across orientations** is more physically relevant
+                
+                **Analysis method:**
+                - Extract maximum absolute stress where η ∈ [threshold, 1-threshold]
+                - Compare across different defect orientations
+                - Visualize time evolution of interface stress
+                """)
 
+# =============================================
+# RUN APPLICATION
+# =============================================
 if __name__ == "__main__":
-    create_attention_interface()
-st.caption(f"🔬 Attention Interpolation • Unified Download Pattern • {datetime.now().year}")
+    main()
