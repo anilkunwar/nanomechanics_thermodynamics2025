@@ -1529,9 +1529,9 @@ def main():
         # Orientation sweep settings
         st.subheader("🌐 Orientation Sweep")
         
-        theta_min = st.slider("Min Angle (°)", 0, 90, 0, 5,
+        theta_min = st.slider("Min Angle (°)", 0, 360, 0, 5,
                              help="Minimum orientation angle")
-        theta_max = st.slider("Max Angle (°)", 0, 90, 90, 5,
+        theta_max = st.slider("Max Angle (°)", 0, 360, 360, 5,
                              help="Maximum orientation angle")
         theta_step = st.slider("Step Size (°)", 5, 45, 15, 5,
                               help="Angle step size")
