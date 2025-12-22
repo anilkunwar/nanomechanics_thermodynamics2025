@@ -250,7 +250,7 @@ class MultiParamAttentionInterpolator(nn.Module):
             return None
         # Assume all histories have same length and shape
         history_len = len(solutions[0]['history'])
-        stress_shape = solutions[0]['history'][0]['stresses']['von_mises'].shape
+        stress_shape = solutions[0]['history'][0][1]['von_mises'].shape
         interpolated_history = []
         for t in range(history_len):
             sigma_hydro = np.zeros(stress_shape)
@@ -258,19 +258,15 @@ class MultiParamAttentionInterpolator(nn.Module):
             von_mises = np.zeros(stress_shape)
             for sol, w in zip(solutions, weights):
                 if w < 1e-8: continue
-                frame = sol['history'][t]
-                stresses = frame['stresses']
+                eta, stresses = sol['history'][t]
                 sigma_hydro += w * stresses.get('sigma_hydro', np.zeros(stress_shape))
                 sigma_mag += w * stresses.get('sigma_mag', np.zeros(stress_shape))
                 von_mises += w * stresses.get('von_mises', np.zeros(stress_shape))
-            interpolated_history.append({
-                'eta': np.zeros(stress_shape),  # Placeholder, as eta not used
-                'stresses': {
-                    'sigma_hydro': sigma_hydro,
-                    'sigma_mag': sigma_mag,
-                    'von_mises': von_mises
-                }
-            })
+            interpolated_history.append((np.zeros(stress_shape), {  # Placeholder eta
+                'sigma_hydro': sigma_hydro,
+                'sigma_mag': sigma_mag,
+                'von_mises': von_mises
+            }))
         param_set = solutions[0]['params'].copy()
         param_set.update({'defect_type': defect_target, 'theta': theta_target})
         return {
@@ -289,10 +285,10 @@ def get_center_stress(solution, stress_type='von_mises', center_fraction=0.5, th
     history = solution['history']
     if not history:
         return np.zeros(50)
-    shape = history[0]['stresses'][stress_type].shape
+    shape = history[0][1][stress_type].shape
     ix = shape[0] // 2
     iy = int(shape[1] * center_fraction)
-    stress_raw = np.array([frame['stresses'][stress_type][ix, iy] for frame in history])
+    stress_raw = np.array([history_entry[1][stress_type][ix, iy] for history_entry in history])
     # === APPLY TEMPORAL BIAS BASED ON theta INCREASE ===
     if temporal_bias_factor > 0 and theta_current is not None:
         # Reference theta = 0 deg
@@ -329,7 +325,11 @@ def build_sunburst_matrices(solutions, params_list, interpolator,
     for j, theta in enumerate(theta_spokes):
         sol = interpolator(filtered_solutions, filtered_params, defect_target, theta)
         stress = get_center_stress(sol, stress_type, center_fraction, theta_current=theta, temporal_bias_factor=temporal_bias_factor)
-        stress_mat[:, j] = stress[:N_TIME]  # Truncate or pad if needed
+        if len(stress) < N_TIME:
+            stress = np.pad(stress, (0, N_TIME - len(stress)), mode='constant', constant_values=stress[-1] if len(stress) > 0 else 0)
+        elif len(stress) > N_TIME:
+            stress = stress[:N_TIME]
+        stress_mat[:, j] = stress
         prog.progress((j + 1) / len(theta_spokes))
     prog.empty()
     return stress_mat, times
