@@ -248,9 +248,25 @@ class MultiParamAttentionInterpolator(nn.Module):
     def _physics_aware_interpolation(self, solutions, weights, defect_target, theta_target):
         if len(solutions) == 0:
             return None
+        # Robust stress shape inference
+        stress_shape = None
+        for sol in solutions:
+            for entry in sol.get('history', []):
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    stresses = entry[1]
+                elif isinstance(entry, dict):
+                    stresses = entry
+                else:
+                    continue
+                if isinstance(stresses, dict) and 'von_mises' in stresses:
+                    stress_shape = stresses['von_mises'].shape
+                    break
+            if stress_shape is not None:
+                break
+        if stress_shape is None:
+            raise RuntimeError("No valid 'von_mises' field found in any solution history.")
         # Assume all histories have same length and shape
         history_len = len(solutions[0]['history'])
-        stress_shape = solutions[0]['history'][0][1]['von_mises'].shape
         interpolated_history = []
         for t in range(history_len):
             sigma_hydro = np.zeros(stress_shape)
@@ -258,7 +274,13 @@ class MultiParamAttentionInterpolator(nn.Module):
             von_mises = np.zeros(stress_shape)
             for sol, w in zip(solutions, weights):
                 if w < 1e-8: continue
-                eta, stresses = sol['history'][t]
+                entry = sol['history'][t]
+                if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                    stresses = entry[1]
+                elif isinstance(entry, dict):
+                    stresses = entry
+                else:
+                    continue
                 sigma_hydro += w * stresses.get('sigma_hydro', np.zeros(stress_shape))
                 sigma_mag += w * stresses.get('sigma_mag', np.zeros(stress_shape))
                 von_mises += w * stresses.get('von_mises', np.zeros(stress_shape))
@@ -285,10 +307,20 @@ def get_center_stress(solution, stress_type='von_mises', center_fraction=0.5, th
     history = solution['history']
     if not history:
         return np.zeros(50)
-    shape = history[0][1][stress_type].shape
-    ix = shape[0] // 2
-    iy = int(shape[1] * center_fraction)
-    stress_raw = np.array([history_entry[1][stress_type][ix, iy] for history_entry in history])
+    stress_raw = []
+    for entry in history:
+        if isinstance(entry, (list, tuple)) and len(entry) == 2:
+            stresses = entry[1]
+        elif isinstance(entry, dict):
+            stresses = entry
+        else:
+            continue
+        if isinstance(stresses, dict) and stress_type in stresses:
+            shape = stresses[stress_type].shape
+            ix = shape[0] // 2
+            iy = int(shape[1] * center_fraction)
+            stress_raw.append(stresses[stress_type][ix, iy])
+    stress_raw = np.array(stress_raw)
     # === APPLY TEMPORAL BIAS BASED ON theta INCREASE ===
     if temporal_bias_factor > 0 and theta_current is not None:
         # Reference theta = 0 deg
