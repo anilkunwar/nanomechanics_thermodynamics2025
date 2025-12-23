@@ -32,7 +32,7 @@ from scipy.interpolate import griddata
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics.pairwise import rbf_kernel
 import plotly.express as px
-
+import warnings
 warnings.filterwarnings('ignore')
 
 # =============================================
@@ -876,7 +876,7 @@ class AttentionSpatialInterpolator:
             
             return {
                 'region_stress': weighted_stress,
-                'attention_weights': final_weights,
+                'attention_weights': final_weights.tolist(),
                 'target_params': precise_target_params,
                 'target_angle_deg': target_angle_deg,
                 'target_angle_rad': target_angle_rad,
@@ -918,16 +918,16 @@ class AttentionSpatialInterpolator:
                 weights_list.append(result['attention_weights'])
             else:
                 stresses.append(0.0)
-                weights_list.append(np.zeros(len(sources)))
+                weights_list.append([0.0] * len(sources))
         
         if 'st' in globals():
             progress_bar.empty()
             status_text.empty()
         
         return {
-            'angles': angles,
-            'stresses': np.array(stresses),
-            'weights_matrix': np.array(weights_list).T,  # Sources × Angles
+            'angles': angles.tolist(),
+            'stresses': np.array(stresses).tolist(),
+            'weights_matrix': np.array(weights_list).T.tolist(),  # Sources × Angles
             'region_type': region_type,
             'stress_component': stress_component,
             'stress_type': stress_type,
@@ -984,11 +984,11 @@ class OriginalFileAnalyzer:
         theta_deg = np.rad2deg(theta) if theta is not None else 0.0
         
         return {
-            'region_stress': region_stress,
+            'region_stress': float(region_stress),
             'region_statistics': region_stats,
             'params': params,
-            'theta_rad': theta,
-            'theta_deg': theta_deg,
+            'theta_rad': float(theta) if theta is not None else 0.0,
+            'theta_deg': float(theta_deg),
             'filename': solution.get('filename', 'Unknown'),
             'region_type': region_type,
             'stress_component': stress_component,
@@ -1069,17 +1069,293 @@ class OriginalFileAnalyzer:
         for angle in angles:
             if angle in angle_bins and angle_bins[angle]:
                 avg_stress = np.mean(angle_bins[angle])
-                stresses.append(avg_stress)
-                valid_angles.append(angle)
+                stresses.append(float(avg_stress))
+                valid_angles.append(float(angle))
             else:
                 # Use NaN for missing data
                 stresses.append(np.nan)
-                valid_angles.append(angle)
+                valid_angles.append(float(angle))
         
         return np.array(stresses), np.array(valid_angles)
 
 # =============================================
-# ENHANCED SUNBURST & RADAR VISUALIZER
+# HEATMAP VISUALIZER FOR SINGLE TARGET ANALYSIS
+# =============================================
+
+class HeatmapVisualizer:
+    """Create heatmap visualizations for stress distribution analysis"""
+    
+    def __init__(self):
+        self.colormap_manager = EnhancedColorMaps()
+    
+    def create_stress_distribution_heatmap(self, eta, stress_fields, stress_component='von_mises',
+                                          title="Stress Distribution", cmap='viridis',
+                                          figsize=(12, 10), dpi=100):
+        """Create a detailed heatmap of stress distribution"""
+        
+        if eta is None or not isinstance(eta, np.ndarray):
+            return None
+        
+        # Get stress data
+        stress_data = None
+        if stress_component == 'von_mises' and 'von_mises' in stress_fields:
+            stress_data = stress_fields['von_mises']
+        elif stress_component == 'sigma_hydro' and 'sigma_hydro' in stress_fields:
+            stress_data = stress_fields['sigma_hydro']
+        elif stress_component == 'sigma_mag' and 'sigma_mag' in stress_fields:
+            stress_data = stress_fields['sigma_mag']
+        
+        if stress_data is None:
+            return None
+        
+        # Create figure
+        fig, axes = plt.subplots(2, 3, figsize=figsize, dpi=dpi)
+        
+        # 1. Main stress heatmap
+        ax1 = axes[0, 0]
+        im1 = ax1.imshow(stress_data, cmap=cmap, aspect='auto')
+        ax1.set_title(f'{stress_component.replace("_", " ").title()} Stress')
+        ax1.set_xlabel('X Position')
+        ax1.set_ylabel('Y Position')
+        plt.colorbar(im1, ax=ax1, label='Stress (GPa)')
+        
+        # 2. Phase field (eta)
+        ax2 = axes[0, 1]
+        im2 = ax2.imshow(eta, cmap='coolwarm', aspect='auto', vmin=0, vmax=1)
+        ax2.set_title('Phase Field (η)')
+        ax2.set_xlabel('X Position')
+        ax2.set_ylabel('Y Position')
+        plt.colorbar(im2, ax=ax2, label='η Value')
+        
+        # 3. Combined overlay (stress on phase field)
+        ax3 = axes[0, 2]
+        # Create masked array for defect regions
+        defect_mask = eta > 0.6
+        interface_mask = (eta >= 0.4) & (eta <= 0.6)
+        bulk_mask = eta < 0.4
+        
+        # Create RGB image for visualization
+        overlay = np.zeros((*eta.shape, 3))
+        
+        # Assign colors based on region and stress
+        stress_normalized = (stress_data - np.min(stress_data)) / (np.max(stress_data) - np.min(stress_data) + 1e-8)
+        
+        # Defect regions in red
+        overlay[defect_mask, 0] = 1.0
+        overlay[defect_mask, 1] = 1 - stress_normalized[defect_mask]
+        overlay[defect_mask, 2] = 1 - stress_normalized[defect_mask]
+        
+        # Interface regions in yellow
+        overlay[interface_mask, 0] = 1.0
+        overlay[interface_mask, 1] = 1.0
+        overlay[interface_mask, 2] = 1 - stress_normalized[interface_mask]
+        
+        # Bulk regions in blue
+        overlay[bulk_mask, 0] = 1 - stress_normalized[bulk_mask]
+        overlay[bulk_mask, 1] = 1 - stress_normalized[bulk_mask]
+        overlay[bulk_mask, 2] = 1.0
+        
+        ax3.imshow(overlay, aspect='auto')
+        ax3.set_title('Stress Overlay on Regions')
+        ax3.set_xlabel('X Position')
+        ax3.set_ylabel('Y Position')
+        
+        # 4. Stress histogram
+        ax4 = axes[1, 0]
+        ax4.hist(stress_data.flatten(), bins=50, edgecolor='black', alpha=0.7)
+        ax4.set_title('Stress Distribution Histogram')
+        ax4.set_xlabel('Stress (GPa)')
+        ax4.set_ylabel('Frequency')
+        ax4.grid(True, alpha=0.3)
+        
+        # Add vertical lines for region statistics
+        for region_name, mask, color in [
+            ('Defect', defect_mask, 'red'),
+            ('Interface', interface_mask, 'orange'),
+            ('Bulk', bulk_mask, 'blue')
+        ]:
+            if np.any(mask):
+                region_stress = stress_data[mask]
+                ax4.axvline(np.mean(region_stress), color=color, linestyle='--', 
+                          label=f'{region_name}: {np.mean(region_stress):.3f} GPa')
+        ax4.legend()
+        
+        # 5. Region-wise stress box plot
+        ax5 = axes[1, 1]
+        region_data = []
+        region_labels = []
+        region_colors = []
+        
+        for region_name, mask, color in [
+            ('Defect', defect_mask, 'red'),
+            ('Interface', interface_mask, 'orange'),
+            ('Bulk', bulk_mask, 'blue')
+        ]:
+            if np.any(mask):
+                region_data.append(stress_data[mask].flatten())
+                region_labels.append(region_name)
+                region_colors.append(color)
+        
+        if region_data:
+            bp = ax5.boxplot(region_data, labels=region_labels, patch_artist=True)
+            for patch, color in zip(bp['boxes'], region_colors):
+                patch.set_facecolor(color)
+                patch.set_alpha(0.7)
+            ax5.set_title('Region-wise Stress Distribution')
+            ax5.set_ylabel('Stress (GPa)')
+            ax5.grid(True, alpha=0.3)
+        
+        # 6. Stress profile along centerlines
+        ax6 = axes[1, 2]
+        center_y = stress_data.shape[0] // 2
+        center_x = stress_data.shape[1] // 2
+        
+        # Horizontal profile
+        horizontal_profile = stress_data[center_y, :]
+        # Vertical profile
+        vertical_profile = stress_data[:, center_x]
+        
+        ax6.plot(horizontal_profile, label=f'Horizontal (y={center_y})', color='blue', linewidth=2)
+        ax6.plot(vertical_profile, label=f'Vertical (x={center_x})', color='red', linewidth=2)
+        ax6.set_title('Stress Profiles along Centerlines')
+        ax6.set_xlabel('Position')
+        ax6.set_ylabel('Stress (GPa)')
+        ax6.legend()
+        ax6.grid(True, alpha=0.3)
+        
+        # Adjust layout
+        plt.suptitle(title, fontsize=16, fontweight='bold', y=1.02)
+        plt.tight_layout()
+        
+        return fig
+    
+    def create_interactive_heatmap(self, eta, stress_fields, stress_component='von_mises',
+                                  title="Interactive Stress Distribution"):
+        """Create an interactive Plotly heatmap"""
+        
+        if eta is None or not isinstance(eta, np.ndarray):
+            return None
+        
+        # Get stress data
+        stress_data = None
+        if stress_component == 'von_mises' and 'von_mises' in stress_fields:
+            stress_data = stress_fields['von_mises']
+        elif stress_component == 'sigma_hydro' and 'sigma_hydro' in stress_fields:
+            stress_data = stress_fields['sigma_hydro']
+        elif stress_component == 'sigma_mag' and 'sigma_mag' in stress_fields:
+            stress_data = stress_fields['sigma_mag']
+        
+        if stress_data is None:
+            return None
+        
+        # Create subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=(
+                f'{stress_component.replace("_", " ").title()} Distribution',
+                'Phase Field (η)',
+                'Stress Histogram',
+                'Region Analysis'
+            ),
+            specs=[[{'type': 'heatmap'}, {'type': 'heatmap'}],
+                   [{'type': 'xy'}, {'type': 'xy'}]]
+        )
+        
+        # Heatmap 1: Stress distribution
+        fig.add_trace(
+            go.Heatmap(
+                z=stress_data,
+                colorscale='viridis',
+                colorbar=dict(title='Stress (GPa)', x=0.45, y=0.5),
+                hovertemplate='X: %{x}<br>Y: %{y}<br>Stress: %{z:.3f} GPa<extra></extra>'
+            ),
+            row=1, col=1
+        )
+        
+        # Heatmap 2: Phase field
+        fig.add_trace(
+            go.Heatmap(
+                z=eta,
+                colorscale='RdBu',
+                zmin=0,
+                zmax=1,
+                colorbar=dict(title='η Value', x=1.0, y=0.5),
+                hovertemplate='X: %{x}<br>Y: %{y}<br>η: %{z:.3f}<extra></extra>'
+            ),
+            row=1, col=2
+        )
+        
+        # Histogram
+        fig.add_trace(
+            go.Histogram(
+                x=stress_data.flatten(),
+                nbinsx=50,
+                marker_color='blue',
+                opacity=0.7,
+                name='Stress Distribution'
+            ),
+            row=2, col=1
+        )
+        
+        # Region analysis
+        defect_mask = eta > 0.6
+        interface_mask = (eta >= 0.4) & (eta <= 0.6)
+        bulk_mask = eta < 0.4
+        
+        region_data = []
+        region_labels = []
+        
+        for region_name, mask in [
+            ('Defect', defect_mask),
+            ('Interface', interface_mask),
+            ('Bulk', bulk_mask)
+        ]:
+            if np.any(mask):
+                region_stress = stress_data[mask]
+                region_data.append(region_stress.flatten())
+                region_labels.append(region_name)
+        
+        # Box plot for regions
+        if region_data:
+            for i, (data, label) in enumerate(zip(region_data, region_labels)):
+                fig.add_trace(
+                    go.Box(
+                        y=data,
+                        name=label,
+                        boxpoints='outliers',
+                        marker_color=['red', 'orange', 'blue'][i % 3],
+                        showlegend=False
+                    ),
+                    row=2, col=2
+                )
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=20, family="Arial Black", color='darkblue'),
+                x=0.5,
+                xanchor='center'
+            ),
+            height=800,
+            showlegend=False,
+            hovermode='closest'
+        )
+        
+        # Update axes
+        fig.update_xaxes(title_text="X Position", row=1, col=1)
+        fig.update_yaxes(title_text="Y Position", row=1, col=1)
+        fig.update_xaxes(title_text="X Position", row=1, col=2)
+        fig.update_yaxes(title_text="Y Position", row=1, col=2)
+        fig.update_xaxes(title_text="Stress (GPa)", row=2, col=1)
+        fig.update_yaxes(title_text="Frequency", row=2, col=1)
+        fig.update_xaxes(title_text="Region", row=2, col=2)
+        fig.update_yaxes(title_text="Stress (GPa)", row=2, col=2)
+        
+        return fig
+
+# =============================================
+# ENHANCED SUNBURST & RADAR VISUALIZER WITH ORIENTATION RANGE
 # =============================================
 
 class EnhancedSunburstRadarVisualizer:
@@ -1092,8 +1368,18 @@ class EnhancedSunburstRadarVisualizer:
                                        cmap='rainbow', marker_size=12, line_width=1.5,
                                        font_size=18, width=900, height=750,
                                        show_colorbar=True, colorbar_title="Stress (GPa)",
-                                       hover_template=None, is_time_series=True):
+                                       hover_template=None, is_time_series=True,
+                                       angle_range=None):
         """Interactive sunburst with Plotly - handles both time series and orientation sweeps"""
+        
+        # Handle angle range
+        if angle_range is not None:
+            min_angle, max_angle = angle_range
+            # Filter data within angle range
+            if is_time_series:
+                mask = (thetas >= min_angle) & (thetas <= max_angle)
+                thetas = thetas[mask]
+                stress_matrix = stress_matrix[:, mask]
         
         if is_time_series:
             # Time series sunburst
@@ -1170,6 +1456,12 @@ class EnhancedSunburstRadarVisualizer:
             radial_range = [0, max(stress_flat) * 1.3]
             radial_ticksuffix = " GPa"
         
+        # Set sector based on angle range
+        if angle_range is not None:
+            sector = angle_range
+        else:
+            sector = [0, 360]
+        
         fig.update_layout(
             title=dict(
                 text=title,
@@ -1205,13 +1497,14 @@ class EnhancedSunburstRadarVisualizer:
                     direction="clockwise",
                     tickfont=dict(size=font_size, color='black', family='Arial'),
                     tickmode='array',
-                    tickvals=list(range(0, 360, 30)),
-                    ticktext=[f'{i}°' for i in range(0, 360, 30)],
+                    tickvals=list(range(int(sector[0]), int(sector[1])+1, 30)),
+                    ticktext=[f'{i}°' for i in range(int(sector[0]), int(sector[1])+1, 30)],
                     period=360,
-                    thetaunit="degrees"
+                    thetaunit="degrees",
+                    range=sector
                 ),
                 bgcolor="rgba(240, 240, 240, 0.5)",
-                sector=[0, 360],
+                sector=sector,
                 hole=0.1 if is_time_series else 0.0
             ),
             width=width,
@@ -1233,27 +1526,29 @@ class EnhancedSunburstRadarVisualizer:
         
         # Add radial lines for important orientations
         for angle in [0, 30, 45, 60, 90, 120, 135, 150, 180, 210, 225, 240, 270, 300, 315, 330]:
-            fig.add_trace(go.Scatterpolar(
-                r=[0, radial_range[1]],
-                theta=[angle, angle],
-                mode='lines',
-                line=dict(color='rgba(255, 0, 0, 0.2)', width=1, dash='dash'),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
+            if angle_range is None or (angle >= angle_range[0] and angle <= angle_range[1]):
+                fig.add_trace(go.Scatterpolar(
+                    r=[0, radial_range[1]],
+                    theta=[angle, angle],
+                    mode='lines',
+                    line=dict(color='rgba(255, 0, 0, 0.2)', width=1, dash='dash'),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
         
         # Highlight specific orientations
         highlight_angles = [54.7]  # Ag FCC twin habit plane
         for angle in highlight_angles:
-            fig.add_trace(go.Scatterpolar(
-                r=[0, radial_range[1]],
-                theta=[angle, angle],
-                mode='lines',
-                line=dict(color='rgba(0, 255, 0, 0.4)', width=3, dash='solid'),
-                name=f'Habit Plane ({angle}°)',
-                showlegend=True,
-                hoverinfo='skip'
-            ))
+            if angle_range is None or (angle >= angle_range[0] and angle <= angle_range[1]):
+                fig.add_trace(go.Scatterpolar(
+                    r=[0, radial_range[1]],
+                    theta=[angle, angle],
+                    mode='lines',
+                    line=dict(color='rgba(0, 255, 0, 0.4)', width=3, dash='solid'),
+                    name=f'Habit Plane ({angle}°)',
+                    showlegend=True,
+                    hoverinfo='skip'
+                ))
         
         return fig
     
@@ -1261,12 +1556,24 @@ class EnhancedSunburstRadarVisualizer:
                                     title="Radar Chart", line_width=4, marker_size=12, 
                                     fill_alpha=0.3, font_size=16, width=800, height=700,
                                     show_mean=True, show_std=True, color='steelblue',
-                                    show_habit_plane=True):
+                                    show_habit_plane=True, angle_range=None):
         """Interactive enhanced radar chart with Plotly"""
         
+        # Handle angle range
+        if angle_range is not None:
+            min_angle, max_angle = angle_range
+            mask = (thetas >= min_angle) & (thetas <= max_angle)
+            thetas = thetas[mask]
+            stress_values = stress_values[mask]
+        
         # Ensure proper closure
-        thetas_closed = np.append(thetas, 360)
-        stress_values_closed = np.append(stress_values, stress_values[0])
+        if angle_range is None:
+            thetas_closed = np.append(thetas, 360)
+            stress_values_closed = np.append(stress_values, stress_values[0])
+        else:
+            # Don't close for sector view
+            thetas_closed = thetas
+            stress_values_closed = stress_values
         
         # Create figure
         fig = go.Figure()
@@ -1323,19 +1630,26 @@ class EnhancedSunburstRadarVisualizer:
         # Highlight habit plane orientation (54.7° for Ag FCC twin)
         if show_habit_plane:
             habit_angle = 54.7
-            # Find nearest data point
-            idx = np.argmin(np.abs(thetas - habit_angle))
-            habit_stress = stress_values[idx]
-            
-            fig.add_trace(go.Scatterpolar(
-                r=[0, habit_stress],
-                theta=[habit_angle, habit_angle],
-                mode='lines+markers',
-                line=dict(color='green', width=4, dash='dashdot'),
-                marker=dict(size=15, color='green', symbol='star'),
-                name=f'Habit Plane ({habit_angle}°): {habit_stress:.3f} GPa',
-                hovertemplate=f'Habit Plane ({habit_angle}°): %{r:.3f} GPa'
-            ))
+            if angle_range is None or (habit_angle >= angle_range[0] and habit_angle <= angle_range[1]):
+                # Find nearest data point
+                idx = np.argmin(np.abs(thetas - habit_angle))
+                habit_stress = stress_values[idx]
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=[0, habit_stress],
+                    theta=[habit_angle, habit_angle],
+                    mode='lines+markers',
+                    line=dict(color='green', width=4, dash='dashdot'),
+                    marker=dict(size=15, color='green', symbol='star'),
+                    name=f'Habit Plane ({habit_angle}°): {habit_stress:.3f} GPa',
+                    hovertemplate=f'Habit Plane ({habit_angle}°): %{r:.3f} GPa'
+                ))
+        
+        # Set angular axis range
+        if angle_range is not None:
+            angular_range = angle_range
+        else:
+            angular_range = [0, 360]
         
         # Enhanced layout
         fig.update_layout(
@@ -1363,10 +1677,11 @@ class EnhancedSunburstRadarVisualizer:
                     linewidth=3,
                     rotation=90,
                     direction="clockwise",
-                    tickvals=list(range(0, 360, 45)),
-                    ticktext=[f'{i}°' for i in range(0, 360, 45)],
+                    tickvals=list(range(int(angular_range[0]), int(angular_range[1])+1, 45)),
+                    ticktext=[f'{i}°' for i in range(int(angular_range[0]), int(angular_range[1])+1, 45)],
                     tickfont=dict(size=font_size, color='black'),
-                    period=360
+                    period=360,
+                    range=angular_range
                 ),
                 bgcolor="rgba(240, 240, 240, 0.5)"
             ),
@@ -1387,13 +1702,28 @@ class EnhancedSunburstRadarVisualizer:
     
     def create_comparison_radar(self, original_stress, interpolated_stress, thetas,
                                title="Comparison: Original vs Interpolated",
-                               original_name="Original", interpolated_name="Interpolated"):
+                               original_name="Original", interpolated_name="Interpolated",
+                               angle_range=None):
         """Create radar chart comparing original and interpolated solutions"""
         
+        # Handle angle range
+        if angle_range is not None:
+            min_angle, max_angle = angle_range
+            mask = (thetas >= min_angle) & (thetas <= max_angle)
+            thetas = thetas[mask]
+            original_stress = original_stress[mask]
+            interpolated_stress = interpolated_stress[mask]
+        
         # Ensure proper closure
-        thetas_closed = np.append(thetas, 360)
-        original_closed = np.append(original_stress, original_stress[0])
-        interpolated_closed = np.append(interpolated_stress, interpolated_stress[0])
+        if angle_range is None:
+            thetas_closed = np.append(thetas, 360)
+            original_closed = np.append(original_stress, original_stress[0])
+            interpolated_closed = np.append(interpolated_stress, interpolated_stress[0])
+        else:
+            # Don't close for sector view
+            thetas_closed = thetas
+            original_closed = original_stress
+            interpolated_closed = interpolated_stress
         
         fig = go.Figure()
         
@@ -1418,6 +1748,12 @@ class EnhancedSunburstRadarVisualizer:
             name=interpolated_name,
             hovertemplate='Orientation: %{theta:.1f}°<br>Interpolated Stress: %{r:.4f} GPa'
         ))
+        
+        # Set angular axis range
+        if angle_range is not None:
+            angular_range = angle_range
+        else:
+            angular_range = [0, 360]
         
         # Update layout
         fig.update_layout(
@@ -1444,9 +1780,10 @@ class EnhancedSunburstRadarVisualizer:
                     linewidth=3,
                     rotation=90,
                     direction="clockwise",
-                    tickvals=list(range(0, 360, 45)),
-                    ticktext=[f'{i}°' for i in range(0, 360, 45)],
-                    tickfont=dict(size=14, color='black')
+                    tickvals=list(range(int(angular_range[0]), int(angular_range[1])+1, 45)),
+                    ticktext=[f'{i}°' for i in range(int(angular_range[0]), int(angular_range[1])+1, 45)],
+                    tickfont=dict(size=14, color='black'),
+                    range=angular_range
                 ),
                 bgcolor="rgba(240, 240, 240, 0.3)"
             ),
@@ -1466,7 +1803,7 @@ class EnhancedSunburstRadarVisualizer:
         return fig
 
 # =============================================
-# ENHANCED RESULTS MANAGER
+# ENHANCED RESULTS MANAGER WITH JSON FIX
 # =============================================
 
 class EnhancedResultsManager:
@@ -1477,6 +1814,21 @@ class EnhancedResultsManager:
         """Prepare orientation sweep data for export"""
         if metadata is None:
             metadata = {}
+        
+        # Convert numpy arrays to lists for JSON serialization
+        if sweep_results:
+            if 'angles' in sweep_results and isinstance(sweep_results['angles'], np.ndarray):
+                sweep_results['angles'] = sweep_results['angles'].tolist()
+            if 'stresses' in sweep_results and isinstance(sweep_results['stresses'], np.ndarray):
+                sweep_results['stresses'] = sweep_results['stresses'].tolist()
+            if 'weights_matrix' in sweep_results and isinstance(sweep_results['weights_matrix'], np.ndarray):
+                sweep_results['weights_matrix'] = sweep_results['weights_matrix'].tolist()
+        
+        if original_results:
+            if 'stresses' in original_results and isinstance(original_results['stresses'], np.ndarray):
+                original_results['stresses'] = original_results['stresses'].tolist()
+            if 'angles' in original_results and isinstance(original_results['angles'], np.ndarray):
+                original_results['angles'] = original_results['angles'].tolist()
         
         export_data = {
             'metadata': {
@@ -1492,22 +1844,31 @@ class EnhancedResultsManager:
         }
         
         # Add metadata
-        export_data['metadata'].update(metadata)
+        for key, value in metadata.items():
+            # Ensure values are JSON serializable
+            if isinstance(value, (np.integer, np.int64)):
+                export_data['metadata'][key] = int(value)
+            elif isinstance(value, (np.floating, np.float64)):
+                export_data['metadata'][key] = float(value)
+            elif isinstance(value, np.ndarray):
+                export_data['metadata'][key] = value.tolist()
+            else:
+                export_data['metadata'][key] = value
         
         # Calculate statistics
-        if 'angles' in sweep_results and 'stresses' in sweep_results:
-            stresses = sweep_results['stresses']
+        if sweep_results and 'stresses' in sweep_results:
+            stresses = np.array(sweep_results['stresses'])
             export_data['statistics']['sweep'] = {
                 'max_stress': float(np.nanmax(stresses)),
                 'min_stress': float(np.nanmin(stresses)),
                 'mean_stress': float(np.nanmean(stresses)),
                 'std_stress': float(np.nanstd(stresses)),
                 'num_points': len(stresses),
-                'angle_range': f"{sweep_results.get('angle_range', [0, 360])}"
+                'angle_range': list(sweep_results.get('angle_range', [0, 360]))
             }
         
         if original_results and 'stresses' in original_results:
-            orig_stresses = original_results['stresses']
+            orig_stresses = np.array(original_results['stresses'])
             export_data['statistics']['original'] = {
                 'max_stress': float(np.nanmax(orig_stresses)),
                 'min_stress': float(np.nanmin(orig_stresses)),
@@ -1525,16 +1886,14 @@ class EnhancedResultsManager:
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             # Save sweep results
-            sweep_data = json.dumps(sweep_results, indent=2, default=float)
+            export_data = EnhancedResultsManager.prepare_orientation_sweep_data(
+                sweep_results, original_results, metadata
+            )
+            sweep_data = json.dumps(export_data, indent=2, default=str)
             zip_file.writestr('sweep_results.json', sweep_data)
             
-            # Save original results if available
-            if original_results:
-                orig_data = json.dumps(original_results, indent=2, default=float)
-                zip_file.writestr('original_results.json', orig_data)
-            
             # Save metadata
-            metadata_json = json.dumps(metadata, indent=2)
+            metadata_json = json.dumps(metadata, indent=2, default=str)
             zip_file.writestr('metadata.json', metadata_json)
             
             # Save CSV data
@@ -1581,16 +1940,15 @@ Generated: {datetime.now().isoformat()}
 
 ## FILES INCLUDED
 1. sweep_results.json - Complete sweep results
-2. original_results.json - Original file analysis
-3. metadata.json - Analysis metadata
-4. orientation_sweep_data.csv - Tabular data for plotting
-5. attention_weights.csv - Attention weights matrix
+2. metadata.json - Analysis metadata
+3. orientation_sweep_data.csv - Tabular data for plotting
+4. attention_weights.csv - Attention weights matrix
 
 ## SPATIAL LOCALITY REGULARIZATION
 The interpolation uses:
 - Euclidean distance in 12D parameter space
 - Gaussian kernel: exp(-0.5 * (distance/sigma)²)
-- Attention mechanism with {sweep_results.get('num_heads', 4)} heads
+- Attention mechanism with {metadata.get('attention_heads', 4)} heads
 - Combined weights: 70% attention + 30% spatial
 
 ## REGION DEFINITIONS
@@ -1720,6 +2078,8 @@ def main():
         st.session_state.original_analyzer = OriginalFileAnalyzer()
     if 'results_manager' not in st.session_state:
         st.session_state.results_manager = EnhancedResultsManager()
+    if 'heatmap_visualizer' not in st.session_state:
+        st.session_state.heatmap_visualizer = HeatmapVisualizer()
     
     # Sidebar with comprehensive options
     with st.sidebar:
@@ -1737,9 +2097,9 @@ def main():
         st.markdown("#### 📊 Data Source & Analysis")
         analysis_mode = st.radio(
             "Select analysis mode:",
-            ["Precise Single Orientation", "Orientation Sweep", "Compare Original vs Interpolated"],
+            ["Precise Single Orientation", "Orientation Sweep", "Compare Original vs Interpolated", "Heatmap Analysis"],
             index=0,
-            help="Choose between precise single point, sweep, or comparison analysis"
+            help="Choose between precise single point, sweep, comparison, or heatmap analysis"
         )
         
         # Region selection
@@ -1863,6 +2223,31 @@ def main():
                 10, 100, 50, 5
             )
         
+        elif analysis_mode == "Heatmap Analysis":
+            st.markdown("#### 🔥 Heatmap Settings")
+            heatmap_source = st.selectbox(
+                "Heatmap Source",
+                ["Top Contributing Solution", "All Solutions Composite", "Specific Solution"],
+                index=0,
+                help="Select which solution to use for heatmap generation"
+            )
+            
+            heatmap_cmap = st.selectbox(
+                "Heatmap Color Map",
+                ALL_COLORMAPS,
+                index=ALL_COLORMAPS.index('viridis') if 'viridis' in ALL_COLORMAPS else 0
+            )
+            
+            if heatmap_source == "Specific Solution":
+                if st.session_state.solutions:
+                    solution_names = [f"{i+1}. {sol.get('filename', 'Unknown')}" 
+                                     for i, sol in enumerate(st.session_state.solutions)]
+                    selected_solution = st.selectbox(
+                        "Select Solution",
+                        solution_names,
+                        index=0
+                    )
+        
         # Target parameters
         st.markdown("#### ⚙️ Target Parameters")
         defect_type = st.selectbox("Defect Type", ["ISF", "ESF", "Twin"], index=2)
@@ -1887,6 +2272,38 @@ def main():
             index=1,
             horizontal=True
         )
+        
+        # Orientation range for charts
+        st.markdown("#### 📐 Chart Orientation Range")
+        use_custom_range = st.checkbox(
+            "Use Custom Orientation Range for Charts",
+            value=False,
+            help="Set custom start and end angles for sunburst/radar charts"
+        )
+        
+        if use_custom_range:
+            col_chart1, col_chart2 = st.columns(2)
+            with col_chart1:
+                chart_min_angle = st.number_input(
+                    "Chart Min Angle (°)",
+                    min_value=0.0,
+                    max_value=360.0,
+                    value=0.0,
+                    step=1.0,
+                    format="%.1f"
+                )
+            with col_chart2:
+                chart_max_angle = st.number_input(
+                    "Chart Max Angle (°)",
+                    min_value=0.0,
+                    max_value=360.0,
+                    value=360.0,
+                    step=1.0,
+                    format="%.1f"
+                )
+            chart_angle_range = (chart_min_angle, chart_max_angle)
+        else:
+            chart_angle_range = None
         
         cmap = st.selectbox(
             "Color Map",
@@ -2019,7 +2436,7 @@ def main():
                                     # Create weights visualization
                                     fig_weights, ax_weights = plt.subplots(figsize=(10, 4))
                                     bars = ax_weights.bar(range(len(weights)), weights, 
-                                                         color=plt.cm.viridis(weights))
+                                                         color=plt.cm.viridis(np.array(weights)/max(weights)))
                                     ax_weights.set_xlabel('Source Index')
                                     ax_weights.set_ylabel('Attention Weight')
                                     ax_weights.set_title('Attention Weights Distribution')
@@ -2036,7 +2453,8 @@ def main():
                                     plt.close(fig_weights)
                                     
                                     # Show top contributors
-                                    top_indices = np.argsort(weights)[-5:][::-1]
+                                    weights_array = np.array(weights)
+                                    top_indices = np.argsort(weights_array)[-5:][::-1]
                                     st.write("**Top 5 Contributing Sources:**")
                                     for idx in top_indices:
                                         sol = st.session_state.solutions[idx]
@@ -2098,12 +2516,13 @@ def main():
                                 
                                 # Find stress at habit plane
                                 habit_angle = 54.7
-                                idx = np.argmin(np.abs(sweep_result['angles'] - habit_angle))
-                                habit_stress = sweep_result['stresses'][idx]
-                                
-                                st.markdown(f'<div class="attention-highlight">', unsafe_allow_html=True)
-                                st.write(f"**Habit Plane (54.7°) Stress:** {habit_stress:.4f} GPa")
-                                st.markdown('</div>', unsafe_allow_html=True)
+                                if habit_angle >= min_angle and habit_angle <= max_angle:
+                                    idx = np.argmin(np.abs(np.array(sweep_result['angles']) - habit_angle))
+                                    habit_stress = sweep_result['stresses'][idx]
+                                    
+                                    st.markdown(f'<div class="attention-highlight">', unsafe_allow_html=True)
+                                    st.write(f"**Habit Plane (54.7°) Stress:** {habit_stress:.4f} GPa")
+                                    st.markdown('</div>', unsafe_allow_html=True)
                         
                         elif analysis_mode == "Compare Original vs Interpolated":
                             # Comparison analysis
@@ -2144,8 +2563,8 @@ def main():
                                 # Calculate comparison metrics
                                 with st.expander("📊 Comparison Metrics", expanded=True):
                                     # Interpolate original to same grid
-                                    interp_stresses = sweep_result['stresses']
-                                    interp_angles = sweep_result['angles']
+                                    interp_stresses = np.array(sweep_result['stresses'])
+                                    interp_angles = np.array(sweep_result['angles'])
                                     
                                     # Filter valid original data
                                     valid_mask = ~np.isnan(original_stresses)
@@ -2184,6 +2603,49 @@ def main():
                                             st.warning("Moderate agreement - consider adjusting interpolation parameters")
                                     else:
                                         st.warning("Insufficient original data for comparison")
+                        
+                        elif analysis_mode == "Heatmap Analysis":
+                            # Heatmap analysis
+                            st.info("🔥 Generating stress distribution heatmaps")
+                            
+                            if heatmap_source == "Top Contributing Solution":
+                                # Get single target result first
+                                if 'single_result' not in st.session_state:
+                                    # Run single interpolation to get top contributor
+                                    result = st.session_state.interpolator.interpolate_precise_orientation(
+                                        st.session_state.solutions,
+                                        54.7,  # Default to habit plane
+                                        target_params,
+                                        region_key,
+                                        stress_component,
+                                        stress_type,
+                                        use_spatial=use_spatial
+                                    )
+                                    
+                                    if result:
+                                        weights = result['attention_weights']
+                                        top_idx = np.argmax(weights)
+                                        st.session_state.top_solution = st.session_state.solutions[top_idx]
+                                        st.success(f"✅ Using top contributing solution (weight: {weights[top_idx]:.3f})")
+                                    else:
+                                        st.error("Failed to identify top contributing solution")
+                                        return
+                                else:
+                                    # Use existing single result
+                                    weights = st.session_state.single_result['attention_weights']
+                                    top_idx = np.argmax(weights)
+                                    st.session_state.top_solution = st.session_state.solutions[top_idx]
+                            
+                            elif heatmap_source == "Specific Solution":
+                                if st.session_state.solutions:
+                                    solution_idx = int(selected_solution.split('.')[0]) - 1
+                                    st.session_state.top_solution = st.session_state.solutions[solution_idx]
+                            
+                            else:  # All Solutions Composite
+                                # Create composite stress field
+                                st.info("Creating composite stress field from all solutions...")
+                                # Implementation would go here
+                                pass
                     
                     except Exception as e:
                         st.error(f"❌ Error during analysis: {str(e)}")
@@ -2208,7 +2670,8 @@ def main():
                         context_stresses, context_angles,
                         f"{stress_component} at {result['target_angle_deg']:.2f}°",
                         title=f"Precise Orientation Analysis: {region_type_display}",
-                        show_habit_plane=True
+                        show_habit_plane=True,
+                        angle_range=chart_angle_range
                     )
                     st.plotly_chart(fig_radar, use_container_width=True)
                 
@@ -2249,7 +2712,7 @@ def main():
                             metadata=metadata
                         )
                         
-                        json_str = json.dumps(export_data, indent=2)
+                        json_str = json.dumps(export_data, indent=2, default=str)
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         st.download_button(
                             "📥 Download JSON",
@@ -2297,12 +2760,13 @@ def main():
                     
                     # Create sunburst for sweep (single time point)
                     fig_sunburst = st.session_state.visualizer.create_enhanced_plotly_sunburst(
-                        sweep['stresses'],
+                        np.array(sweep['stresses']),
                         np.zeros(1),  # Single time point
-                        sweep['angles'],
+                        np.array(sweep['angles']),
                         title=f"Orientation Sweep: {region_type_display} - {stress_component}",
                         cmap=cmap,
-                        is_time_series=False
+                        is_time_series=False,
+                        angle_range=chart_angle_range
                     )
                     st.plotly_chart(fig_sunburst, use_container_width=True)
                 
@@ -2310,10 +2774,11 @@ def main():
                     st.markdown("#### 📡 Radar Visualization")
                     
                     fig_radar = st.session_state.visualizer.create_enhanced_plotly_radar(
-                        sweep['stresses'], sweep['angles'],
+                        np.array(sweep['stresses']), np.array(sweep['angles']),
                         f"{stress_component} - {region_type_display}",
                         title=f"Radar Chart: {region_type_display} Stress vs Orientation",
-                        show_habit_plane=True
+                        show_habit_plane=True,
+                        angle_range=chart_angle_range
                     )
                     st.plotly_chart(fig_radar, use_container_width=True)
                 
@@ -2342,7 +2807,7 @@ def main():
                     col_exp1, col_exp2 = st.columns(2)
                     with col_exp1:
                         # JSON export
-                        json_str = json.dumps(export_data, indent=2)
+                        json_str = json.dumps(export_data, indent=2, default=str)
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                         st.download_button(
                             "📥 Download JSON",
@@ -2412,17 +2877,89 @@ def main():
                     valid_mask = ~np.isnan(original['stresses'])
                     if np.any(valid_mask):
                         orig_on_grid = np.interp(
-                            interpolated['angles'],
+                            np.array(interpolated['angles']),
                             original['angles'][valid_mask],
                             original['stresses'][valid_mask]
                         )
                         
                         fig_radar_comp = st.session_state.visualizer.create_comparison_radar(
-                            orig_on_grid, interpolated['stresses'],
-                            interpolated['angles'],
-                            title=f"Radar Comparison: {region_type_display} - {stress_component}"
+                            orig_on_grid, np.array(interpolated['stresses']),
+                            np.array(interpolated['angles']),
+                            title=f"Radar Comparison: {region_type_display} - {stress_component}",
+                            angle_range=chart_angle_range
                         )
                         st.plotly_chart(fig_radar_comp, use_container_width=True)
+            
+            elif analysis_mode == "Heatmap Analysis" and 'top_solution' in st.session_state:
+                st.markdown('<h3 class="sub-header">🔥 Stress Distribution Heatmap</h3>', unsafe_allow_html=True)
+                
+                solution = st.session_state.top_solution
+                
+                # Extract eta and stress fields
+                history = solution.get('history', [])
+                if history:
+                    last_frame = history[-1]
+                    
+                    if isinstance(last_frame, tuple) and len(last_frame) >= 2:
+                        eta, stress_fields = last_frame[0], last_frame[1]
+                    elif isinstance(last_frame, dict):
+                        eta = last_frame.get('eta', np.zeros((128, 128)))
+                        stress_fields = last_frame.get('stresses', {})
+                    else:
+                        st.error("Unable to extract stress fields from solution")
+                        return
+                    
+                    # Create heatmap
+                    st.info(f"Generating heatmap for solution: {solution.get('filename', 'Unknown')}")
+                    
+                    # Static heatmap
+                    fig_heatmap = st.session_state.heatmap_visualizer.create_stress_distribution_heatmap(
+                        eta, stress_fields, stress_component,
+                        title=f"Stress Distribution - {solution.get('filename', 'Unknown')}",
+                        cmap=heatmap_cmap
+                    )
+                    
+                    if fig_heatmap:
+                        st.pyplot(fig_heatmap)
+                        plt.close(fig_heatmap)
+                    
+                    # Interactive heatmap
+                    st.markdown("#### 🔬 Interactive Heatmap")
+                    fig_interactive = st.session_state.heatmap_visualizer.create_interactive_heatmap(
+                        eta, stress_fields, stress_component,
+                        title=f"Interactive Stress Distribution - {stress_component}"
+                    )
+                    
+                    if fig_interactive:
+                        st.plotly_chart(fig_interactive, use_container_width=True)
+                    
+                    # Solution details
+                    with st.expander("📋 Solution Details", expanded=False):
+                        params = solution.get('params', {})
+                        theta = params.get('theta', 0.0)
+                        theta_deg = np.rad2deg(theta) if theta is not None else 0.0
+                        
+                        st.write(f"**Filename:** {solution.get('filename', 'Unknown')}")
+                        st.write(f"**Defect Type:** {params.get('defect_type', 'Unknown')}")
+                        st.write(f"**Shape:** {params.get('shape', 'Unknown')}")
+                        st.write(f"**Orientation:** {theta_deg:.2f}°")
+                        st.write(f"**ε*:** {params.get('eps0', 'Unknown')}")
+                        st.write(f"**κ:** {params.get('kappa', 'Unknown')}")
+                        st.write(f"**Number of Frames:** {len(history)}")
+                        
+                        # Stress statistics
+                        if stress_component in stress_fields:
+                            stress_data = stress_fields[stress_component]
+                            st.write(f"**{stress_component} Statistics:**")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Max", f"{np.max(stress_data):.3f} GPa")
+                            with col2:
+                                st.metric("Min", f"{np.min(stress_data):.3f} GPa")
+                            with col3:
+                                st.metric("Mean", f"{np.mean(stress_data):.3f} GPa")
+                            with col4:
+                                st.metric("Std", f"{np.std(stress_data):.3f} GPa")
     
     with col_main2:
         st.markdown('<h2 class="sub-header">📈 Analysis Dashboard</h2>', unsafe_allow_html=True)
@@ -2484,7 +3021,7 @@ def main():
                 st.write("**Attention Summary:**")
                 st.write(f"- Max weight: {np.max(weights):.3f}")
                 st.write(f"- Min weight: {np.min(weights):.3f}")
-                st.write(f"- Entropy: {-np.sum(weights * np.log(weights + 1e-10)):.3f}")
+                st.write(f"- Entropy: {-np.sum(weights * np.log(np.array(weights) + 1e-10)):.3f}")
         
         elif 'sweep_result' in st.session_state:
             sweep = st.session_state.sweep_result
@@ -2493,21 +3030,24 @@ def main():
             st.metric("Points", sweep['n_points'])
             
             # Habit plane stress
-            habit_idx = np.argmin(np.abs(sweep['angles'] - 54.7))
-            habit_stress = sweep['stresses'][habit_idx]
-            st.metric("Habit Plane Stress", f"{habit_stress:.4f} GPa")
+            habit_angle = 54.7
+            if habit_angle >= sweep['angle_range'][0] and habit_angle <= sweep['angle_range'][1]:
+                idx = np.argmin(np.abs(np.array(sweep['angles']) - habit_angle))
+                habit_stress = sweep['stresses'][idx]
+                st.metric("Habit Plane Stress", f"{habit_stress:.4f} GPa")
             
             # Find min/max
-            min_idx = np.nanargmin(sweep['stresses'])
-            max_idx = np.nanargmax(sweep['stresses'])
-            st.write(f"**Min:** {sweep['angles'][min_idx]:.1f}° ({sweep['stresses'][min_idx]:.4f} GPa)")
-            st.write(f"**Max:** {sweep['angles'][max_idx]:.1f}° ({sweep['stresses'][max_idx]:.4f} GPa)")
+            if sweep['stresses']:
+                min_idx = np.nanargmin(sweep['stresses'])
+                max_idx = np.nanargmax(sweep['stresses'])
+                st.write(f"**Min:** {sweep['angles'][min_idx]:.1f}° ({sweep['stresses'][min_idx]:.4f} GPa)")
+                st.write(f"**Max:** {sweep['angles'][max_idx]:.1f}° ({sweep['stresses'][max_idx]:.4f} GPa)")
         
         elif 'comparison_data' in st.session_state:
             comp_data = st.session_state.comparison_data
             st.markdown("#### 🔄 Comparison Metrics")
             
-            interpolated = comp_data['interpolated']['stresses']
+            interpolated = np.array(comp_data['interpolated']['stresses'])
             original = comp_data['original']['stresses']
             valid_mask = ~np.isnan(original)
             
@@ -2517,7 +3057,7 @@ def main():
                 
                 # Interpolate to common grid
                 orig_on_grid = np.interp(
-                    comp_data['interpolated']['angles'],
+                    np.array(comp_data['interpolated']['angles']),
                     valid_angles,
                     valid_orig
                 )
@@ -2535,6 +3075,18 @@ def main():
                     st.info("⚡ Good agreement")
                 else:
                     st.warning("⚠️ Consider adjusting parameters")
+        
+        elif 'top_solution' in st.session_state:
+            st.markdown("#### 🔥 Heatmap Solution")
+            solution = st.session_state.top_solution
+            params = solution.get('params', {})
+            theta = params.get('theta', 0.0)
+            theta_deg = np.rad2deg(theta) if theta is not None else 0.0
+            
+            st.metric("Orientation", f"{theta_deg:.1f}°")
+            st.metric("Defect Type", params.get('defect_type', 'Unknown'))
+            st.metric("ε*", f"{params.get('eps0', 0):.2f}")
+            st.metric("κ", f"{params.get('kappa', 0):.2f}")
         
         # Method explanation
         with st.expander("🧠 Method Details", expanded=False):
