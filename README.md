@@ -188,9 +188,15 @@ Comparison codes
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa11-streamlit-red)](https://mechanicalstress-interpolator-module-a11.streamlit.app/) (Machine Learning for Multiple Targets or Query)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa12-streamlit-red)](https://mechanicalstress-interpolator-module-a12.streamlit.app/) (Radar chart visualization of interface stress)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa12-streamlit-red)](https://mechanicalstress-interpolator-module-a12.streamlit.app/) (Radar chart visualization of interface stress 0 < theta < 360)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa13-streamlit-red)](https://mechanicalstress-interpolator-module-a13.streamlit.app/) (Radar chart visualization of geometric center stress)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa13-streamlit-red)](https://mechanicalstress-interpolator-module-a13.streamlit.app/) (Radar chart visualization of geometric center stress  0 < theta < 360)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa14-streamlit-red)](https://mechanicalstress-interpolator-module-a14.streamlit.app/) (Radar chart visualization of bulk Ag materials  0 < theta < 360)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa15-streamlit-red)](https://mechanicalstress-interpolator-module-a15.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials  0 < theta < 360)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa16-streamlit-red)](https://mechanicalstress-interpolator-module-a16.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees)
 
 
 
