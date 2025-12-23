@@ -18,4 +18,5 @@ scikit-learn
 pandas
 xgboost
 s3fs
+cmasher
 
