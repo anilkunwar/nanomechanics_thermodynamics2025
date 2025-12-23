@@ -150,10 +150,10 @@ COLORMAP_MANAGER = EnhancedColorMaps()
 ALL_COLORMAPS = COLORMAP_MANAGER.get_all_colormaps()
 
 # =============================================
-# REGION ANALYSIS FUNCTIONS
+# REGION ANALYSIS FUNCTIONS - FIXED FOR NUMBA
 # =============================================
 
-@jit(nopython=True)
+# Use simple Python functions instead of @jit for dictionary handling
 def extract_region_stress(eta, stress_fields, region_type, stress_component='von_mises', stress_type='max_abs'):
     """Extract stress from specific regions (defect, interface, bulk)"""
     if eta is None or not isinstance(eta, np.ndarray):
@@ -167,7 +167,7 @@ def extract_region_stress(eta, stress_fields, region_type, stress_component='von
     elif region_type == 'bulk':
         mask = eta < 0.4
     else:
-        mask = np.ones_like(eta, dtype=np.bool_)
+        mask = np.ones_like(eta, dtype=bool)
     
     if not np.any(mask):
         return 0.0
@@ -197,7 +197,6 @@ def extract_region_stress(eta, stress_fields, region_type, stress_component='von
     else:
         return np.mean(np.abs(region_stress)) if len(region_stress) > 0 else 0.0
 
-@jit(nopython=True)
 def extract_region_statistics(eta, stress_fields, region_type):
     """Extract comprehensive statistics for a region"""
     if eta is None or not isinstance(eta, np.ndarray):
@@ -211,7 +210,7 @@ def extract_region_statistics(eta, stress_fields, region_type):
     elif region_type == 'bulk':
         mask = eta < 0.4
     else:
-        mask = np.ones_like(eta, dtype=np.bool_)
+        mask = np.ones_like(eta, dtype=bool)
     
     if not np.any(mask):
         return {
@@ -1404,6 +1403,143 @@ class EnhancedComparisonVisualizer:
         return fig
 
 # =============================================
+# ENHANCED RESULTS MANAGER WITH REGION SUPPORT
+# =============================================
+class EnhancedResultsManager:
+    """Manager for saving and exporting results with enhanced formatting and region support"""
+    
+    @staticmethod
+    def prepare_region_analysis_data(analysis_results, region_type, stress_component, stress_type):
+        """Prepare region analysis data for export"""
+        export_data = {
+            'metadata': {
+                'generated_at': datetime.now().isoformat(),
+                'region_type': region_type,
+                'stress_component': stress_component,
+                'stress_type': stress_type,
+                'analysis_type': 'region_stress_analysis',
+                'description': f'Stress analysis for {region_type} region'
+            },
+            'analysis_results': analysis_results,
+            'statistics': {
+                'num_solutions': len(analysis_results),
+                'stress_values': [r['region_stress'] for r in analysis_results],
+                'mean_stress': np.mean([r['region_stress'] for r in analysis_results]),
+                'max_stress': np.max([r['region_stress'] for r in analysis_results]),
+                'min_stress': np.min([r['region_stress'] for r in analysis_results]),
+                'std_stress': np.std([r['region_stress'] for r in analysis_results])
+            }
+        }
+        
+        return export_data
+    
+    @staticmethod
+    def create_region_analysis_archive(stress_matrix, times, thetas, region_type, 
+                                      stress_component, stress_type, metadata=None):
+        """Create ZIP archive with region analysis results"""
+        zip_buffer = BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Save stress matrix as NPY
+            stress_buffer = BytesIO()
+            np.save(stress_buffer, stress_matrix)
+            zip_file.writestr(f'{region_type}_{stress_component}_stress_matrix.npy', stress_buffer.getvalue())
+            
+            # Save times and thetas
+            times_buffer = BytesIO()
+            np.save(times_buffer, times)
+            zip_file.writestr('times.npy', times_buffer.getvalue())
+            
+            thetas_buffer = BytesIO()
+            np.save(thetas_buffer, thetas)
+            zip_file.writestr('thetas.npy', thetas_buffer.getvalue())
+            
+            # Create and save metadata
+            if metadata is None:
+                metadata = {}
+            
+            metadata.update({
+                'region_type': region_type,
+                'stress_component': stress_component,
+                'stress_type': stress_type,
+                'generated_at': datetime.now().isoformat(),
+                'matrix_shape': stress_matrix.shape,
+                'time_range': f"{min(times):.2f} to {max(times):.2f} s",
+                'theta_range': f"{min(thetas):.1f} to {max(thetas):.1f} °"
+            })
+            
+            metadata_json = json.dumps(metadata, indent=2)
+            zip_file.writestr('metadata.json', metadata_json)
+            
+            # Save CSV version
+            csv_data = []
+            for t_idx, time_val in enumerate(times):
+                for theta_idx, theta_val in enumerate(thetas):
+                    csv_data.append({
+                        'time_s': f"{time_val:.3f}",
+                        'orientation_deg': f"{theta_val:.1f}",
+                        'stress_gpa': f"{stress_matrix[t_idx, theta_idx]:.6f}",
+                        'region': region_type,
+                        'stress_component': stress_component,
+                        'analysis_type': stress_type
+                    })
+            
+            df = pd.DataFrame(csv_data)
+            csv_str = df.to_csv(index=False)
+            zip_file.writestr(f'{region_type}_{stress_component}_data.csv', csv_str)
+            
+            # Save statistics summary
+            stats = {
+                'max_stress': float(np.max(stress_matrix)),
+                'min_stress': float(np.min(stress_matrix)),
+                'mean_stress': float(np.mean(stress_matrix)),
+                'std_stress': float(np.std(stress_matrix)),
+                'percentile_95': float(np.percentile(stress_matrix, 95)),
+                'percentile_99': float(np.percentile(stress_matrix, 99)),
+                'region_type': region_type,
+                'stress_component': stress_component
+            }
+            
+            stats_json = json.dumps(stats, indent=2)
+            zip_file.writestr('statistics_summary.json', stats_json)
+            
+            # Add README
+            readme = f"""# REGION STRESS ANALYSIS RESULTS
+Generated: {datetime.now().isoformat()}
+
+## ANALYSIS DETAILS
+- Region: {region_type}
+- Stress Component: {stress_component}
+- Analysis Type: {stress_type}
+- Time Points: {len(times)} ({min(times):.2f} to {max(times):.2f} s)
+- Orientations: {len(thetas)} ({min(thetas):.1f} to {max(thetas):.1f} °)
+- Matrix Dimensions: {stress_matrix.shape[0]} × {stress_matrix.shape[1]}
+
+## REGION DEFINITIONS
+- Defect Region: η > 0.6 (High defect concentration)
+- Interface Region: 0.4 ≤ η ≤ 0.6 (Transition region)
+- Bulk Region: η < 0.4 (Pure Ag material)
+
+## FILES
+1. {region_type}_{stress_component}_stress_matrix.npy - 2D stress matrix
+2. times.npy - Time points array
+3. thetas.npy - Orientation angles array
+4. metadata.json - Complete metadata
+5. {region_type}_{stress_component}_data.csv - Tabular data
+6. statistics_summary.json - Statistical summary
+
+## SPATIAL LOCALITY REGULARIZATION
+The interpolation uses Euclidean distance in parameter space:
+- Distance: sqrt(Σ(v_source - v_target)²)
+- Weights: exp(-0.5 * (distance/sigma)²)
+- Normalized to sum to 1
+"""
+            zip_file.writestr('README_REGION_ANALYSIS.txt', readme)
+        
+        zip_buffer.seek(0)
+        return zip_buffer
+
+# =============================================
 # MAIN APPLICATION WITH REGION ANALYSIS
 # =============================================
 def main():
@@ -1469,6 +1605,14 @@ def main():
     """, unsafe_allow_html=True)
     
     st.markdown('<h1 class="main-header">🔬 Ag Material Stress Analysis with Region Comparison</h1>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="info-box">
+    <strong>📊 Analysis Features:</strong> Three region types (Defect, Interface, Bulk) with sunburst/radar visualizations<br>
+    <strong>📈 Data Sources:</strong> Original loaded files AND/OR interpolated solutions with comparison<br>
+    <strong>🗺️ Spatial Locality:</strong> Euclidean distance regularization for accurate interpolation<br>
+    <strong>🎯 Purpose:</strong> Validate interpolated solutions against original files
+    </div>
+    """, unsafe_allow_html=True)
     
     # Initialize session state
     if 'solutions' not in st.session_state:
@@ -1483,6 +1627,8 @@ def main():
         st.session_state.comparison_visualizer = EnhancedComparisonVisualizer()
     if 'original_analyzer' not in st.session_state:
         st.session_state.original_analyzer = OriginalFileAnalyzer()
+    if 'results_manager' not in st.session_state:
+        st.session_state.results_manager = EnhancedResultsManager()
     
     # Sidebar with enhanced options
     with st.sidebar:
@@ -1499,7 +1645,7 @@ def main():
         
         # Region selection
         st.markdown("#### 🎯 Analysis Region")
-        region_type = st.selectbox(
+        region_type_display = st.selectbox(
             "Select region for stress analysis:",
             ["Defect Region (η > 0.6)", "Interface Region (0.4 ≤ η ≤ 0.6)", "Bulk Ag Material (η < 0.4)"],
             index=2,
@@ -1512,7 +1658,7 @@ def main():
             "Interface Region (0.4 ≤ η ≤ 0.6)": "interface",
             "Bulk Ag Material (η < 0.4)": "bulk"
         }
-        region_key = region_map[region_type]
+        region_key = region_map[region_type_display]
         
         # Stress component
         st.markdown("#### 📈 Stress Component")
@@ -1609,11 +1755,19 @@ def main():
         
         # Load solutions
         st.markdown("#### 📂 Load Solutions")
-        if st.button("🔄 Load All Solutions", use_container_width=True):
-            with st.spinner("Loading solutions..."):
-                st.session_state.solutions = st.session_state.loader.load_all_solutions(use_cache=True)
-                if st.session_state.solutions:
-                    st.success(f"✅ Loaded {len(st.session_state.solutions)} solutions")
+        col_load1, col_load2 = st.columns(2)
+        with col_load1:
+            if st.button("🔄 Load All Solutions", use_container_width=True):
+                with st.spinner("Loading solutions..."):
+                    st.session_state.solutions = st.session_state.loader.load_all_solutions(use_cache=True)
+                    if st.session_state.solutions:
+                        st.success(f"✅ Loaded {len(st.session_state.solutions)} solutions")
+        
+        with col_load2:
+            if st.button("🗑️ Clear Cache", use_container_width=True):
+                st.session_state.loader.cache.clear()
+                st.session_state.solutions = []
+                st.success("Cache cleared!")
         
         # Show loaded solutions
         if st.session_state.solutions:
@@ -1628,14 +1782,14 @@ def main():
                     st.info(f"... and {len(st.session_state.solutions) - 5} more")
     
     # Main content area
-    col1, col2, col3 = st.columns([2, 1, 1])
+    col1, col2 = st.columns([3, 1])
     
     with col1:
         st.markdown('<h2 class="sub-header">📊 Region Analysis Dashboard</h2>', unsafe_allow_html=True)
         
         # Region information cards
         st.markdown(f'<div class="region-card {region_key}-region">', unsafe_allow_html=True)
-        st.markdown(f"### {region_type}")
+        st.markdown(f"### {region_type_display}")
         
         if region_key == 'defect':
             st.write("**η > 0.6** - High defect concentration region")
@@ -1664,7 +1818,7 @@ def main():
         else:
             # Generate analysis button
             if st.button("🚀 Generate Region Analysis", type="primary", use_container_width=True):
-                with st.spinner(f"Generating {region_type} analysis..."):
+                with st.spinner(f"Generating {region_type_display} analysis..."):
                     try:
                         if data_source == "Original Loaded Files":
                             # Analyze original files
@@ -1681,14 +1835,15 @@ def main():
                                 st.session_state.original_matrix = stress_matrix
                                 st.session_state.thetas = thetas
                                 st.session_state.times = times
-                                st.session_state.region_type = region_type
+                                st.session_state.region_type = region_type_display
                                 st.session_state.stress_component = stress_component
+                                st.session_state.stress_type = stress_type
                                 
                                 st.success(f"✅ Generated analysis for {len(results)} original solutions")
                                 
                                 # Display summary statistics
                                 with st.expander("📈 Original Solutions Summary", expanded=True):
-                                    st.write(f"**Region:** {region_type}")
+                                    st.write(f"**Region:** {region_type_display}")
                                     st.write(f"**Stress Component:** {stress_component}")
                                     st.write(f"**Analysis Type:** {stress_type}")
                                     st.write(f"**Number of Solutions:** {len(results)}")
@@ -1726,6 +1881,7 @@ def main():
                             
                             # Generate predictions for each orientation
                             predictions = []
+                            spatial_weights_all = []
                             
                             progress_bar = st.progress(0)
                             status_text = st.empty()
@@ -1759,6 +1915,7 @@ def main():
                                         time_evolution.append(stress_at_t)
                                     
                                     predictions.append(time_evolution)
+                                    spatial_weights_all.append(result['spatial_weights'])
                                 
                                 progress_bar.progress((i + 1) / len(theta_rad))
                             
@@ -1771,8 +1928,10 @@ def main():
                                 st.session_state.interpolated_matrix = stress_matrix
                                 st.session_state.thetas = thetas
                                 st.session_state.times = times
-                                st.session_state.region_type = region_type
+                                st.session_state.region_type = region_type_display
                                 st.session_state.stress_component = stress_component
+                                st.session_state.stress_type = stress_type
+                                st.session_state.spatial_weights = spatial_weights_all
                                 
                                 st.success(f"✅ Generated interpolated solutions for {len(thetas)} orientations")
                                 
@@ -1784,6 +1943,19 @@ def main():
                                         st.write(f"**Spatial Weight:** {spatial_weight}")
                                         st.write("**Method:** Euclidean distance in parameter space")
                                         st.write("**Weight Calculation:** Gaussian kernel based on distance")
+                                        
+                                        # Show spatial weights for first orientation
+                                        if spatial_weights_all and len(spatial_weights_all) > 0:
+                                            with st.expander("View Spatial Weights for First Orientation", expanded=False):
+                                                weights = spatial_weights_all[0]
+                                                st.write(f"Weights for θ = {thetas[0]:.1f}°:")
+                                                for i, w in enumerate(weights[:5]):
+                                                    sol = st.session_state.solutions[i]
+                                                    params = sol.get('params', {})
+                                                    st.write(f"  - Solution {i+1} ({params.get('defect_type', '?')}, "
+                                                            f"θ={np.rad2deg(params.get('theta', 0)):.1f}°): {w:.4f}")
+                                                if len(weights) > 5:
+                                                    st.write(f"  - ... and {len(weights)-5} more")
                                     else:
                                         st.warning("⚠️ Spatial locality regularization DISABLED")
                                         st.write("Using uniform weights for interpolation")
@@ -1806,6 +1978,7 @@ def main():
                                 theta_rad = np.deg2rad(thetas)
                                 
                                 interpolated_matrix = np.zeros_like(original_matrix)
+                                spatial_weights_all = []
                                 
                                 progress_bar = st.progress(0)
                                 status_text = st.empty()
@@ -1830,6 +2003,7 @@ def main():
                                     
                                     if result:
                                         region_stress = result['region_stress']
+                                        spatial_weights_all.append(result['spatial_weights'])
                                         for t_idx, t in enumerate(times):
                                             # Time-dependent scaling
                                             stress_at_t = region_stress * (1 - np.exp(-t / 50))
@@ -1845,8 +2019,10 @@ def main():
                                 st.session_state.interpolated_matrix = interpolated_matrix
                                 st.session_state.thetas = thetas
                                 st.session_state.times = times
-                                st.session_state.region_type = region_type
+                                st.session_state.region_type = region_type_display
                                 st.session_state.stress_component = stress_component
+                                st.session_state.stress_type = stress_type
+                                st.session_state.spatial_weights = spatial_weights_all
                                 
                                 st.success(f"✅ Generated comparison analysis")
                                 
@@ -1858,16 +2034,22 @@ def main():
                                     mae = np.mean(np.abs(interp - orig))
                                     rmse = np.sqrt(np.mean((interp - orig) ** 2))
                                     r2 = 1 - np.sum((interp - orig) ** 2) / (np.sum((orig - np.mean(orig)) ** 2) + 1e-10)
+                                    max_diff = np.max(np.abs(interp - orig))
                                     
-                                    col1, col2, col3 = st.columns(3)
+                                    col1, col2, col3, col4 = st.columns(4)
                                     with col1:
                                         st.metric("MAE", f"{mae:.4f} GPa")
                                     with col2:
                                         st.metric("RMSE", f"{rmse:.4f} GPa")
                                     with col3:
                                         st.metric("R² Score", f"{r2:.4f}")
+                                    with col4:
+                                        st.metric("Max Difference", f"{max_diff:.4f} GPa")
                                     
                                     st.write(f"**Spatial Locality:** {'ENABLED' if use_spatial_locality else 'DISABLED'}")
+                                    if use_spatial_locality:
+                                        st.write(f"**Sigma:** {spatial_sigma}")
+                                        st.write(f"**Spatial Weight:** {spatial_weight}")
                         
                         # Generate visualizations based on data source
                         if 'original_matrix' in st.session_state or 'interpolated_matrix' in st.session_state:
@@ -1885,20 +2067,21 @@ def main():
                             
                             # Generate sunburst visualization
                             if viz_type in ["Sunburst", "Both"] and data_source != "Comparison (Both)":
-                                st.markdown(f'<h3 class="sub-header">🌅 {region_type} - Sunburst Visualization</h3>', unsafe_allow_html=True)
+                                st.markdown(f'<h3 class="sub-header">🌅 {region_type_display} - Sunburst Visualization</h3>', unsafe_allow_html=True)
                                 
                                 fig_sunburst = st.session_state.visualizer.create_enhanced_plotly_sunburst(
                                     active_matrix,
                                     st.session_state.times,
                                     st.session_state.thetas,
-                                    title=f"{title_suffix}: {region_type} - {stress_component}",
-                                    cmap=cmap
+                                    title=f"{title_suffix}: {region_type_display} - {stress_component} ({stress_type})",
+                                    cmap=cmap,
+                                    colorbar_title=f"{stress_component} Stress (GPa)"
                                 )
                                 st.plotly_chart(fig_sunburst, use_container_width=True)
                             
                             # Generate radar visualization
                             if viz_type in ["Radar", "Both"] and data_source != "Comparison (Both)":
-                                st.markdown(f'<h3 class="sub-header">📡 {region_type} - Radar Visualization</h3>', unsafe_allow_html=True)
+                                st.markdown(f'<h3 class="sub-header">📡 {region_type_display} - Radar Visualization</h3>', unsafe_allow_html=True)
                                 
                                 # Select time point for radar
                                 if len(st.session_state.times) > 0:
@@ -1930,7 +2113,7 @@ def main():
                                         st.session_state.interpolated_matrix,
                                         st.session_state.thetas,
                                         st.session_state.times,
-                                        region_type,
+                                        region_type_display,
                                         stress_component
                                     )
                                     st.plotly_chart(fig_comparison, use_container_width=True)
@@ -1954,118 +2137,244 @@ def main():
                                             original_stress,
                                             interpolated_stress,
                                             st.session_state.thetas,
-                                            region_type,
+                                            region_type_display,
                                             stress_component
                                         )
                                         st.plotly_chart(fig_radar_comparison, use_container_width=True)
+                                
+                                # Show spatial weights analysis
+                                with st.expander("🗺️ Spatial Weights Analysis", expanded=False):
+                                    if 'spatial_weights' in st.session_state and st.session_state.spatial_weights:
+                                        weights_matrix = np.array(st.session_state.spatial_weights)
+                                        st.write(f"**Spatial Weights Matrix Shape:** {weights_matrix.shape}")
+                                        st.write(f"**Mean Weight:** {np.mean(weights_matrix):.4f}")
+                                        st.write(f"**Std of Weights:** {np.std(weights_matrix):.4f}")
+                                        
+                                        # Show weights heatmap
+                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        im = ax.imshow(weights_matrix.T, aspect='auto', cmap='viridis')
+                                        ax.set_xlabel('Orientation Index')
+                                        ax.set_ylabel('Source Solution Index')
+                                        ax.set_title('Spatial Locality Weights Heatmap')
+                                        plt.colorbar(im, ax=ax, label='Weight')
+                                        st.pyplot(fig)
+                        
+                        # Export options
+                        if data_source != "Comparison (Both)" and ('original_matrix' in st.session_state or 'interpolated_matrix' in st.session_state):
+                            st.markdown('<h3 class="sub-header">📤 Export Results</h3>', unsafe_allow_html=True)
+                            
+                            col_exp1, col_exp2, col_exp3 = st.columns(3)
+                            
+                            with col_exp1:
+                                if st.button("💾 Export as CSV", use_container_width=True):
+                                    export_data = []
+                                    for t_idx, time_val in enumerate(st.session_state.times):
+                                        for theta_idx, theta_val in enumerate(st.session_state.thetas):
+                                            export_data.append({
+                                                'time_s': time_val,
+                                                'orientation_deg': theta_val,
+                                                'orientation_rad': np.deg2rad(theta_val),
+                                                'stress_gpa': active_matrix[t_idx, theta_idx],
+                                                'region': region_key,
+                                                'stress_component': stress_component,
+                                                'analysis_type': stress_type
+                                            })
+                                    
+                                    df = pd.DataFrame(export_data)
+                                    csv = df.to_csv(index=False)
+                                    
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download CSV",
+                                        data=csv,
+                                        file_name=f"{region_key}_{stress_component}_{data_source.replace(' ', '_').lower()}_{timestamp}.csv",
+                                        mime="text/csv",
+                                        use_container_width=True
+                                    )
+                            
+                            with col_exp2:
+                                if st.button("📊 Export as JSON", use_container_width=True):
+                                    metadata = {
+                                        'data_source': data_source,
+                                        'region_type': region_key,
+                                        'region_display': region_type_display,
+                                        'stress_component': stress_component,
+                                        'stress_type': stress_type,
+                                        'times': st.session_state.times.tolist(),
+                                        'thetas': st.session_state.thetas.tolist(),
+                                        'spatial_locality': {
+                                            'enabled': use_spatial_locality,
+                                            'sigma': spatial_sigma,
+                                            'weight': spatial_weight
+                                        } if data_source in ["Interpolated Solutions", "Comparison (Both)"] else None
+                                    }
+                                    
+                                    export_dict = {
+                                        'metadata': metadata,
+                                        'stress_matrix': active_matrix.tolist(),
+                                        'statistics': {
+                                            'max': float(np.max(active_matrix)),
+                                            'min': float(np.min(active_matrix)),
+                                            'mean': float(np.mean(active_matrix)),
+                                            'std': float(np.std(active_matrix))
+                                        }
+                                    }
+                                    
+                                    json_str = json.dumps(export_dict, indent=2)
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download JSON",
+                                        data=json_str,
+                                        file_name=f"{region_key}_{stress_component}_{data_source.replace(' ', '_').lower()}_{timestamp}.json",
+                                        mime="application/json",
+                                        use_container_width=True
+                                    )
+                            
+                            with col_exp3:
+                                if st.button("📦 Export Complete Archive", use_container_width=True):
+                                    metadata = {
+                                        'data_source': data_source,
+                                        'region_type': region_key,
+                                        'region_display': region_type_display,
+                                        'stress_component': stress_component,
+                                        'stress_type': stress_type,
+                                        'spatial_locality': {
+                                            'enabled': use_spatial_locality,
+                                            'sigma': spatial_sigma,
+                                            'weight': spatial_weight
+                                        } if data_source in ["Interpolated Solutions", "Comparison (Both)"] else None
+                                    }
+                                    
+                                    zip_buffer = st.session_state.results_manager.create_region_analysis_archive(
+                                        active_matrix, st.session_state.times, st.session_state.thetas,
+                                        region_key, stress_component, stress_type, metadata
+                                    )
+                                    
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        "📥 Download ZIP Archive",
+                                        data=zip_buffer.getvalue(),
+                                        file_name=f"{region_key}_{stress_component}_{data_source.replace(' ', '_').lower()}_{timestamp}.zip",
+                                        mime="application/zip",
+                                        use_container_width=True
+                                    )
                         
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
                         st.exception(e)
     
     with col2:
-        st.markdown('<h2 class="sub-header">📈 Quick Analysis</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="sub-header">📈 Quick Dashboard</h2>', unsafe_allow_html=True)
         
-        if st.session_state.solutions:
-            # Quick region analysis
-            if st.button("🔍 Quick Region Analysis", use_container_width=True):
-                with st.spinner("Analyzing regions..."):
-                    try:
-                        # Analyze all three regions
-                        region_results = {}
-                        for region_key_temp, region_name in [('defect', 'Defect'), 
-                                                           ('interface', 'Interface'), 
-                                                           ('bulk', 'Bulk')]:
-                            results = st.session_state.original_analyzer.analyze_all_solutions(
-                                st.session_state.solutions, region_key_temp, 
-                                'von_mises', 'max_abs'
-                            )
-                            
-                            if results:
-                                stresses = [r['region_stress'] for r in results]
-                                region_results[region_name] = {
-                                    'mean': np.mean(stresses),
-                                    'max': np.max(stresses),
-                                    'min': np.min(stresses),
-                                    'count': len(stresses)
-                                }
-                        
-                        # Display results
-                        st.markdown("#### Region Comparison")
-                        for region_name, stats in region_results.items():
-                            with st.container():
-                                st.write(f"**{region_name} Region**")
-                                col_a, col_b = st.columns(2)
-                                with col_a:
-                                    st.metric("Mean Stress", f"{stats['mean']:.3f} GPa")
-                                with col_b:
-                                    st.metric("Max Stress", f"{stats['max']:.3f} GPa")
-                                st.caption(f"Based on {stats['count']} solutions")
-                                st.divider()
-                                
-                    except Exception as e:
-                        st.error(f"Analysis error: {e}")
-        
-        # Spatial locality explanation
-        with st.expander("🗺️ About Spatial Locality", expanded=False):
-            st.write("""
-            **Spatial Locality Regularization** uses Euclidean distance in parameter space:
+        if 'original_matrix' in st.session_state or 'interpolated_matrix' in st.session_state:
+            # Determine which matrix to show
+            if data_source == "Comparison (Both)" and 'original_matrix' in st.session_state:
+                matrix_to_show = st.session_state.original_matrix
+                matrix_name = "Original"
+            elif 'original_matrix' in st.session_state:
+                matrix_to_show = st.session_state.original_matrix
+                matrix_name = "Original"
+            elif 'interpolated_matrix' in st.session_state:
+                matrix_to_show = st.session_state.interpolated_matrix
+                matrix_name = "Interpolated"
+            else:
+                matrix_to_show = None
+                matrix_name = ""
             
-            1. **Parameter Vector**: Each simulation is represented as an 11D vector
-            2. **Euclidean Distance**: Distance between source and target vectors
-            3. **Gaussian Weights**: Weights = exp(-0.5 * (distance/sigma)²)
-            4. **Normalization**: Weights sum to 1
-            
-            **Benefits**:
-            - Prioritizes similar parameter configurations
-            - Reduces influence of dissimilar simulations
-            - Improves interpolation accuracy
-            - Physically meaningful weighting
-            
-            **Formula**: 
-            ```
-            weight_i = exp(-0.5 * ||v_source - v_target||² / sigma²)
-            ```
-            """)
-    
-    with col3:
-        st.markdown('<h2 class="sub-header">📋 Region Definitions</h2>', unsafe_allow_html=True)
+            if matrix_to_show is not None:
+                # Quick metrics
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("Time Points", len(st.session_state.times))
+                st.metric("Orientations", len(st.session_state.thetas))
+                st.metric("Matrix", matrix_name)
+                st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Stress statistics
+                max_val = np.max(matrix_to_show)
+                mean_val = np.mean(matrix_to_show)
+                min_val = np.min(matrix_to_show)
+                std_val = np.std(matrix_to_show)
+                
+                col_metrics1, col_metrics2 = st.columns(2)
+                with col_metrics1:
+                    st.metric("Max Stress", f"{max_val:.4f} GPa")
+                    st.metric("Mean Stress", f"{mean_val:.4f} GPa")
+                with col_metrics2:
+                    st.metric("Min Stress", f"{min_val:.4f} GPa")
+                    st.metric("Std Dev", f"{std_val:.4f} GPa")
+                
+                # Region-specific insights
+                st.markdown(f'<h4 class="sub-header">🎯 {region_type_display} Insights</h4>', unsafe_allow_html=True)
+                
+                if region_key == 'defect':
+                    st.write("**Defect Core Stress:**")
+                    st.write("- High stress concentration")
+                    st.write("- Direct defect impact")
+                    st.write("- Critical for failure")
+                elif region_key == 'interface':
+                    st.write("**Interface Stress:**")
+                    st.write("- Stress gradients")
+                    st.write("- Transition effects")
+                    st.write("- Defect propagation")
+                else:  # bulk
+                    st.write("**Bulk Material Stress:**")
+                    st.write("- Stress propagation")
+                    st.write("- Far-field effects")
+                    st.write("- Material response")
+                
+                # Orientation analysis
+                if len(st.session_state.thetas) > 0:
+                    st.markdown('<h4 class="sub-header">🌐 Orientation Analysis</h4>', unsafe_allow_html=True)
+                    
+                    mean_by_theta = np.mean(matrix_to_show, axis=0)
+                    max_theta_idx = np.argmax(mean_by_theta)
+                    min_theta_idx = np.argmin(mean_by_theta)
+                    
+                    st.write(f"**Peak stress at:** {st.session_state.thetas[max_theta_idx]:.0f}°")
+                    st.write(f"**Min stress at:** {st.session_state.thetas[min_theta_idx]:.0f}°")
+                    
+                    # Quick orientation plot
+                    fig_theta, ax_theta = plt.subplots(figsize=(5, 3), dpi=120)
+                    ax_theta.plot(st.session_state.thetas, mean_by_theta, 'b-', linewidth=2)
+                    ax_theta.fill_between(st.session_state.thetas, mean_by_theta, alpha=0.3, color='blue')
+                    ax_theta.set_xlabel('Orientation (°)', fontsize=9)
+                    ax_theta.set_ylabel('Mean Stress (GPa)', fontsize=9)
+                    ax_theta.set_title('Stress vs Orientation', fontsize=10, fontweight='bold')
+                    ax_theta.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    st.pyplot(fig_theta)
+                
+                # Spatial locality info
+                if data_source in ["Interpolated Solutions", "Comparison (Both)"] and use_spatial_locality:
+                    st.markdown('<h4 class="sub-header">🗺️ Spatial Locality</h4>', unsafe_allow_html=True)
+                    st.success("✅ Active")
+                    st.write(f"Sigma: {spatial_sigma}")
+                    st.write(f"Weight: {spatial_weight}")
+                    st.write("Euclidean distance regularization")
         
-        # Region cards
-        st.markdown('<div class="region-card defect-region">', unsafe_allow_html=True)
-        st.markdown("##### 🔴 Defect Region")
-        st.write("**η > 0.6**")
-        st.write("High defect concentration")
-        st.write("*Analysis:* Stress concentration in defect cores")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('<div class="region-card interface-region">', unsafe_allow_html=True)
-        st.markdown("##### 🟡 Interface Region")
-        st.write("**0.4 ≤ η ≤ 0.6**")
-        st.write("Transition region")
-        st.write("*Analysis:* Interfacial stress gradients")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('<div class="region-card bulk-region">', unsafe_allow_html=True)
-        st.markdown("##### 🟢 Bulk Region")
-        st.write("**η < 0.4**")
-        st.write("Pure Ag material")
-        st.write("*Analysis:* Stress propagation in bulk")
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Quick stats
-        if st.session_state.solutions:
-            st.markdown("#### 📊 Quick Stats")
-            st.write(f"**Loaded Solutions:** {len(st.session_state.solutions)}")
+        else:
+            st.info("📊 No data generated yet.")
+            st.write("Click 'Generate Region Analysis' to begin.")
             
-            # Count by defect type
-            defect_types = {}
-            for sol in st.session_state.solutions:
-                d_type = sol.get('params', {}).get('defect_type', 'Unknown')
-                defect_types[d_type] = defect_types.get(d_type, 0) + 1
-            
-            for d_type, count in defect_types.items():
-                st.write(f"- {d_type}: {count}")
+            # Quick tips
+            with st.expander("💡 Quick Tips", expanded=False):
+                st.write("""
+                **Three Region Types:**
+                1. **Defect Region (η > 0.6):** Stress in defect cores
+                2. **Interface Region (0.4 ≤ η ≤ 0.6):** Stress at interfaces
+                3. **Bulk Region (η < 0.4):** Stress in pure Ag material
+                
+                **Spatial Locality Regularization:**
+                - Uses Euclidean distance in parameter space
+                - Weights = exp(-0.5 * (distance/sigma)²)
+                - Prioritizes similar configurations
+                - Improves interpolation accuracy
+                
+                **Comparison Purpose:**
+                - Validate interpolated solutions
+                - Benchmark against originals
+                - Assess interpolation quality
+                """)
 
 # =============================================
 # RUN THE APPLICATION
