@@ -250,6 +250,438 @@ def extract_region_statistics(eta, stress_fields, region_type):
     return results
 
 # =============================================
+# NUMBA-ACCELERATED FUNCTIONS (Existing)
+# =============================================
+
+@jit(nopython=True, parallel=True)
+def compute_gaussian_weights_numba(source_vectors, target_vector, sigma):
+    """Numba-accelerated Gaussian weight computation"""
+    n_sources = source_vectors.shape[0]
+    weights = np.zeros(n_sources)
+    
+    for i in prange(n_sources):
+        dist_sq = 0.0
+        for j in range(source_vectors.shape[1]):
+            diff = source_vectors[i, j] - target_vector[j]
+            dist_sq += diff * diff
+        weights[i] = np.exp(-0.5 * dist_sq / (sigma * sigma))
+    
+    weight_sum = np.sum(weights)
+    if weight_sum > 0:
+        weights = weights / weight_sum
+    else:
+        weights = np.ones(n_sources) / n_sources
+    
+    return weights
+
+@jit(nopython=True)
+def compute_stress_statistics_numba(stress_matrix):
+    """Compute stress statistics efficiently"""
+    flat_stress = stress_matrix.flatten()
+    
+    max_val = np.max(flat_stress)
+    min_val = np.min(flat_stress)
+    mean_val = np.mean(flat_stress)
+    std_val = np.std(flat_stress)
+    percentile_95 = np.percentile(flat_stress, 95)
+    percentile_99 = np.percentile(flat_stress, 99)
+    
+    return max_val, min_val, mean_val, std_val, percentile_95, percentile_99
+
+# =============================================
+# ENHANCED NUMERICAL SOLUTIONS LOADER (Existing - Fixed)
+# =============================================
+class EnhancedSolutionLoader:
+    """Enhanced solution loader with support for multiple formats and caching"""
+    
+    def __init__(self, solutions_dir: str = SOLUTIONS_DIR):
+        self.solutions_dir = solutions_dir
+        self._ensure_directory()
+        self.cache = {}
+        self.pt_loading_method = "safe"  # "safe" or "unsafe"
+        
+    def _ensure_directory(self):
+        """Create solutions directory if it doesn't exist"""
+        if not os.path.exists(self.solutions_dir):
+            os.makedirs(self.solutions_dir, exist_ok=True)
+            if 'st' in globals():
+                st.info(f"Created directory: {self.solutions_dir}")
+    
+    def scan_solutions(self) -> Dict[str, List[str]]:
+        """Scan directory for solution files"""
+        file_formats = {
+            'pkl': [],
+            'pt': [],
+            'h5': [],
+            'npz': [],
+            'sql': [],
+            'json': []
+        }
+        
+        for format_type, extensions in [
+            ('pkl', ['*.pkl', '*.pickle']),
+            ('pt', ['*.pt', '*.pth']),
+            ('h5', ['*.h5', '*.hdf5']),
+            ('npz', ['*.npz']),
+            ('sql', ['*.sql', '*.db']),
+            ('json', ['*.json'])
+        ]:
+            for ext in extensions:
+                pattern = os.path.join(self.solutions_dir, ext)
+                files = glob.glob(pattern)
+                if files:
+                    files.sort(key=os.path.getmtime, reverse=True)
+                    file_formats[format_type].extend(files)
+        
+        return file_formats
+    
+    def get_all_files_info(self) -> List[Dict[str, Any]]:
+        """Get information about all solution files"""
+        all_files = []
+        file_formats = self.scan_solutions()
+        
+        for format_type, files in file_formats.items():
+            for file_path in files:
+                try:
+                    file_info = {
+                        'path': file_path,
+                        'filename': os.path.basename(file_path),
+                        'format': format_type,
+                        'size': os.path.getsize(file_path),
+                        'modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat(),
+                        'relative_path': os.path.relpath(file_path, self.solutions_dir)
+                    }
+                    all_files.append(file_info)
+                except Exception as e:
+                    if 'st' in globals():
+                        st.warning(f"Could not get info for {file_path}: {e}")
+        
+        all_files.sort(key=lambda x: x['filename'].lower())
+        return all_files
+    
+    def _read_pkl(self, file_content):
+        buffer = BytesIO(file_content)
+        try:
+            data = pickle.load(buffer)
+            if isinstance(data, Exception):
+                return data
+            return data
+        except Exception as e:
+            return e
+    
+    def _read_pt(self, file_content):
+        buffer = BytesIO(file_content)
+        try:
+            if self.pt_loading_method == "safe":
+                # FIXED: Handle PyTorch 2.6 weights_only=True issue
+                try:
+                    # Try to import the numpy scalar class
+                    import numpy as np
+                    # Different numpy versions have different paths
+                    try:
+                        from numpy._core.multiarray import scalar as np_scalar
+                    except ImportError:
+                        try:
+                            from numpy.core.multiarray import scalar as np_scalar
+                        except ImportError:
+                            np_scalar = None
+                    
+                    if np_scalar is not None:
+                        # Use safe_globals context manager
+                        import torch.serialization
+                        with torch.serialization.safe_globals([np_scalar]):
+                            data = torch.load(buffer, map_location='cpu', weights_only=True)
+                    else:
+                        # Fallback to weights_only=False with warning
+                        if 'st' in globals():
+                            st.warning("Could not import numpy scalar, using weights_only=False")
+                        data = torch.load(buffer, map_location='cpu', weights_only=False)
+                except Exception as safe_error:
+                    # If safe loading fails, try unsafe as last resort
+                    if 'st' in globals():
+                        st.warning(f"Safe loading failed: {safe_error}. Trying weights_only=False")
+                    data = torch.load(buffer, map_location='cpu', weights_only=False)
+            else:
+                # Unsafe loading (only use if you trust the source)
+                data = torch.load(buffer, map_location='cpu', weights_only=False)
+            
+            # Convert tensors to numpy arrays for compatibility
+            if isinstance(data, dict):
+                for key in list(data.keys()):
+                    if torch.is_tensor(data[key]):
+                        data[key] = data[key].cpu().numpy()
+                    elif isinstance(data[key], dict):
+                        for subkey in list(data[key].keys()):
+                            if torch.is_tensor(data[key][subkey]):
+                                data[key][subkey] = data[key][subkey].cpu().numpy()
+            return data
+        except Exception as e:
+            return e
+    
+    def _read_h5(self, file_content):
+        try:
+            import h5py
+            buffer = BytesIO(file_content)
+            with h5py.File(buffer, 'r') as f:
+                data = {}
+                def read_h5_obj(name, obj):
+                    if isinstance(obj, h5py.Dataset):
+                        data[name] = obj[()]
+                    elif isinstance(obj, h5py.Group):
+                        data[name] = {}
+                        for key in obj.keys():
+                            read_h5_obj(f"{name}/{key}", obj[key])
+                for key in f.keys():
+                    read_h5_obj(key, f[key])
+            return data
+        except Exception as e:
+            return e
+    
+    def _read_npz(self, file_content):
+        buffer = BytesIO(file_content)
+        try:
+            data = np.load(buffer, allow_pickle=True)
+            return {key: data[key] for key in data.files}
+        except Exception as e:
+            return e
+    
+    def _read_sql(self, file_content):
+        with tempfile.NamedTemporaryFile(suffix='.sqlite', delete=False) as tmp:
+            tmp.write(file_content)
+            tmp_path = tmp.name
+        
+        try:
+            conn = sqlite3.connect(tmp_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = cursor.fetchall()
+            
+            data = {}
+            for table in tables:
+                table_name = table[0]
+                cursor.execute(f"SELECT * FROM {table_name}")
+                columns = [description[0] for description in cursor.description]
+                rows = cursor.fetchall()
+                data[table_name] = {
+                    'columns': columns,
+                    'rows': rows
+                }
+            
+            conn.close()
+            os.unlink(tmp_path)
+            return data
+        except Exception as e:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            return e
+    
+    def _read_json(self, file_content):
+        try:
+            return json.loads(file_content.decode('utf-8'))
+        except Exception as e:
+            return e
+    
+    def read_simulation_file(self, file_content, format_type='auto'):
+        """Read simulation file with format auto-detection and error handling"""
+        if format_type == 'auto':
+            # Try to auto-detect based on content or extension
+            format_type = 'pkl'  # Default fallback
+        
+        readers = {
+            'pkl': self._read_pkl,
+            'pt': self._read_pt,
+            'h5': self._read_h5,
+            'npz': self._read_npz,
+            'sql': self._read_sql,
+            'json': self._read_json
+        }
+        
+        if format_type in readers:
+            data = readers[format_type](file_content)
+            
+            # Check if the reader returned an error/exception
+            if isinstance(data, Exception):
+                # Return a structured error object
+                return {
+                    'error': str(data),
+                    'format': format_type,
+                    'status': 'error'
+                }
+            
+            # Standardize the data
+            standardized = self._standardize_data(data, format_type)
+            standardized['status'] = 'success'
+            return standardized
+        else:
+            error_msg = f"Unsupported format: {format_type}"
+            return {
+                'error': error_msg,
+                'format': format_type,
+                'status': 'error'
+            }
+    
+    def _standardize_data(self, data, format_type):
+        """Standardize simulation data structure with robust error handling"""
+        standardized = {
+            'params': {},
+            'history': [],
+            'metadata': {},
+            'format': format_type
+        }
+        
+        try:
+            if format_type == 'pkl':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"PKL data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'pt':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    
+                    # Handle history - may be stored differently
+                    history = data.get('history', [])
+                    if isinstance(history, list):
+                        standardized['history'] = history
+                    elif isinstance(history, dict):
+                        # Convert dict history to list format
+                        history_list = []
+                        for key in sorted(history.keys()):
+                            frame = history[key]
+                            if isinstance(frame, dict) and 'eta' in frame and 'stresses' in frame:
+                                history_list.append((frame['eta'], frame['stresses']))
+                        standardized['history'] = history_list
+                    
+                    # Additional cleanup for tensor data
+                    if 'params' in standardized:
+                        for key, value in standardized['params'].items():
+                            if torch.is_tensor(value):
+                                standardized['params'][key] = value.cpu().numpy()
+                else:
+                    standardized['error'] = f"PT data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'h5':
+                # Handle H5 format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"H5 data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'npz':
+                # Handle NPZ format
+                if isinstance(data, dict):
+                    standardized.update(data)
+                else:
+                    standardized['error'] = f"NPZ data is not a dictionary: {type(data)}"
+            
+            elif format_type == 'json':
+                if isinstance(data, dict):
+                    standardized['params'] = data.get('params', {})
+                    standardized['metadata'] = data.get('metadata', {})
+                    standardized['history'] = data.get('history', [])
+                else:
+                    standardized['error'] = f"JSON data is not a dictionary: {type(data)}"
+            
+        except Exception as e:
+            standardized['error'] = f"Standardization error: {str(e)}"
+        
+        return standardized
+    
+    def load_all_solutions(self, use_cache=True, pt_loading_method="safe"):
+        """Load all solutions with caching, progress tracking, and error handling"""
+        self.pt_loading_method = pt_loading_method
+        solutions = []
+        failed_files = []
+        
+        if not os.path.exists(self.solutions_dir):
+            if 'st' in globals():
+                st.warning(f"Directory {self.solutions_dir} not found. Creating it.")
+            os.makedirs(self.solutions_dir, exist_ok=True)
+            return solutions
+        
+        all_files_info = self.get_all_files_info()
+        
+        if not all_files_info:
+            if 'st' in globals():
+                st.info(f"No solution files found in {self.solutions_dir}")
+            return solutions
+        
+        if 'st' in globals():
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+        
+        for idx, file_info in enumerate(all_files_info):
+            try:
+                file_path = file_info['path']
+                filename = file_info['filename']
+                
+                # Check cache
+                cache_key = f"{filename}_{os.path.getmtime(file_path)}_{pt_loading_method}"
+                if use_cache and cache_key in self.cache:
+                    sim = self.cache[cache_key]
+                    if sim.get('status') == 'success':
+                        solutions.append(sim)
+                    continue
+                
+                # Update progress
+                if 'st' in globals():
+                    progress = (idx + 1) / len(all_files_info)
+                    progress_bar.progress(progress)
+                    status_text.text(f"Loading {filename}...")
+                
+                # Load file
+                with open(file_path, 'rb') as f:
+                    file_content = f.read()
+                
+                sim = self.read_simulation_file(file_content, file_info['format'])
+                sim['filename'] = filename
+                sim['file_info'] = file_info
+                
+                # Validate structure
+                if sim.get('status') == 'success' and 'params' in sim and 'history' in sim:
+                    # Validate params structure
+                    if isinstance(sim['params'], dict):
+                        # Cache the solution
+                        self.cache[cache_key] = sim
+                        solutions.append(sim)
+                    else:
+                        failed_files.append({
+                            'filename': filename,
+                            'error': f"Params is not a dictionary: {type(sim['params'])}"
+                        })
+                else:
+                    error_msg = sim.get('error', 'Unknown error or missing params/history')
+                    failed_files.append({
+                        'filename': filename,
+                        'error': error_msg
+                    })
+                    
+            except Exception as e:
+                failed_files.append({
+                    'filename': file_info['filename'],
+                    'error': f"Loading error: {str(e)}"
+                })
+        
+        if 'st' in globals():
+            progress_bar.empty()
+            status_text.empty()
+        
+        # Display failed files if any
+        if failed_files and 'st' in globals():
+            with st.expander(f"⚠️ Failed to load {len(failed_files)} files", expanded=False):
+                for failed in failed_files[:10]:  # Show first 10
+                    st.error(f"**{failed['filename']}**: {failed['error']}")
+                if len(failed_files) > 10:
+                    st.info(f"... and {len(failed_files) - 10} more files failed to load.")
+        
+        return solutions
+
+# =============================================
 # ENHANCED SPATIAL INTERPOLATOR WITH EUCLIDEAN DISTANCE
 # =============================================
 
@@ -494,48 +926,46 @@ class OriginalFileAnalyzer:
         
         return results
     
-    def create_stress_matrix(self, solutions, region_type='bulk', 
-                            stress_component='von_mises', stress_type='max_abs'):
-        """Create stress matrix (theta × time) from original solutions"""
+    def create_stress_matrix_from_original(self, solutions, region_type='bulk', 
+                                          stress_component='von_mises', stress_type='max_abs'):
+        """Create stress matrix from original solutions for visualization"""
         if not solutions:
             return None, None, None
         
-        # Extract unique thetas
-        thetas = []
+        # Group solutions by theta
+        solutions_by_theta = {}
         for sol in solutions:
             params = sol.get('params', {})
             theta = params.get('theta', 0.0)
-            thetas.append(theta)
+            theta_deg = np.rad2deg(theta)
+            
+            if theta_deg not in solutions_by_theta:
+                solutions_by_theta[theta_deg] = []
+            solutions_by_theta[theta_deg].append(sol)
         
-        unique_thetas = np.unique(thetas)
+        # Get unique thetas
+        thetas = np.array(sorted(solutions_by_theta.keys()))
         
-        # Determine time points (use history length)
-        time_points = []
-        for sol in solutions:
-            history = sol.get('history', [])
-            time_points.append(len(history))
-        
-        max_time = min(time_points) if time_points else 0
-        times = np.arange(max_time)
+        # Determine time points from first solution
+        first_sol = solutions[0]
+        history = first_sol.get('history', [])
+        times = np.arange(len(history))
         
         # Initialize stress matrix
-        stress_matrix = np.zeros((len(unique_thetas), len(times)))
+        stress_matrix = np.zeros((len(times), len(thetas)))
         
         # Fill matrix
-        for i, theta in enumerate(unique_thetas):
-            # Find solutions with this theta
-            theta_solutions = [sol for sol in solutions 
-                             if sol.get('params', {}).get('theta', 0.0) == theta]
-            
+        for theta_idx, theta in enumerate(thetas):
+            theta_solutions = solutions_by_theta.get(theta, [])
             if not theta_solutions:
                 continue
             
-            # For simplicity, take the first solution with this theta
+            # Use the first solution for this theta
             sol = theta_solutions[0]
             history = sol.get('history', [])
             
-            for t in range(min(len(history), len(times))):
-                frame = history[t]
+            for time_idx in range(min(len(history), len(times))):
+                frame = history[time_idx]
                 
                 # Extract eta and stress fields
                 if isinstance(frame, tuple) and len(frame) >= 2:
@@ -549,9 +979,262 @@ class OriginalFileAnalyzer:
                 # Extract region stress
                 region_stress = extract_region_stress(eta, stress_fields, region_type,
                                                      stress_component, stress_type)
-                stress_matrix[i, t] = region_stress
+                stress_matrix[time_idx, theta_idx] = region_stress
         
-        return stress_matrix, unique_thetas, times
+        return stress_matrix, times, thetas
+
+# =============================================
+# ENHANCED SUNBURST & RADAR VISUALIZER (Existing - with region support)
+# =============================================
+class EnhancedSunburstRadarVisualizer:
+    """Enhanced sunburst and radar charts with 50+ colormaps and visualization enhancements"""
+    
+    def __init__(self):
+        self.colormap_manager = EnhancedColorMaps()
+    
+    def create_enhanced_plotly_sunburst(self, stress_matrix, times, thetas, title, 
+                                       cmap='rainbow', marker_size=12, line_width=1.5,
+                                       font_size=18, width=900, height=750,
+                                       show_colorbar=True, colorbar_title="Stress (GPa)",
+                                       hover_template=None):
+        """Interactive sunburst with Plotly - fully enhanced version"""
+        
+        # Prepare data for polar scatter
+        theta_deg = np.deg2rad(thetas)
+        theta_grid, time_grid = np.meshgrid(theta_deg, times)
+        
+        # Flatten the arrays for scatter plot
+        r_flat = time_grid.flatten()
+        theta_flat = np.rad2deg(theta_grid).flatten()
+        stress_flat = stress_matrix.flatten()
+        
+        # Create the plotly figure
+        fig = go.Figure()
+        
+        # Default hover template
+        if hover_template is None:
+            hover_template = (
+                '<b>Time</b>: %{r:.2f}s<br>' +
+                '<b>Orientation</b>: %{theta:.1f}°<br>' +
+                '<b>Stress</b>: %{marker.color:.4f} GPa<br>' +
+                '<extra></extra>'
+            )
+        
+        # Add scatter polar trace with enhanced styling
+        fig.add_trace(go.Scatterpolar(
+            r=r_flat,
+            theta=theta_flat,
+            mode='markers',
+            marker=dict(
+                size=marker_size,
+                color=stress_flat,
+                colorscale=cmap,
+                showscale=show_colorbar,
+                colorbar=dict(
+                    title=dict(text=colorbar_title, font=dict(size=font_size, color='black')),
+                    tickfont=dict(size=font_size-2, color='black'),
+                    thickness=25,
+                    len=0.8,
+                    x=1.15,
+                    xpad=20,
+                    ypad=20,
+                    tickformat='.3f',
+                    title_side='right'
+                ),
+                line=dict(width=line_width, color='rgba(255, 255, 255, 0.8)'),
+                opacity=0.9,
+                symbol='circle',
+                sizemode='diameter',
+                sizemin=3
+            ),
+            hovertemplate=hover_template,
+            name='Stress Distribution'
+        ))
+        
+        # Enhanced layout
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=font_size+4, family="Arial Black, sans-serif", color='darkblue'),
+                x=0.5,
+                xanchor='center',
+                y=0.95,
+                yanchor='top'
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    title=dict(
+                        text="Time (s)",
+                        font=dict(size=font_size+2, color='black', family='Arial')
+                    ),
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=2,
+                    linecolor="black",
+                    linewidth=3,
+                    showline=True,
+                    tickfont=dict(size=font_size, color='black', family='Arial'),
+                    tickformat='.1f',
+                    range=[0, max(times) * 1.1],
+                    ticksuffix=" s",
+                    showticksuffix='all'
+                ),
+                angularaxis=dict(
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=2,
+                    linecolor="black",
+                    linewidth=3,
+                    rotation=90,
+                    direction="clockwise",
+                    tickfont=dict(size=font_size, color='black', family='Arial'),
+                    tickmode='array',
+                    tickvals=list(range(0, 360, 30)),
+                    ticktext=[f'{i}°' for i in range(0, 360, 30)],
+                    period=360,
+                    thetaunit="degrees"
+                ),
+                bgcolor="rgba(240, 240, 240, 0.5)",
+                sector=[0, 360],
+                hole=0.1
+            ),
+            width=width,
+            height=height,
+            showlegend=True,
+            legend=dict(
+                x=1.2,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.9)',
+                bordercolor='black',
+                borderwidth=2,
+                font=dict(size=font_size, family='Arial')
+            ),
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            margin=dict(l=100, r=200, t=100, b=100),
+            font=dict(family="Arial, sans-serif", size=font_size)
+        )
+        
+        # Add radial lines for orientation reference
+        for angle in [0, 45, 90, 135, 180, 225, 270, 315]:
+            fig.add_trace(go.Scatterpolar(
+                r=[0, max(times)],
+                theta=[angle, angle],
+                mode='lines',
+                line=dict(color='rgba(255, 0, 0, 0.3)', width=1, dash='dash'),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+        
+        return fig
+    
+    def create_enhanced_plotly_radar(self, stress_values, thetas, component_name, time_point,
+                                    line_width=4, marker_size=12, fill_alpha=0.3,
+                                    font_size=16, width=800, height=700,
+                                    show_mean=True, show_std=True, color='steelblue'):
+        """Interactive enhanced radar chart with Plotly"""
+        
+        # Ensure proper closure
+        thetas_closed = np.append(thetas, 360)
+        stress_values_closed = np.append(stress_values, stress_values[0])
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add radar trace with enhanced styling
+        fig.add_trace(go.Scatterpolar(
+            r=stress_values_closed,
+            theta=thetas_closed,
+            fill='toself',
+            fillcolor=f'rgba(70, 130, 180, {fill_alpha})',
+            line=dict(color=color, width=line_width),
+            marker=dict(size=marker_size, color=color, symbol='circle'),
+            name=component_name,
+            hovertemplate='Orientation: %{theta:.1f}°<br>Stress: %{r:.4f} GPa',
+            text=[f'{v:.3f} GPa' for v in stress_values_closed],
+            textposition='top center'
+        ))
+        
+        # Add mean value line
+        if show_mean:
+            mean_val = np.mean(stress_values)
+            fig.add_trace(go.Scatterpolar(
+                r=[mean_val] * len(thetas_closed),
+                theta=thetas_closed,
+                mode='lines',
+                line=dict(color='firebrick', width=3, dash='dash'),
+                name=f'Mean: {mean_val:.3f} GPa',
+                hovertemplate='Mean Stress: %{r:.3f} GPa'
+            ))
+        
+        # Add standard deviation band
+        if show_std:
+            mean_val = np.mean(stress_values)
+            std_val = np.std(stress_values)
+            fig.add_trace(go.Scatterpolar(
+                r=[mean_val + std_val] * len(thetas_closed),
+                theta=thetas_closed,
+                mode='lines',
+                line=dict(color='orange', width=2, dash='dot'),
+                name=f'Mean ± Std: {std_val:.3f} GPa',
+                hovertemplate='Mean + Std: %{r:.3f} GPa'
+            ))
+            
+            fig.add_trace(go.Scatterpolar(
+                r=[mean_val - std_val] * len(thetas_closed),
+                theta=thetas_closed,
+                mode='lines',
+                line=dict(color='orange', width=2, dash='dot'),
+                name=f'Mean - Std: {std_val:.3f} GPa',
+                hovertemplate='Mean - Std: %{r:.3f} GPa',
+                showlegend=False
+            ))
+        
+        # Enhanced layout
+        fig.update_layout(
+            title=dict(
+                text=f'{component_name} Stress at t={time_point:.1f}s',
+                font=dict(size=font_size+4, family="Arial Black", color='darkblue'),
+                x=0.5,
+                xanchor='center'
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    range=[0, max(stress_values) * 1.3],
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=2,
+                    tickfont=dict(size=font_size-2, color='black'),
+                    title=dict(text='Stress (GPa)', 
+                              font=dict(size=font_size, color='black')),
+                    ticksuffix=' GPa'
+                ),
+                angularaxis=dict(
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=2,
+                    linecolor="black",
+                    linewidth=3,
+                    rotation=90,
+                    direction="clockwise",
+                    tickvals=list(range(0, 360, 45)),
+                    ticktext=[f'{i}°' for i in range(0, 360, 45)],
+                    tickfont=dict(size=font_size, color='black'),
+                    period=360
+                ),
+                bgcolor="rgba(240, 240, 240, 0.5)"
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.1,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.9)',
+                bordercolor='black',
+                borderwidth=2,
+                font=dict(size=font_size, family='Arial')
+            ),
+            width=width,
+            height=height
+        )
+        
+        return fig
 
 # =============================================
 # ENHANCED COMPARISON VISUALIZER
@@ -719,64 +1402,6 @@ class EnhancedComparisonVisualizer:
         )
         
         return fig
-    
-    def create_error_analysis(self, original_matrix, interpolated_matrix):
-        """Create error analysis visualization"""
-        
-        # Calculate errors
-        errors = interpolated_matrix - original_matrix
-        abs_errors = np.abs(errors)
-        rel_errors = np.abs(errors) / (np.abs(original_matrix) + 1e-10)
-        
-        # Statistics
-        stats = {
-            'MAE': np.mean(abs_errors),
-            'MSE': np.mean(errors ** 2),
-            'RMSE': np.sqrt(np.mean(errors ** 2)),
-            'Max_Abs_Error': np.max(abs_errors),
-            'Mean_Rel_Error': np.mean(rel_errors) * 100,
-            'Max_Rel_Error': np.max(rel_errors) * 100
-        }
-        
-        # Create error distribution plot
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        
-        # Histogram of errors
-        axes[0, 0].hist(errors.flatten(), bins=50, edgecolor='black', alpha=0.7)
-        axes[0, 0].set_xlabel('Error (GPa)')
-        axes[0, 0].set_ylabel('Frequency')
-        axes[0, 0].set_title('Error Distribution')
-        axes[0, 0].grid(True, alpha=0.3)
-        
-        # QQ plot for normality check
-        from scipy import stats as scipy_stats
-        scipy_stats.probplot(errors.flatten(), dist="norm", plot=axes[0, 1])
-        axes[0, 1].set_title('Q-Q Plot (Normality Check)')
-        axes[0, 1].grid(True, alpha=0.3)
-        
-        # Scatter plot: Original vs Interpolated
-        axes[1, 0].scatter(original_matrix.flatten(), interpolated_matrix.flatten(), 
-                          alpha=0.5, s=10)
-        axes[1, 0].plot([original_matrix.min(), original_matrix.max()], 
-                       [original_matrix.min(), original_matrix.max()], 
-                       'r--', label='Perfect Fit')
-        axes[1, 0].set_xlabel('Original Stress (GPa)')
-        axes[1, 0].set_ylabel('Interpolated Stress (GPa)')
-        axes[1, 0].set_title('Original vs Interpolated')
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-        
-        # Error vs Original
-        axes[1, 1].scatter(original_matrix.flatten(), abs_errors.flatten(), 
-                          alpha=0.5, s=10)
-        axes[1, 1].set_xlabel('Original Stress (GPa)')
-        axes[1, 1].set_ylabel('Absolute Error (GPa)')
-        axes[1, 1].set_title('Error vs Original Stress')
-        axes[1, 1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        return fig, stats
 
 # =============================================
 # MAIN APPLICATION WITH REGION ANALYSIS
@@ -868,7 +1493,7 @@ def main():
         data_source = st.radio(
             "Select data source for visualization:",
             ["Original Loaded Files", "Interpolated Solutions", "Comparison (Both)"],
-            index=2,
+            index=0,
             help="Choose whether to visualize original files, interpolated solutions, or compare both"
         )
         
@@ -938,7 +1563,7 @@ def main():
         st.markdown("#### 🎨 Visualization Type")
         viz_type = st.radio(
             "Select visualization type:",
-            ["Sunburst", "Radar", "Both", "Error Analysis"],
+            ["Sunburst", "Radar", "Both"],
             index=0,
             help="Choose visualization type"
         )
@@ -949,6 +1574,38 @@ def main():
             ALL_COLORMAPS,
             index=ALL_COLORMAPS.index('rainbow') if 'rainbow' in ALL_COLORMAPS else 0
         )
+        
+        # Interpolation parameters (only show for interpolated/comparison)
+        if data_source in ["Interpolated Solutions", "Comparison (Both)"]:
+            st.markdown("#### 🎯 Interpolation Parameters")
+            
+            defect_type = st.selectbox("Defect Type", ["ISF", "ESF", "Twin"], index=0)
+            
+            col_shape, col_eps = st.columns(2)
+            with col_shape:
+                shape = st.selectbox("Shape", 
+                                    ["Square", "Horizontal Fault", "Vertical Fault", 
+                                     "Rectangle", "Ellipse"], index=0)
+            with col_eps:
+                eps0 = st.slider("ε*", 0.3, 3.0, 0.707, 0.01,
+                                help="Strain parameter")
+            
+            col_kappa, col_theta = st.columns(2)
+            with col_kappa:
+                kappa = st.slider("κ", 0.1, 2.0, 0.6, 0.01,
+                                 help="Shape parameter")
+            with col_theta:
+                theta_min = st.slider("Min Angle (°)", 0, 360, 0, 5)
+                theta_max = st.slider("Max Angle (°)", 0, 360, 360, 5)
+                theta_step = st.slider("Step Size (°)", 5, 45, 15, 5)
+            
+            # Time settings
+            st.markdown("#### ⏱️ Time Settings")
+            col_time1, col_time2 = st.columns(2)
+            with col_time1:
+                n_times = st.slider("Time Points", 10, 200, 50, 10)
+            with col_time2:
+                max_time = st.slider("Max Time (s)", 50, 500, 200, 10)
         
         # Load solutions
         st.markdown("#### 📂 Load Solutions")
@@ -1016,13 +1673,13 @@ def main():
                             )
                             
                             # Create stress matrix for visualization
-                            stress_matrix, thetas, times = st.session_state.original_analyzer.create_stress_matrix(
+                            stress_matrix, times, thetas = st.session_state.original_analyzer.create_stress_matrix_from_original(
                                 st.session_state.solutions, region_key, stress_component, stress_type
                             )
                             
                             if stress_matrix is not None:
                                 st.session_state.original_matrix = stress_matrix
-                                st.session_state.thetas = np.rad2deg(thetas)
+                                st.session_state.thetas = thetas
                                 st.session_state.times = times
                                 st.session_state.region_type = region_type
                                 st.session_state.stress_component = stress_component
@@ -1035,19 +1692,30 @@ def main():
                                     st.write(f"**Stress Component:** {stress_component}")
                                     st.write(f"**Analysis Type:** {stress_type}")
                                     st.write(f"**Number of Solutions:** {len(results)}")
-                                    st.write(f"**Theta Range:** {np.min(st.session_state.thetas):.1f}° to {np.max(st.session_state.thetas):.1f}°")
+                                    if len(thetas) > 0:
+                                        st.write(f"**Theta Range:** {np.min(thetas):.1f}° to {np.max(thetas):.1f}°")
                                     st.write(f"**Time Points:** {len(times)}")
+                                    
+                                    # Calculate statistics
+                                    if stress_matrix.size > 0:
+                                        max_val = np.max(stress_matrix)
+                                        mean_val = np.mean(stress_matrix)
+                                        min_val = np.min(stress_matrix)
+                                        std_val = np.std(stress_matrix)
+                                        
+                                        col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+                                        with col_stat1:
+                                            st.metric("Max Stress", f"{max_val:.4f} GPa")
+                                        with col_stat2:
+                                            st.metric("Mean Stress", f"{mean_val:.4f} GPa")
+                                        with col_stat3:
+                                            st.metric("Min Stress", f"{min_val:.4f} GPa")
+                                        with col_stat4:
+                                            st.metric("Std Dev", f"{std_val:.4f} GPa")
                             
                         elif data_source == "Interpolated Solutions":
                             # Generate interpolated solutions
                             st.info("Generating interpolated solutions...")
-                            
-                            # Define interpolation parameters
-                            theta_min = 0
-                            theta_max = 360
-                            theta_step = 15
-                            n_times = 50
-                            max_time = 200
                             
                             # Generate theta range
                             thetas = np.arange(theta_min, theta_max + theta_step, theta_step)
@@ -1065,13 +1733,13 @@ def main():
                             for i, theta in enumerate(theta_rad):
                                 status_text.text(f"🔧 Processing orientation {i+1}/{len(theta_rad)} ({thetas[i]:.0f}°)...")
                                 
-                                # Target parameters (simplified for demo)
+                                # Target parameters
                                 target_params = {
-                                    'defect_type': 'ISF',
+                                    'defect_type': defect_type,
                                     'theta': float(theta),
-                                    'eps0': 0.707,
-                                    'kappa': 0.6,
-                                    'shape': 'Square'
+                                    'eps0': eps0,
+                                    'kappa': kappa,
+                                    'shape': shape
                                 }
                                 
                                 # Interpolate with spatial locality
@@ -1124,36 +1792,34 @@ def main():
                             # Generate both original and interpolated
                             st.info("Generating comparison analysis...")
                             
-                            # Analyze original files
-                            results = st.session_state.original_analyzer.analyze_all_solutions(
+                            # First, create original matrix
+                            original_matrix, orig_times, orig_thetas = st.session_state.original_analyzer.create_stress_matrix_from_original(
                                 st.session_state.solutions, region_key, stress_component, stress_type
                             )
                             
-                            original_matrix, orig_thetas, orig_times = st.session_state.original_analyzer.create_stress_matrix(
-                                st.session_state.solutions, region_key, stress_component, stress_type
-                            )
-                            
-                            # Generate interpolated matrix with same dimensions
                             if original_matrix is not None:
-                                # Align interpolated matrix to original dimensions
-                                n_thetas = len(orig_thetas)
-                                n_times = len(orig_times)
+                                # Generate interpolated matrix with same dimensions
+                                thetas = orig_thetas
+                                times = orig_times
                                 
-                                interpolated_matrix = np.zeros((n_thetas, n_times))
+                                # Convert thetas to radians for interpolation
+                                theta_rad = np.deg2rad(thetas)
+                                
+                                interpolated_matrix = np.zeros_like(original_matrix)
                                 
                                 progress_bar = st.progress(0)
                                 status_text = st.empty()
                                 
-                                for i, theta in enumerate(orig_thetas):
-                                    status_text.text(f"🔧 Interpolating orientation {i+1}/{n_thetas} ({np.rad2deg(theta):.1f}°)...")
+                                for i, theta in enumerate(theta_rad):
+                                    status_text.text(f"🔧 Interpolating orientation {i+1}/{len(theta_rad)} ({thetas[i]:.1f}°)...")
                                     
                                     # Target parameters
                                     target_params = {
-                                        'defect_type': 'ISF',
+                                        'defect_type': defect_type,
                                         'theta': float(theta),
-                                        'eps0': 0.707,
-                                        'kappa': 0.6,
-                                        'shape': 'Square'
+                                        'eps0': eps0,
+                                        'kappa': kappa,
+                                        'shape': shape
                                     }
                                     
                                     # Interpolate
@@ -1164,11 +1830,12 @@ def main():
                                     
                                     if result:
                                         region_stress = result['region_stress']
-                                        for t in range(n_times):
-                                            stress_at_t = region_stress * (1 - np.exp(-orig_times[t] / 50))
-                                            interpolated_matrix[i, t] = stress_at_t
+                                        for t_idx, t in enumerate(times):
+                                            # Time-dependent scaling
+                                            stress_at_t = region_stress * (1 - np.exp(-t / 50))
+                                            interpolated_matrix[t_idx, i] = stress_at_t
                                     
-                                    progress_bar.progress((i + 1) / n_thetas)
+                                    progress_bar.progress((i + 1) / len(theta_rad))
                                 
                                 progress_bar.empty()
                                 status_text.empty()
@@ -1176,8 +1843,8 @@ def main():
                                 # Store both matrices
                                 st.session_state.original_matrix = original_matrix
                                 st.session_state.interpolated_matrix = interpolated_matrix
-                                st.session_state.thetas = np.rad2deg(orig_thetas)
-                                st.session_state.times = orig_times
+                                st.session_state.thetas = thetas
+                                st.session_state.times = times
                                 st.session_state.region_type = region_type
                                 st.session_state.stress_component = stress_component
                                 
@@ -1185,140 +1852,113 @@ def main():
                                 
                                 # Calculate comparison metrics
                                 with st.expander("📊 Comparison Metrics", expanded=True):
-                                    if 'original_matrix' in st.session_state and 'interpolated_matrix' in st.session_state:
-                                        orig = st.session_state.original_matrix
-                                        interp = st.session_state.interpolated_matrix
-                                        
-                                        mae = np.mean(np.abs(interp - orig))
-                                        rmse = np.sqrt(np.mean((interp - orig) ** 2))
-                                        r2 = 1 - np.sum((interp - orig) ** 2) / np.sum((orig - np.mean(orig)) ** 2)
-                                        
-                                        col1, col2, col3 = st.columns(3)
-                                        with col1:
-                                            st.metric("MAE", f"{mae:.4f} GPa")
-                                        with col2:
-                                            st.metric("RMSE", f"{rmse:.4f} GPa")
-                                        with col3:
-                                            st.metric("R² Score", f"{r2:.4f}")
-                                        
-                                        st.write(f"**Spatial Locality:** {'ENABLED' if use_spatial_locality else 'DISABLED'}")
-                                        
+                                    orig = original_matrix
+                                    interp = interpolated_matrix
+                                    
+                                    mae = np.mean(np.abs(interp - orig))
+                                    rmse = np.sqrt(np.mean((interp - orig) ** 2))
+                                    r2 = 1 - np.sum((interp - orig) ** 2) / (np.sum((orig - np.mean(orig)) ** 2) + 1e-10)
+                                    
+                                    col1, col2, col3 = st.columns(3)
+                                    with col1:
+                                        st.metric("MAE", f"{mae:.4f} GPa")
+                                    with col2:
+                                        st.metric("RMSE", f"{rmse:.4f} GPa")
+                                    with col3:
+                                        st.metric("R² Score", f"{r2:.4f}")
+                                    
+                                    st.write(f"**Spatial Locality:** {'ENABLED' if use_spatial_locality else 'DISABLED'}")
+                        
                         # Generate visualizations based on data source
                         if 'original_matrix' in st.session_state or 'interpolated_matrix' in st.session_state:
                             
-                            if viz_type in ["Sunburst", "Both"]:
+                            # Get the active matrix based on data source
+                            if data_source == "Original Loaded Files" and 'original_matrix' in st.session_state:
+                                active_matrix = st.session_state.original_matrix
+                                title_suffix = "Original"
+                            elif data_source == "Interpolated Solutions" and 'interpolated_matrix' in st.session_state:
+                                active_matrix = st.session_state.interpolated_matrix
+                                title_suffix = "Interpolated"
+                            elif data_source == "Comparison (Both)" and 'original_matrix' in st.session_state and 'interpolated_matrix' in st.session_state:
+                                # For comparison, we'll handle separately
+                                pass
+                            
+                            # Generate sunburst visualization
+                            if viz_type in ["Sunburst", "Both"] and data_source != "Comparison (Both)":
                                 st.markdown(f'<h3 class="sub-header">🌅 {region_type} - Sunburst Visualization</h3>', unsafe_allow_html=True)
                                 
-                                if data_source == "Original Loaded Files" and 'original_matrix' in st.session_state:
-                                    # Original sunburst
-                                    fig = st.session_state.visualizer.create_enhanced_plotly_sunburst(
-                                        st.session_state.original_matrix.T,  # Transpose for time × theta
-                                        st.session_state.times,
-                                        st.session_state.thetas,
-                                        title=f"Original Solutions: {region_type} - {stress_component}",
-                                        cmap=cmap
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                
-                                elif data_source == "Interpolated Solutions" and 'interpolated_matrix' in st.session_state:
-                                    # Interpolated sunburst
-                                    fig = st.session_state.visualizer.create_enhanced_plotly_sunburst(
-                                        st.session_state.interpolated_matrix.T,
-                                        st.session_state.times,
-                                        st.session_state.thetas,
-                                        title=f"Interpolated Solutions: {region_type} - {stress_component}",
-                                        cmap=cmap
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                
-                                elif data_source == "Comparison (Both)" and 'original_matrix' in st.session_state and 'interpolated_matrix' in st.session_state:
-                                    # Comparison sunburst
-                                    fig = st.session_state.comparison_visualizer.create_comparison_sunburst(
-                                        st.session_state.original_matrix.T,
-                                        st.session_state.interpolated_matrix.T,
-                                        st.session_state.thetas,
-                                        st.session_state.times,
-                                        region_type,
-                                        stress_component
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
+                                fig_sunburst = st.session_state.visualizer.create_enhanced_plotly_sunburst(
+                                    active_matrix,
+                                    st.session_state.times,
+                                    st.session_state.thetas,
+                                    title=f"{title_suffix}: {region_type} - {stress_component}",
+                                    cmap=cmap
+                                )
+                                st.plotly_chart(fig_sunburst, use_container_width=True)
                             
-                            if viz_type in ["Radar", "Both"]:
+                            # Generate radar visualization
+                            if viz_type in ["Radar", "Both"] and data_source != "Comparison (Both)":
                                 st.markdown(f'<h3 class="sub-header">📡 {region_type} - Radar Visualization</h3>', unsafe_allow_html=True)
                                 
                                 # Select time point for radar
-                                time_idx = st.slider(
-                                    "Select Time Point for Radar Chart",
-                                    0, len(st.session_state.times)-1, 
-                                    len(st.session_state.times)//2,
-                                    key="radar_time"
-                                )
-                                selected_time = st.session_state.times[time_idx]
-                                
-                                if data_source == "Original Loaded Files" and 'original_matrix' in st.session_state:
-                                    # Original radar
-                                    original_stress = st.session_state.original_matrix[:, time_idx]
-                                    fig = st.session_state.visualizer.create_enhanced_plotly_radar(
-                                        original_stress,
-                                        st.session_state.thetas,
-                                        f"Original: {stress_component}",
-                                        selected_time
+                                if len(st.session_state.times) > 0:
+                                    time_idx = st.slider(
+                                        "Select Time Point for Radar Chart",
+                                        0, len(st.session_state.times)-1, 
+                                        min(len(st.session_state.times)//2, len(st.session_state.times)-1),
+                                        key="radar_time"
                                     )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                
-                                elif data_source == "Interpolated Solutions" and 'interpolated_matrix' in st.session_state:
-                                    # Interpolated radar
-                                    interpolated_stress = st.session_state.interpolated_matrix[:, time_idx]
-                                    fig = st.session_state.visualizer.create_enhanced_plotly_radar(
-                                        interpolated_stress,
-                                        st.session_state.thetas,
-                                        f"Interpolated: {stress_component}",
-                                        selected_time
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
-                                
-                                elif data_source == "Comparison (Both)" and 'original_matrix' in st.session_state and 'interpolated_matrix' in st.session_state:
-                                    # Comparison radar
-                                    original_stress = st.session_state.original_matrix[:, time_idx]
-                                    interpolated_stress = st.session_state.interpolated_matrix[:, time_idx]
+                                    selected_time = st.session_state.times[time_idx]
                                     
-                                    fig = st.session_state.comparison_visualizer.create_comparison_radar(
-                                        original_stress,
-                                        interpolated_stress,
+                                    stress_values = active_matrix[time_idx, :]
+                                    
+                                    fig_radar = st.session_state.visualizer.create_enhanced_plotly_radar(
+                                        stress_values,
                                         st.session_state.thetas,
+                                        f"{title_suffix}: {stress_component}",
+                                        selected_time
+                                    )
+                                    st.plotly_chart(fig_radar, use_container_width=True)
+                            
+                            # Generate comparison visualizations
+                            if data_source == "Comparison (Both)":
+                                if viz_type in ["Sunburst", "Both"]:
+                                    st.markdown(f'<h3 class="sub-header">🌅 Comparison Sunburst</h3>', unsafe_allow_html=True)
+                                    
+                                    fig_comparison = st.session_state.comparison_visualizer.create_comparison_sunburst(
+                                        st.session_state.original_matrix,
+                                        st.session_state.interpolated_matrix,
+                                        st.session_state.thetas,
+                                        st.session_state.times,
                                         region_type,
                                         stress_component
                                     )
-                                    st.plotly_chart(fig, use_container_width=True)
-                            
-                            if viz_type == "Error Analysis" and data_source == "Comparison (Both)":
-                                st.markdown(f'<h3 class="sub-header">📊 {region_type} - Error Analysis</h3>', unsafe_allow_html=True)
+                                    st.plotly_chart(fig_comparison, use_container_width=True)
                                 
-                                if 'original_matrix' in st.session_state and 'interpolated_matrix' in st.session_state:
-                                    fig, stats = st.session_state.comparison_visualizer.create_error_analysis(
-                                        st.session_state.original_matrix,
-                                        st.session_state.interpolated_matrix
-                                    )
+                                if viz_type in ["Radar", "Both"]:
+                                    st.markdown(f'<h3 class="sub-header">📡 Comparison Radar</h3>', unsafe_allow_html=True)
                                     
-                                    st.pyplot(fig)
-                                    
-                                    # Display error statistics
-                                    col1, col2 = st.columns(2)
-                                    with col1:
-                                        st.metric("Mean Absolute Error", f"{stats['MAE']:.6f} GPa")
-                                        st.metric("Root Mean Square Error", f"{stats['RMSE']:.6f} GPa")
-                                    with col2:
-                                        st.metric("Mean Relative Error", f"{stats['Mean_Rel_Error']:.2f}%")
-                                        st.metric("Max Relative Error", f"{stats['Max_Rel_Error']:.2f}%")
-                                    
-                                    # Spatial locality assessment
-                                    st.markdown("#### 🗺️ Spatial Locality Assessment")
-                                    if use_spatial_locality:
-                                        st.success("✅ Spatial locality regularization is improving interpolation accuracy")
-                                        st.write("Euclidean distance weighting helps prioritize similar parameter configurations")
-                                    else:
-                                        st.warning("⚠️ Consider enabling spatial locality for better interpolation accuracy")
+                                    if len(st.session_state.times) > 0:
+                                        time_idx = st.slider(
+                                            "Select Time Point for Radar Comparison",
+                                            0, len(st.session_state.times)-1, 
+                                            min(len(st.session_state.times)//2, len(st.session_state.times)-1),
+                                            key="comparison_radar_time"
+                                        )
+                                        selected_time = st.session_state.times[time_idx]
                                         
+                                        original_stress = st.session_state.original_matrix[time_idx, :]
+                                        interpolated_stress = st.session_state.interpolated_matrix[time_idx, :]
+                                        
+                                        fig_radar_comparison = st.session_state.comparison_visualizer.create_comparison_radar(
+                                            original_stress,
+                                            interpolated_stress,
+                                            st.session_state.thetas,
+                                            region_type,
+                                            stress_component
+                                        )
+                                        st.plotly_chart(fig_radar_comparison, use_container_width=True)
+                        
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)}")
                         st.exception(e)
