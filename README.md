@@ -201,6 +201,13 @@ Comparison codes
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa17-streamlit-red)](https://mechanicalstress-interpolator-module-a17.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
 
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa18-streamlit-red)](https://mechanicalstress-interpolator-module-a18.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa19-streamlit-red)](https://mechanicalstress-interpolator-module-a19.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
+
+Sintering Temperature and Mechanical Stress
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa20-streamlit-red)](https:///mechanicalstress-sintering-temperature-prediction-a20.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
 
 
 
