@@ -1275,6 +1275,30 @@ class HabitPlaneVisualizer:
         angles = np.array(angles)
         stresses = np.array(stresses)
         
+        # Check if data is empty
+        if len(angles) == 0 or len(stresses) == 0:
+            # Return empty figure with a message
+            fig = go.Figure()
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text="No data available for the selected vicinity range",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=900,
+                height=700
+            )
+            return fig
+        
         # Filter to vicinity (habit_angle ± 45° for better visualization)
         vicinity_range = 45.0
         mask = (angles >= self.habit_angle - vicinity_range) & (angles <= self.habit_angle + vicinity_range)
@@ -1282,7 +1306,27 @@ class HabitPlaneVisualizer:
         vic_stresses = stresses[mask]
         
         if len(vic_angles) == 0:
-            return None
+            # Return empty figure with a message
+            fig = go.Figure()
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data in Vicinity",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text=f"No data in vicinity range ({self.habit_angle - vicinity_range:.1f}° to {self.habit_angle + vicinity_range:.1f}°)",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=900,
+                height=700
+            )
+            return fig
         
         # Create polar plot
         fig = go.Figure()
@@ -1402,31 +1446,88 @@ class HabitPlaneVisualizer:
         
         fig = go.Figure()
         
+        # Check if comparison_data is empty
+        if not comparison_data:
+            # Return empty figure with a message
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text="No data available for the selected vicinity range",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=900,
+                height=700
+            )
+            return fig
+        
+        # Track max stress for axis scaling
+        max_stress = 0
+        
         # Add traces for each stress component
         for comp_name, comp_data in comparison_data.items():
             if 'angles' in comp_data and 'stresses' in comp_data:
                 angles = np.array(comp_data['angles'])
                 stresses = np.array(comp_data['stresses'])
                 
-                # Close the loop for radar chart
-                angles_closed = np.append(angles, angles[0])
-                stresses_closed = np.append(stresses, stresses[0])
+                # Check if arrays are empty
+                if len(angles) == 0 or len(stresses) == 0:
+                    continue
                 
-                fig.add_trace(go.Scatterpolar(
-                    r=stresses_closed,
-                    theta=angles_closed,
-                    fill='toself',
-                    fillcolor=self.stress_colors.get(comp_name, 'rgba(100, 100, 100, 0.2)'),
-                    line=dict(color=self.stress_colors.get(comp_name, 'black'), width=3),
-                    marker=dict(size=6, color=self.stress_colors.get(comp_name, 'black')),
-                    name=f'{comp_name.replace("_", " ").title()}',
-                    hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
-                    showlegend=True
-                ))
+                # Check if we have at least one element
+                if len(stresses) > 0:
+                    # Close the loop for radar chart
+                    angles_closed = np.append(angles, angles[0])
+                    stresses_closed = np.append(stresses, stresses[0])
+                    
+                    # Update max stress
+                    max_stress = max(max_stress, max(stresses))
+                    
+                    fig.add_trace(go.Scatterpolar(
+                        r=stresses_closed,
+                        theta=angles_closed,
+                        fill='toself',
+                        fillcolor=self.stress_colors.get(comp_name, 'rgba(100, 100, 100, 0.2)'),
+                        line=dict(color=self.stress_colors.get(comp_name, 'black'), width=3),
+                        marker=dict(size=6, color=self.stress_colors.get(comp_name, 'black')),
+                        name=f'{comp_name.replace("_", " ").title()}',
+                        hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
+                        showlegend=True
+                    ))
+        
+        # If no traces were added (all data was empty), return empty figure with message
+        if len(fig.data) == 0:
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text="No stress data available for the selected defect types in this vicinity range",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=900,
+                height=700
+            )
+            return fig
         
         # Highlight habit plane
         fig.add_trace(go.Scatterpolar(
-            r=[0, max([max(d['stresses']) for d in comparison_data.values() if 'stresses' in d]) * 1.2],
+            r=[0, max_stress * 1.2],
             theta=[self.habit_angle, self.habit_angle],
             mode='lines',
             line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
@@ -1451,7 +1552,7 @@ class HabitPlaneVisualizer:
                     linewidth=3,
                     tickfont=dict(size=12, color='black'),
                     title=dict(text='Stress (GPa)', font=dict(size=14, color='black')),
-                    range=[0, max([max(d['stresses']) for d in comparison_data.values() if 'stresses' in d]) * 1.2]
+                    range=[0, max_stress * 1.2 if max_stress > 0 else 1]
                 ),
                 angularaxis=dict(
                     gridcolor="rgba(100, 100, 100, 0.3)",
@@ -1489,12 +1590,39 @@ class HabitPlaneVisualizer:
         
         fig = go.Figure()
         
+        # Check if defect_comparison is empty
+        if not defect_comparison:
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text="No defect comparison data available",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=1000,
+                height=600
+            )
+            return fig
+        
         # Add traces for each defect type
         for defect_key, data in defect_comparison.items():
             if 'angles' in data and 'stresses' in data and stress_component in data['stresses']:
                 defect_type = data['defect_type']
                 angles = np.array(data['angles'])
                 stresses = np.array(data['stresses'][stress_component])
+                
+                # Check if arrays are empty
+                if len(angles) == 0 or len(stresses) == 0:
+                    continue
+                
                 color = data.get('color', self.defect_colors.get(defect_type, 'black'))
                 
                 fig.add_trace(go.Scatter(
@@ -1507,6 +1635,28 @@ class HabitPlaneVisualizer:
                     hovertemplate='Orientation: %{x:.2f}°<br>Stress: %{y:.4f} GPa<extra></extra>',
                     showlegend=True
                 ))
+        
+        # If no traces were added, return empty figure with message
+        if len(fig.data) == 0:
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text=f"No data available for stress component: {stress_component}",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=1000,
+                height=600
+            )
+            return fig
         
         # Highlight habit plane
         fig.add_vline(x=self.habit_angle, line_width=3, line_dash="dashdot",
@@ -1562,10 +1712,54 @@ class HabitPlaneVisualizer:
         
         fig = go.Figure()
         
+        # Check if sintering_data is empty
+        if not sintering_data:
+            fig.update_layout(
+                title=dict(
+                    text=f"{title} - No Data Available",
+                    font=dict(size=20, family="Arial Black", color='darkblue'),
+                    x=0.5
+                ),
+                annotations=[
+                    dict(
+                        text="No sintering data available",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=14)
+                    )
+                ],
+                width=900,
+                height=700
+            )
+            return fig
+        
         # Add sintering temperature trace
         if 'angles' in sintering_data and 'sintering_temps' in sintering_data:
             angles = np.array(sintering_data['angles'])
             temps = np.array(sintering_data['sintering_temps'].get('arrhenius_defect', []))
+            
+            # Check if arrays are empty
+            if len(angles) == 0 or len(temps) == 0:
+                fig.update_layout(
+                    title=dict(
+                        text=f"{title} - No Data Available",
+                        font=dict(size=20, family="Arial Black", color='darkblue'),
+                        x=0.5
+                    ),
+                    annotations=[
+                        dict(
+                            text="No sintering temperature data available",
+                            x=0.5,
+                            y=0.5,
+                            showarrow=False,
+                            font=dict(size=14)
+                        )
+                    ],
+                    width=900,
+                    height=700
+                )
+                return fig
             
             # Close the loop for radar chart
             angles_closed = np.append(angles, angles[0])
@@ -1586,23 +1780,26 @@ class HabitPlaneVisualizer:
         # Add stress trace on secondary radial axis
         if 'stresses' in sintering_data and 'sigma_hydro' in sintering_data['stresses']:
             stresses = np.array(sintering_data['stresses']['sigma_hydro'])
-            stresses_closed = np.append(stresses, stresses[0])
             
-            # Scale stresses for visualization
-            stress_max = max(stresses) if len(stresses) > 0 else 1
-            temp_max = max(temps) if len(temps) > 0 else 1
-            stress_scale = temp_max / (stress_max * 2) if stress_max > 0 else 1
-            
-            fig.add_trace(go.Scatterpolar(
-                r=stresses_closed * stress_scale,
-                theta=angles_closed,
-                line=dict(color='rgb(31, 119, 180)', width=3, dash='dot'),
-                marker=dict(size=6, color='rgb(31, 119, 180)'),
-                name='Hydrostatic Stress (scaled)',
-                hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{customdata:.4f} GPa<extra></extra>',
-                customdata=stresses_closed,
-                showlegend=True
-            ))
+            # Check if stresses array is not empty
+            if len(stresses) > 0:
+                stresses_closed = np.append(stresses, stresses[0])
+                
+                # Scale stresses for visualization
+                stress_max = max(stresses) if len(stresses) > 0 else 1
+                temp_max = max(temps) if len(temps) > 0 else 1
+                stress_scale = temp_max / (stress_max * 2) if stress_max > 0 else 1
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=stresses_closed * stress_scale,
+                    theta=angles_closed,
+                    line=dict(color='rgb(31, 119, 180)', width=3, dash='dot'),
+                    marker=dict(size=6, color='rgb(31, 119, 180)'),
+                    name='Hydrostatic Stress (scaled)',
+                    hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{customdata:.4f} GPa<extra></extra>',
+                    customdata=stresses_closed,
+                    showlegend=True
+                ))
         
         # Highlight habit plane
         fig.add_trace(go.Scatterpolar(
@@ -1691,6 +1888,38 @@ class HabitPlaneVisualizer:
                                       title="Comprehensive Habit Plane Analysis"):
         """Create comprehensive dashboard with multiple visualizations"""
         
+        # Check if data is empty
+        if not vicinity_sweep or 'angles' not in vicinity_sweep:
+            # Return empty figure with message
+            fig = make_subplots(
+                rows=1, cols=1,
+                subplot_titles=('No Data Available'),
+            )
+            
+            fig.update_layout(
+                title=dict(
+                    text=title,
+                    font=dict(size=24, family="Arial Black", color='darkblue'),
+                    x=0.5,
+                    y=0.98
+                ),
+                annotations=[
+                    dict(
+                        text="No vicinity sweep data available",
+                        x=0.5,
+                        y=0.5,
+                        showarrow=False,
+                        font=dict(size=16)
+                    )
+                ],
+                height=600,
+                width=800,
+                showlegend=False,
+                paper_bgcolor='white',
+                plot_bgcolor='white'
+            )
+            return fig
+        
         # Create subplots
         fig = make_subplots(
             rows=2, cols=3,
@@ -1710,63 +1939,72 @@ class HabitPlaneVisualizer:
             horizontal_spacing=0.1
         )
         
+        angles = vicinity_sweep['angles']
+        
         # 1. Hydrostatic stress sunburst
-        if 'angles' in vicinity_sweep and 'stresses' in vicinity_sweep:
-            angles = vicinity_sweep['angles']
+        if 'stresses' in vicinity_sweep and 'sigma_hydro' in vicinity_sweep['stresses']:
             sigma_hydro = vicinity_sweep['stresses']['sigma_hydro']
             
-            fig.add_trace(
-                go.Scatterpolar(
-                    r=sigma_hydro,
-                    theta=angles,
-                    mode='lines+markers',
-                    marker=dict(size=4, color=sigma_hydro, colorscale='RdBu'),
-                    line=dict(color='rgba(31, 119, 180, 0.7)', width=2),
-                    name='σ_hydro',
-                    showlegend=False
-                ),
-                row=1, col=1
-            )
+            if len(sigma_hydro) > 0 and len(sigma_hydro) == len(angles):
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=sigma_hydro,
+                        theta=angles,
+                        mode='lines+markers',
+                        marker=dict(size=4, color=sigma_hydro, colorscale='RdBu'),
+                        line=dict(color='rgba(31, 119, 180, 0.7)', width=2),
+                        name='σ_hydro',
+                        showlegend=False
+                    ),
+                    row=1, col=1
+                )
         
         # 2. Von Mises stress sunburst
-        if 'angles' in vicinity_sweep and 'stresses' in vicinity_sweep:
+        if 'stresses' in vicinity_sweep and 'von_mises' in vicinity_sweep['stresses']:
             von_mises = vicinity_sweep['stresses']['von_mises']
             
-            fig.add_trace(
-                go.Scatterpolar(
-                    r=von_mises,
-                    theta=angles,
-                    mode='lines+markers',
-                    marker=dict(size=4, color=von_mises, colorscale='Viridis'),
-                    line=dict(color='rgba(255, 127, 14, 0.7)', width=2),
-                    name='σ_vm',
-                    showlegend=False
-                ),
-                row=1, col=2
-            )
+            if len(von_mises) > 0 and len(von_mises) == len(angles):
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=von_mises,
+                        theta=angles,
+                        mode='lines+markers',
+                        marker=dict(size=4, color=von_mises, colorscale='Viridis'),
+                        line=dict(color='rgba(255, 127, 14, 0.7)', width=2),
+                        name='σ_vm',
+                        showlegend=False
+                    ),
+                    row=1, col=2
+                )
         
         # 3. Stress magnitude sunburst
-        if 'angles' in vicinity_sweep and 'stresses' in vicinity_sweep:
+        if 'stresses' in vicinity_sweep and 'sigma_mag' in vicinity_sweep['stresses']:
             sigma_mag = vicinity_sweep['stresses']['sigma_mag']
             
-            fig.add_trace(
-                go.Scatterpolar(
-                    r=sigma_mag,
-                    theta=angles,
-                    mode='lines+markers',
-                    marker=dict(size=4, color=sigma_mag, colorscale='Plasma'),
-                    line=dict(color='rgba(44, 160, 44, 0.7)', width=2),
-                    name='σ_mag',
-                    showlegend=False
-                ),
-                row=1, col=3
-            )
+            if len(sigma_mag) > 0 and len(sigma_mag) == len(angles):
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=sigma_mag,
+                        theta=angles,
+                        mode='lines+markers',
+                        marker=dict(size=4, color=sigma_mag, colorscale='Plasma'),
+                        line=dict(color='rgba(44, 160, 44, 0.7)', width=2),
+                        name='σ_mag',
+                        showlegend=False
+                    ),
+                    row=1, col=3
+                )
         
         # 4. Defect type comparison
         if defect_comparison:
+            added_defects = 0
             for defect_key, data in list(defect_comparison.items())[:4]:  # Limit to 4 defects
                 defect_type = data['defect_type']
-                if 'angles' in data and 'stresses' in data and 'sigma_hydro' in data['stresses']:
+                if ('angles' in data and 'stresses' in data and 
+                    'sigma_hydro' in data['stresses'] and
+                    len(data['angles']) > 0 and 
+                    len(data['stresses']['sigma_hydro']) > 0):
+                    
                     fig.add_trace(
                         go.Scatter(
                             x=data['angles'],
@@ -1778,43 +2016,77 @@ class HabitPlaneVisualizer:
                         ),
                         row=2, col=1
                     )
+                    added_defects += 1
+            
+            # If no defects were added, add a placeholder
+            if added_defects == 0:
+                fig.add_trace(
+                    go.Scatter(
+                        x=[0, 360],
+                        y=[0, 0],
+                        mode='lines',
+                        line=dict(width=0),
+                        showlegend=False
+                    ),
+                    row=2, col=1
+                )
         
         # 5. Sintering temperature radar
-        if 'angles' in vicinity_sweep and 'sintering_temps' in vicinity_sweep:
+        if 'sintering_temps' in vicinity_sweep and 'arrhenius_defect' in vicinity_sweep['sintering_temps']:
             sintering_temps = vicinity_sweep['sintering_temps']['arrhenius_defect']
             
-            fig.add_trace(
-                go.Scatterpolar(
-                    r=sintering_temps,
-                    theta=angles,
-                    mode='lines+markers',
-                    marker=dict(size=4, color=sintering_temps, colorscale='Hot'),
-                    line=dict(color='rgba(255, 140, 0, 0.7)', width=2),
-                    name='T_sinter',
-                    showlegend=False
-                ),
-                row=2, col=2
-            )
+            if len(sintering_temps) > 0 and len(sintering_temps) == len(angles):
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=sintering_temps,
+                        theta=angles,
+                        mode='lines+markers',
+                        marker=dict(size=4, color=sintering_temps, colorscale='Hot'),
+                        line=dict(color='rgba(255, 140, 0, 0.7)', width=2),
+                        name='T_sinter',
+                        showlegend=False
+                    ),
+                    row=2, col=2
+                )
         
-        # 6. Stress components radar
-        if 'angles' in vicinity_sweep and 'stresses' in vicinity_sweep:
-            # Normalize stresses for radar comparison
-            max_stress = max([
-                max(vicinity_sweep['stresses']['sigma_hydro']),
-                max(vicinity_sweep['stresses']['von_mises']),
-                max(vicinity_sweep['stresses']['sigma_mag'])
-            ])
+        # 6. Stress components radar (normalized)
+        if 'stresses' in vicinity_sweep:
+            # Find max stress for normalization
+            max_stress = 0
+            for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
+                if comp in vicinity_sweep['stresses']:
+                    stresses = vicinity_sweep['stresses'][comp]
+                    if len(stresses) > 0:
+                        max_stress = max(max_stress, max(stresses))
             
             if max_stress > 0:
-                for comp_name, stresses in vicinity_sweep['stresses'].items():
-                    normalized = np.array(stresses) / max_stress
+                added_components = 0
+                for comp_name in ['sigma_hydro', 'von_mises', 'sigma_mag']:
+                    if comp_name in vicinity_sweep['stresses']:
+                        stresses = vicinity_sweep['stresses'][comp_name]
+                        if len(stresses) > 0 and len(stresses) == len(angles):
+                            normalized = np.array(stresses) / max_stress
+                            fig.add_trace(
+                                go.Scatterpolar(
+                                    r=normalized,
+                                    theta=angles,
+                                    mode='lines',
+                                    line=dict(width=2, color=self.stress_colors.get(comp_name, 'black')),
+                                    name=comp_name,
+                                    showlegend=False
+                                ),
+                                row=2, col=3
+                            )
+                            added_components += 1
+                
+                # If no components were added, add a placeholder
+                if added_components == 0:
                     fig.add_trace(
                         go.Scatterpolar(
-                            r=normalized,
-                            theta=angles,
+                            r=[0, 1],
+                            theta=[0, 0],
                             mode='lines',
-                            line=dict(width=2, color=self.stress_colors.get(comp_name, 'black')),
-                            name=comp_name,
+                            line=dict(width=0),
                             showlegend=False
                         ),
                         row=2, col=3
@@ -1841,7 +2113,7 @@ class HabitPlaneVisualizer:
                 radialaxis_range=[0, 1.2],
                 angularaxis_rotation=90,
                 angularaxis_direction="clockwise",
-                sector=[min(angles), max(angles)] if 'angles' in vicinity_sweep else [0, 360],
+                sector=[min(angles), max(angles)] if len(angles) > 0 else [0, 360],
                 row=1, col=i
             )
         
