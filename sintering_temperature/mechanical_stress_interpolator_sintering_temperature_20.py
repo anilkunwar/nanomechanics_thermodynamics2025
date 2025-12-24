@@ -1239,6 +1239,9 @@ class PhysicsAwareInterpolator:
 # =============================================
 # ENHANCED VISUALIZER FOR HABIT PLANE VICINITY
 # =============================================
+# =============================================
+# ENHANCED VISUALIZER FOR HABIT PLANE VICINITY
+# =============================================
 
 class HabitPlaneVisualizer:
     """Specialized visualizer for habit plane vicinity analysis"""
@@ -1472,11 +1475,11 @@ class HabitPlaneVisualizer:
         # Track max stress for axis scaling
         max_stress = 0
         
-        # Add traces for each stress component
-        for comp_name, comp_data in comparison_data.items():
-            if 'angles' in comp_data and 'stresses' in comp_data:
-                angles = np.array(comp_data['angles'])
-                stresses = np.array(comp_data['stresses'])
+        # Add traces for each entry in comparison_data
+        for entry_name, entry_data in comparison_data.items():
+            if 'angles' in entry_data and 'stresses' in entry_data:
+                angles = np.array(entry_data['angles'])
+                stresses = np.array(entry_data['stresses'])
                 
                 # Check if arrays are empty
                 if len(angles) == 0 or len(stresses) == 0:
@@ -1491,14 +1494,23 @@ class HabitPlaneVisualizer:
                     # Update max stress
                     max_stress = max(max_stress, max(stresses))
                     
+                    # Get color based on entry name or component
+                    color = entry_data.get('color', 
+                            self.stress_colors.get(entry_name, 'rgba(100, 100, 100, 0.2)'))
+                    
+                    # Get display name
+                    display_name = entry_data.get('defect_type', entry_name)
+                    if 'component' in entry_data:
+                        display_name = f"{display_name} - {entry_data['component']}"
+                    
                     fig.add_trace(go.Scatterpolar(
                         r=stresses_closed,
                         theta=angles_closed,
                         fill='toself',
-                        fillcolor=self.stress_colors.get(comp_name, 'rgba(100, 100, 100, 0.2)'),
-                        line=dict(color=self.stress_colors.get(comp_name, 'black'), width=3),
-                        marker=dict(size=6, color=self.stress_colors.get(comp_name, 'black')),
-                        name=f'{comp_name.replace("_", " ").title()}',
+                        fillcolor=color,
+                        line=dict(color=color, width=3),
+                        marker=dict(size=6, color=color),
+                        name=display_name,
                         hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
                         showlegend=True
                     ))
