@@ -211,7 +211,7 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa21-streamlit-red)](https:///mechanicalstress-sintering-temperature-prediction-a21.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa22-streamlit-red)](https:///mechanicalstress-interpolation-attheta22.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa22-streamlit-red)](https:///mechanicalstress-interpolation-at-theta22.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete)
 
 
 
