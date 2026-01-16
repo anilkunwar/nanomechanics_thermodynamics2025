@@ -253,11 +253,24 @@ class TransformerSpatialInterpolator:
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
-        # Input projection
+        # Input projection - FIXED: Now expects exactly 15 input features
         self.input_proj = nn.Linear(15, d_model)
         
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
+    
+    def debug_feature_dimensions(self, params_list, target_angle_deg):
+        """Debug method to check feature dimensions"""
+        encoded = self.encode_parameters(params_list, target_angle_deg)
+        print(f"Debug: Encoded shape: {encoded.shape}")
+        print(f"Debug: Number of features: {encoded.shape[1]}")
+        
+        # Print first encoded vector
+        if len(params_list) > 0:
+            print(f"Debug: First encoded vector: {encoded[0]}")
+            print(f"Debug: Number of non-zero elements: {torch.sum(encoded[0] != 0).item()}")
+        
+        return encoded.shape
         
     def compute_positional_weights(self, source_params, target_params):
         """Compute spatial locality weights based on parameter similarity"""
@@ -292,39 +305,49 @@ class TransformerSpatialInterpolator:
         return np.array(weights)
     
     def encode_parameters(self, params_list, target_angle_deg):
-        """Encode parameters into transformer input"""
+        """Encode parameters into transformer input - FIXED to return exactly 15 features"""
         encoded = []
         for params in params_list:
             # Create feature vector
             features = []
             
-            # Numeric features
+            # Numeric features (3 features)
             features.append(params.get('eps0', 0.707) / 3.0)
             features.append(params.get('kappa', 0.6) / 2.0)
             theta = params.get('theta', 0.0)
             features.append(theta / np.pi)
             
-            # One-hot encoding for defect type
+            # One-hot encoding for defect type (4 features)
             defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
             defect = params.get('defect_type', 'Twin')
             for dt in defect_types:
                 features.append(1.0 if dt == defect else 0.0)
             
-            # Shape encoding
+            # Shape encoding (4 features)
             shapes = ['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle']
             shape = params.get('shape', 'Square')
             for s in shapes:
                 features.append(1.0 if s == shape else 0.0)
             
-            # Orientation features
+            # Orientation features (3 features)
             theta_deg = np.degrees(theta) if theta is not None else 0.0
             angle_diff = abs(theta_deg - target_angle_deg)
             features.append(np.exp(-angle_diff / 45.0))
             features.append(np.sin(np.radians(2 * theta_deg)))
+            features.append(np.cos(np.radians(2 * theta_deg)))  # FIX: Added this feature
             
-            # Habit plane proximity
+            # Habit plane proximity (1 feature)
             habit_distance = abs(theta_deg - 54.7)
             features.append(np.exp(-habit_distance / 15.0))
+            
+            # Verify we have exactly 15 features
+            if len(features) != 15:
+                st.warning(f"Warning: Expected 15 features, got {len(features)}. Padding or truncating.")
+                # Pad with zeros if fewer than 15
+                while len(features) < 15:
+                    features.append(0.0)
+                # Truncate if more than 15
+                features = features[:15]
             
             encoded.append(features)
         
@@ -334,157 +357,185 @@ class TransformerSpatialInterpolator:
         """Interpolate full spatial stress fields using transformer attention"""
         
         if not sources:
+            st.warning("No sources provided for interpolation.")
             return None
         
-        # Extract source parameters and fields
-        source_params = []
-        source_fields = []
-        
-        for src in sources:
-            if 'params' not in src or 'history' not in src:
-                continue
+        try:
+            # Extract source parameters and fields
+            source_params = []
+            source_fields = []
             
-            source_params.append(src['params'])
+            for src in sources:
+                if 'params' not in src or 'history' not in src:
+                    st.warning(f"Skipping source: missing params or history")
+                    continue
+                
+                source_params.append(src['params'])
+                
+                # Get last frame stress fields
+                history = src['history']
+                if history and isinstance(history[-1], dict):
+                    last_frame = history[-1]
+                    if 'stresses' in last_frame:
+                        # Extract all stress components
+                        stress_fields = last_frame['stresses']
+                        
+                        # Get von Mises if available, otherwise compute
+                        if 'von_mises' in stress_fields:
+                            vm = stress_fields['von_mises']
+                        else:
+                            # Compute von Mises from components
+                            vm = self.compute_von_mises(stress_fields)
+                        
+                        # Get hydrostatic stress
+                        if 'sigma_hydro' in stress_fields:
+                            hydro = stress_fields['sigma_hydro']
+                        else:
+                            hydro = self.compute_hydrostatic(stress_fields)
+                        
+                        # Get stress magnitude
+                        if 'sigma_mag' in stress_fields:
+                            mag = stress_fields['sigma_mag']
+                        else:
+                            mag = np.sqrt(vm**2 + hydro**2)
+                        
+                        source_fields.append({
+                            'von_mises': vm,
+                            'sigma_hydro': hydro,
+                            'sigma_mag': mag
+                        })
+                    else:
+                        st.warning(f"Skipping source: no stress fields found")
+                        continue
+                else:
+                    st.warning(f"Skipping source: invalid history")
+                    continue
             
-            # Get last frame stress fields
-            history = src['history']
-            if history and isinstance(history[-1], dict):
-                last_frame = history[-1]
-                if 'stresses' in last_frame:
-                    # Extract all stress components
-                    stress_fields = last_frame['stresses']
-                    
-                    # Get von Mises if available, otherwise compute
-                    if 'von_mises' in stress_fields:
-                        vm = stress_fields['von_mises']
-                    else:
-                        # Compute von Mises from components
-                        vm = self.compute_von_mises(stress_fields)
-                    
-                    # Get hydrostatic stress
-                    if 'sigma_hydro' in stress_fields:
-                        hydro = stress_fields['sigma_hydro']
-                    else:
-                        hydro = self.compute_hydrostatic(stress_fields)
-                    
-                    # Get stress magnitude
-                    if 'sigma_mag' in stress_fields:
-                        mag = stress_fields['sigma_mag']
-                    else:
-                        mag = np.sqrt(vm**2 + hydro**2)
-                    
-                    source_fields.append({
-                        'von_mises': vm,
-                        'sigma_hydro': hydro,
-                        'sigma_mag': mag
-                    })
-        
-        if not source_params or not source_fields:
+            if not source_params or not source_fields:
+                st.error("No valid sources with stress fields found.")
+                return None
+            
+            # Check if all fields have same shape
+            shapes = [f['von_mises'].shape for f in source_fields]
+            if len(set(shapes)) > 1:
+                # Resize to common shape
+                target_shape = shapes[0]  # Use first shape
+                resized_fields = []
+                for fields in source_fields:
+                    resized = {}
+                    for key, field in fields.items():
+                        if field.shape != target_shape:
+                            # Resize using interpolation
+                            factors = [t/s for t, s in zip(target_shape, field.shape)]
+                            resized[key] = zoom(field, factors, order=1)
+                        else:
+                            resized[key] = field
+                    resized_fields.append(resized)
+                source_fields = resized_fields
+            
+            # Debug: Check feature dimensions
+            source_features = self.encode_parameters(source_params, target_angle_deg)
+            target_features = self.encode_parameters([target_params], target_angle_deg)
+            
+            # Ensure we have exactly 15 features
+            if source_features.shape[1] != 15 or target_features.shape[1] != 15:
+                st.warning(f"Feature dimension mismatch: source_features shape={source_features.shape}, target_features shape={target_features.shape}")
+                # Force reshape to 15 features
+                if source_features.shape[1] < 15:
+                    padding = torch.zeros(source_features.shape[0], 15 - source_features.shape[1])
+                    source_features = torch.cat([source_features, padding], dim=1)
+                if target_features.shape[1] < 15:
+                    padding = torch.zeros(target_features.shape[0], 15 - target_features.shape[1])
+                    target_features = torch.cat([target_features, padding], dim=1)
+            
+            # Compute positional weights
+            pos_weights = self.compute_positional_weights(source_params, target_params)
+            pos_weights = pos_weights / pos_weights.sum() if pos_weights.sum() > 0 else np.ones_like(pos_weights) / len(pos_weights)
+            
+            # Prepare transformer input
+            batch_size = 1
+            seq_len = len(source_features) + 1  # Sources + target
+            
+            # Create sequence: [target, source1, source2, ...]
+            all_features = torch.cat([target_features, source_features], dim=0).unsqueeze(0)  # [1, seq_len, features]
+            
+            # Apply input projection
+            proj_features = self.input_proj(all_features)
+            
+            # Add positional encoding
+            proj_features = self.pos_encoder(proj_features)
+            
+            # Transformer encoding
+            transformer_output = self.transformer(proj_features)
+            
+            # Extract target representation (first in sequence)
+            target_rep = transformer_output[:, 0, :]
+            
+            # Compute attention to sources
+            source_reps = transformer_output[:, 1:, :]
+            
+            # Compute scaled dot-product attention
+            attn_scores = torch.matmul(target_rep.unsqueeze(1), source_reps.transpose(1, 2)).squeeze(1) / np.sqrt(self.d_model)
+            attn_scores = attn_scores / self.temperature
+            transformer_weights = torch.softmax(attn_scores, dim=-1).squeeze().detach().numpy()
+            
+            # Combine positional and transformer weights
+            combined_weights = 0.7 * transformer_weights + 0.3 * pos_weights
+            combined_weights = combined_weights / combined_weights.sum()
+            
+            # Interpolate spatial fields
+            interpolated_fields = {}
+            shape = source_fields[0]['von_mises'].shape
+            
+            for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                interpolated = np.zeros(shape)
+                for i, fields in enumerate(source_fields):
+                    if component in fields:
+                        interpolated += combined_weights[i] * fields[component]
+                interpolated_fields[component] = interpolated
+            
+            # Compute additional metrics
+            max_vm = np.max(interpolated_fields['von_mises'])
+            max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
+            
+            return {
+                'fields': interpolated_fields,
+                'weights': {
+                    'transformer': transformer_weights.tolist(),
+                    'positional': pos_weights.tolist(),
+                    'combined': combined_weights.tolist()
+                },
+                'statistics': {
+                    'von_mises': {
+                        'max': float(max_vm),
+                        'mean': float(np.mean(interpolated_fields['von_mises'])),
+                        'std': float(np.std(interpolated_fields['von_mises'])),
+                        'min': float(np.min(interpolated_fields['von_mises']))
+                    },
+                    'hydrostatic': {
+                        'max_tension': float(np.max(interpolated_fields['sigma_hydro'])),
+                        'max_compression': float(np.min(interpolated_fields['sigma_hydro'])),
+                        'mean': float(np.mean(interpolated_fields['sigma_hydro'])),
+                        'std': float(np.std(interpolated_fields['sigma_hydro']))
+                    },
+                    'magnitude': {
+                        'max': float(np.max(interpolated_fields['sigma_mag'])),
+                        'mean': float(np.mean(interpolated_fields['sigma_mag'])),
+                        'std': float(np.std(interpolated_fields['sigma_mag'])),
+                        'min': float(np.min(interpolated_fields['sigma_mag']))
+                    }
+                },
+                'target_params': target_params,
+                'target_angle': target_angle_deg,
+                'shape': shape,
+                'num_sources': len(source_fields)
+            }
+            
+        except Exception as e:
+            st.error(f"Error during interpolation: {str(e)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return None
-        
-        # Check if all fields have same shape
-        shapes = [f['von_mises'].shape for f in source_fields]
-        if len(set(shapes)) > 1:
-            # Resize to common shape
-            target_shape = shapes[0]  # Use first shape
-            resized_fields = []
-            for fields in source_fields:
-                resized = {}
-                for key, field in fields.items():
-                    if field.shape != target_shape:
-                        # Resize using interpolation
-                        factors = [t/s for t, s in zip(target_shape, field.shape)]
-                        resized[key] = zoom(field, factors, order=1)
-                    else:
-                        resized[key] = field
-                resized_fields.append(resized)
-            source_fields = resized_fields
-        
-        # Compute positional weights
-        pos_weights = self.compute_positional_weights(source_params, target_params)
-        pos_weights = pos_weights / pos_weights.sum() if pos_weights.sum() > 0 else np.ones_like(pos_weights) / len(pos_weights)
-        
-        # Encode parameters
-        source_features = self.encode_parameters(source_params, target_angle_deg)
-        target_features = self.encode_parameters([target_params], target_angle_deg)
-        
-        # Prepare transformer input
-        batch_size = 1
-        seq_len = len(source_features) + 1  # Sources + target
-        
-        # Create sequence: [target, source1, source2, ...]
-        all_features = torch.cat([target_features, source_features], dim=0).unsqueeze(0)  # [1, seq_len, features]
-        
-        # Apply input projection
-        proj_features = self.input_proj(all_features)
-        
-        # Add positional encoding
-        proj_features = self.pos_encoder(proj_features)
-        
-        # Transformer encoding
-        transformer_output = self.transformer(proj_features)
-        
-        # Extract target representation (first in sequence)
-        target_rep = transformer_output[:, 0, :]
-        
-        # Compute attention to sources
-        source_reps = transformer_output[:, 1:, :]
-        
-        # Compute scaled dot-product attention
-        attn_scores = torch.matmul(target_rep.unsqueeze(1), source_reps.transpose(1, 2)).squeeze(1) / np.sqrt(self.d_model)
-        attn_scores = attn_scores / self.temperature
-        transformer_weights = torch.softmax(attn_scores, dim=-1).squeeze().detach().numpy()
-        
-        # Combine positional and transformer weights
-        combined_weights = 0.7 * transformer_weights + 0.3 * pos_weights
-        combined_weights = combined_weights / combined_weights.sum()
-        
-        # Interpolate spatial fields
-        interpolated_fields = {}
-        shape = source_fields[0]['von_mises'].shape
-        
-        for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
-            interpolated = np.zeros(shape)
-            for i, fields in enumerate(source_fields):
-                if component in fields:
-                    interpolated += combined_weights[i] * fields[component]
-            interpolated_fields[component] = interpolated
-        
-        # Compute additional metrics
-        max_vm = np.max(interpolated_fields['von_mises'])
-        max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
-        
-        return {
-            'fields': interpolated_fields,
-            'weights': {
-                'transformer': transformer_weights.tolist(),
-                'positional': pos_weights.tolist(),
-                'combined': combined_weights.tolist()
-            },
-            'statistics': {
-                'von_mises': {
-                    'max': float(max_vm),
-                    'mean': float(np.mean(interpolated_fields['von_mises'])),
-                    'std': float(np.std(interpolated_fields['von_mises'])),
-                    'min': float(np.min(interpolated_fields['von_mises']))
-                },
-                'hydrostatic': {
-                    'max_tension': float(np.max(interpolated_fields['sigma_hydro'])),
-                    'max_compression': float(np.min(interpolated_fields['sigma_hydro'])),
-                    'mean': float(np.mean(interpolated_fields['sigma_hydro'])),
-                    'std': float(np.std(interpolated_fields['sigma_hydro']))
-                },
-                'magnitude': {
-                    'max': float(np.max(interpolated_fields['sigma_mag'])),
-                    'mean': float(np.mean(interpolated_fields['sigma_mag'])),
-                    'std': float(np.std(interpolated_fields['sigma_mag'])),
-                    'min': float(np.min(interpolated_fields['sigma_mag']))
-                }
-            },
-            'target_params': target_params,
-            'target_angle': target_angle_deg,
-            'shape': shape
-        }
     
     def compute_von_mises(self, stress_fields):
         """Compute von Mises stress from stress components"""
@@ -847,7 +898,8 @@ class ResultsManager:
                 'target_params': result['target_params'],
                 'shape': result['shape'],
                 'statistics': result['statistics'],
-                'weights': result['weights']
+                'weights': result['weights'],
+                'num_sources': result.get('num_sources', 0)
             }
         }
         
@@ -897,6 +949,19 @@ class ResultsManager:
             return obj.isoformat()
         else:
             return str(obj)
+
+# =============================================
+# HELPER FUNCTIONS
+# =============================================
+
+def _calculate_entropy(weights):
+    """Calculate entropy of weight distribution"""
+    weights = np.array(weights)
+    weights = weights[weights > 0]  # Remove zeros
+    if len(weights) == 0:
+        return 0.0
+    weights = weights / weights.sum()
+    return -np.sum(weights * np.log(weights))
 
 # =============================================
 # MAIN APPLICATION
@@ -1021,6 +1086,16 @@ def main():
                 st.session_state.interpolation_result = None
                 st.success("Cache cleared")
         
+        # Debug button
+        if st.button("🔍 Debug Feature Dimensions", use_container_width=True):
+            if st.session_state.solutions:
+                source_params = [sol['params'] for sol in st.session_state.solutions[:1]]
+                shape = st.session_state.transformer_interpolator.debug_feature_dimensions(
+                    source_params, 54.7
+                )
+                st.write(f"Feature dimensions: {shape}")
+                st.write(f"Number of solutions: {len(st.session_state.solutions)}")
+        
         # Show loaded solutions info
         if st.session_state.solutions:
             with st.expander(f"📊 Loaded Solutions ({len(st.session_state.solutions)})"):
@@ -1060,6 +1135,16 @@ def main():
             "Shape",
             ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle"],
             index=0
+        )
+        
+        # Kappa parameter
+        kappa = st.slider(
+            "Kappa Parameter",
+            min_value=0.1,
+            max_value=2.0,
+            value=0.6,
+            step=0.1,
+            help="Material parameter"
         )
         
         # Transformer parameters
@@ -1121,7 +1206,7 @@ def main():
                 target_params = {
                     'defect_type': defect_type,
                     'eps0': eps0,
-                    'kappa': 0.6,
+                    'kappa': kappa,
                     'theta': np.radians(custom_theta),
                     'shape': shape
                 }
@@ -1137,7 +1222,7 @@ def main():
                         
                         if result:
                             st.session_state.interpolation_result = result
-                            st.success(f"✅ Successfully interpolated stress fields at θ={custom_theta:.1f}°")
+                            st.success(f"✅ Successfully interpolated stress fields at θ={custom_theta:.1f}° using {result['num_sources']} sources")
                         else:
                             st.error("❌ Failed to interpolate stress fields. Check data compatibility.")
                     except Exception as e:
@@ -1223,7 +1308,7 @@ def main():
                 
                 with col4:
                     st.metric("Field Shape", f"{result['shape'][0]}×{result['shape'][1]}",
-                             f"θ={result['target_angle']:.1f}°")
+                             f"θ={result['target_angle']:.1f}° | Sources: {result.get('num_sources', 0)}")
                 
                 # Display parameters
                 with st.expander("🔧 Interpolation Parameters", expanded=True):
@@ -1240,7 +1325,7 @@ def main():
                         st.write("**Interpolation Settings:**")
                         st.write(f"- Spatial Sigma: {spatial_sigma}")
                         st.write(f"- Attention Temperature: {attention_temp}")
-                        st.write(f"- Number of Sources: {len(result['weights']['combined'])}")
+                        st.write(f"- Number of Sources: {result.get('num_sources', len(result['weights']['combined']))}")
                 
                 # Quick preview
                 st.markdown("#### 👀 Quick Preview")
@@ -1428,13 +1513,13 @@ def main():
                     
                     with col_stat1:
                         st.metric("Transformer Weight Entropy", 
-                                 f"{self._calculate_entropy(weights['transformer']):.3f}")
+                                 f"{_calculate_entropy(weights['transformer']):.3f}")
                     with col_stat2:
                         st.metric("Positional Weight Entropy",
-                                 f"{self._calculate_entropy(weights['positional']):.3f}")
+                                 f"{_calculate_entropy(weights['positional']):.3f}")
                     with col_stat3:
                         st.metric("Combined Weight Entropy",
-                                 f"{self._calculate_entropy(weights['combined']):.3f}")
+                                 f"{_calculate_entropy(weights['combined']):.3f}")
                     
                     # Top contributors
                     st.write("**Top 5 Contributing Sources:**")
@@ -1459,7 +1544,7 @@ def main():
                 
                 with col_e1:
                     # Export as JSON
-                    if st.button("💾 Export as JSON", use_container_width=True):
+                    if st.button("💾 Export as JSON", use_container_width=True, key="export_json"):
                         visualization_params = {
                             'colormap': colormap_name,
                             'visualization_type': visualization_type
@@ -1474,12 +1559,13 @@ def main():
                             data=json_str,
                             file_name=filename,
                             mime="application/json",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="download_json"
                         )
                 
                 with col_e2:
                     # Export as CSV
-                    if st.button("📊 Export as CSV", use_container_width=True):
+                    if st.button("📊 Export as CSV", use_container_width=True, key="export_csv"):
                         csv_str, filename = st.session_state.results_manager.export_to_csv(result)
                         
                         st.download_button(
@@ -1487,12 +1573,13 @@ def main():
                             data=csv_str,
                             file_name=filename,
                             mime="text/csv",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="download_csv"
                         )
                 
                 with col_e3:
                     # Export plot as PNG
-                    if st.button("🖼️ Export Plot", use_container_width=True):
+                    if st.button("🖼️ Export Plot", use_container_width=True, key="export_plot"):
                         # Create a figure to export
                         fig_export = st.session_state.heatmap_visualizer.create_stress_heatmap(
                             result['fields']['von_mises'],
@@ -1513,7 +1600,8 @@ def main():
                             data=buf,
                             file_name=filename,
                             mime="image/png",
-                            use_container_width=True
+                            use_container_width=True,
+                            key="download_png"
                         )
                         plt.close(fig_export)
                 
@@ -1521,7 +1609,7 @@ def main():
                 st.markdown("---")
                 st.markdown("#### 📦 Bulk Export All Components")
                 
-                if st.button("🚀 Export All Components", use_container_width=True, type="secondary"):
+                if st.button("🚀 Export All Components", use_container_width=True, type="secondary", key="export_all"):
                     # Create zip file with all components
                     zip_buffer = BytesIO()
                     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -1537,6 +1625,7 @@ def main():
                             'target_angle': result['target_angle'],
                             'target_params': result['target_params'],
                             'statistics': result['statistics'],
+                            'weights': result['weights'],
                             'exported_at': datetime.now().isoformat()
                         }
                         json_str = json.dumps(metadata, indent=2)
@@ -1552,7 +1641,8 @@ def main():
                         data=zip_buffer.getvalue(),
                         file_name=filename,
                         mime="application/zip",
-                        use_container_width=True
+                        use_container_width=True,
+                        key="download_zip"
                     )
                 
                 # Export statistics
@@ -1578,20 +1668,11 @@ def main():
                         label="📥 Download Statistics CSV",
                         data=csv_stats,
                         file_name=f"statistics_theta_{result['target_angle']:.1f}.csv",
-                        mime="text/csv"
+                        mime="text/csv",
+                        key="download_stats"
                     )
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
-
-    # Helper function for entropy calculation
-    def _calculate_entropy(weights):
-        """Calculate entropy of weight distribution"""
-        weights = np.array(weights)
-        weights = weights[weights > 0]  # Remove zeros
-        if len(weights) == 0:
-            return 0.0
-        weights = weights / weights.sum()
-        return -np.sum(weights * np.log(weights))
 
 # Run the application
 if __name__ == "__main__":
