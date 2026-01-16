@@ -23,12 +23,16 @@ sigma_max_GPa = st.sidebar.slider("Max |σₕ| [GPa]", 1.0, 10.0, 5.0)
 # =================================================
 # Sidebar: Curve styling
 # =================================================
-st.sidebar.header("Curve styling")n_main_color = st.sidebar.color_picker("Main curve color", "#1f77b4")n_base_color = st.sidebar.color_picker("Baseline color", "#d62728")n_marker_color = st.sidebar.color_picker("Zero-stress marker color", "#000000")n_linewidth = st.sidebar.slider("Main line width", 1.0, 5.0, 3.0)n_linestyle = st.sidebar.selectbox("Main line style", ["-", "--", "-.", ":"])n_marker_size = st.sidebar.slider("Marker size", 5, 15, 10)
+st.sidebar.header("Curve styling")
+main_color= st.sidebar.color_picker("Main curve color", "#1f77b4")
+bbaseline_coloror = st.sidebar.color_picker("Baseline color", "#d62728"marker_colorr = st.sidebar.color_picker("Zero-stress marker color", "#000000")linewidth = st.sidebar.slider("Main line width", 1.0, 5.0, 3.0)
+linestyle= st.sidebar.selectbox("Main line style", ["-", "--", "-.", ":"])
+mmarker_size st.sidebar.slider("Marker size", 5, 15, 10)
 
 # =================================================
 # Sidebar: Fonts and layout
 # =================================================
-st.sidebar.header("Fonts and layout")n_font_family = st.sidebar.selectbox("Font family", ["DejaVu Sans", "Times New Roman", "Arial"])n_label_size = st.sidebar.slider("Axis label font size", 10, 20, 14)n_tick_size = st.sidebar.slider("Tick font size", 8, 16, 12)n_title_size = st.sidebar.slider("Title font size", 12, 24, 18)n_legend_size = st.sidebar.slider("Legend font size", 8, 16, 12)
+st.sidebar.header("Fonts and layout")nfont_family = st.sidebar.selectbox("Font family", ["DejaVu Sans", "Times New Roman", "Arial"])nlabel_size = st.sidebar.slider("Axis label font size", 10, 20, 14)ntick_size = st.sidebar.slider("Tick font size", 8, 16, 12)ntitle_size = st.sidebar.slider("Title font size", 12, 24, 18)nlegend_size = st.sidebar.slider("Legend font size", 8, 16, 12)
 
 # =================================================
 # Sidebar: Axes, ticks, and box
@@ -59,15 +63,8 @@ delta_T = Ts0 - Ts_min
 # Matplotlib global style
 # =================================================
 plt.rcParams.update({
-    "font.family": _font_family,
-    "axes.labelsize": _label_size,
-    "axes.titlesize": _title_size,
-    "xtick.labelsize": _tick_size,
-    "ytick.labelsize": _tick_size,
-    "legend.fontsize": _legend_size,
-})
-
-# =================================================
+    "font.family": font_family
+    "axes.labelsize": llabel_size    "axes.titlesize": tititle_size   "xtick.labelsize": tictick_size  "ytick.labelsize": ticktick_size "legend.fontsize": legenlegend_size# =================================================
 # Plot
 # =================================================
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -75,9 +72,9 @@ fig, ax = plt.subplots(figsize=(10, 6))
 ax.semilogx(
     sigma_plot / 1e9,
     Ts_plot,
-    color=_main_color,
-    linewidth=_linewidth,
-    linestyle=_linestyle,
+    color=main_color,
+    linewidth=linewidth,
+    linestyle=linestyle,
     label=r"$T_s(|\\sigma_h|)$"
 )
 
@@ -86,15 +83,15 @@ ax.plot(
     1e-6,
     Ts0,
     marker="o",
-    color=_marker_color,
-    markersize=_marker_size,
+    color=marker_color,
+    markersize=marker_size,
     label=r"$T_s(0)$"
 )
 
 # Baseline
 ax.axhline(
     Ts0,
-    color=_base_color,
+    color=baseline_color,
     linestyle="--",
     linewidth=2,
     label="Baseline"
@@ -105,15 +102,15 @@ ax.annotate(
     "",
     xy=(sigma_max_GPa, Ts_min),
     xytext=(1e-6, Ts0),
-    arrowprops=dict(arrowstyle="<->", color=_base_color, linewidth=2),
+    arrowprops=dict(arrowstyle="<->", color=baseline_color, linewidth=2),
 )
 
 ax.text(
     1e-3,
     0.5 * (Ts0 + Ts_min),
     rf"$\\Delta T_s = {delta_T:.0f}\\,K$",
-    color=_base_color,
-    fontsize=_label_size,
+    color=baseline_color,
+    fontsize=label_size,
 )
 
 # Labels and title
