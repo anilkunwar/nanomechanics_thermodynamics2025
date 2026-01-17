@@ -716,18 +716,18 @@ class HeatMapVisualizer:
                 width=width,
                 height=height,
                 xaxis=dict(
-                    title="X Position",
+                    #title="X Position",
                     #titlefont=dict(size=18, family='Arial', color='black'),
-                    title=dict(text="Title", font=dict(size=18, family="Arial", color="black")),
+                    title=dict(text="X Position", font=dict(size=18, family="Arial", color="black")),
                     tickfont=dict(size=14, family='Arial'),
                     gridcolor='rgba(150, 150, 150, 0.3)',
                     scaleanchor="y",
                     scaleratio=1
                 ),
                 yaxis=dict(
-                    title="Y Position",
+                    #title="Y Position",
                     #titlefont=dict(size=18, family='Arial', color='black'),
-                    title=dict(text="Title", font=dict(size=18, family="Arial", color="black")),
+                    title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
                     tickfont=dict(size=14, family='Arial'),
                     gridcolor='rgba(150, 150, 150, 0.3)',
                     scaleanchor="x",
