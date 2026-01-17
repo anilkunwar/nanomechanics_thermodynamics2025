@@ -1901,17 +1901,17 @@ class EnhancedHabitPlaneVisualizer:
         
         plt.tight_layout(rect=[0, 0, 1, 0.96])
         return fig
-    
-    def create_enhanced_defect_comparison_radar(self, defect_comparison, 
+    #
+    def create_enhanced_defect_comparison_radar(self, defect_comparison,
                                                stress_component='sigma_hydro',
                                                title="Defect Type Comparison Radar"):
-        """Enhanced defect comparison radar with adjustable labels"""
-        
+        """Enhanced defect comparison radar with publication quality"""
+       
         fig = go.Figure()
-        
+       
         if not defect_comparison:
             return self._create_empty_figure(title)
-        
+       
         # Collect all data for consistent scaling
         all_stresses = []
         for key, data in defect_comparison.items():
@@ -1919,40 +1919,40 @@ class EnhancedHabitPlaneVisualizer:
                 stresses = data['stresses'][stress_component]
                 if stresses:
                     all_stresses.extend(stresses)
-        
+       
         if not all_stresses:
             return self._create_empty_figure(title)
-        
+       
         max_stress = max(all_stresses) if all_stresses else 1
-        
+       
         # Add traces for each defect type
         for key, data in defect_comparison.items():
             if not isinstance(data, dict):
                 continue
-                
+               
             defect_type = data.get('defect_type', 'Unknown')
             if 'angles' in data and 'stresses' in data and stress_component in data['stresses']:
                 angles = data['angles']
                 stresses = data['stresses'][stress_component]
-                
+               
                 if angles is None or stresses is None:
                     continue
-                
+               
                 try:
                     angles_array = np.array(angles)
                     stresses_array = np.array(stresses)
                 except:
                     continue
-                
+               
                 if len(angles_array) == 0 or len(stresses_array) == 0:
                     continue
-                
+               
                 # Close the loop
                 angles_closed = np.append(angles_array, angles_array[0])
                 stresses_closed = np.append(stresses_array, stresses_array[0])
-                
+               
                 color = data.get('color', self.defect_colors.get(defect_type, 'black'))
-                
+               
                 fig.add_trace(go.Scatterpolar(
                     r=stresses_closed,
                     theta=angles_closed,
@@ -1979,10 +1979,10 @@ class EnhancedHabitPlaneVisualizer:
                     ),
                     showlegend=True
                 ))
-        
+       
         if len(fig.data) == 0:
             return self._create_empty_figure(title)
-        
+       
         # Highlight habit plane
         fig.add_trace(go.Scatterpolar(
             r=[0, max_stress * 1.2],
@@ -1997,10 +1997,10 @@ class EnhancedHabitPlaneVisualizer:
             hoverinfo='skip',
             showlegend=True
         ))
-        
+       
         # Create publication quality layout
         layout = self.create_publication_plotly_layout(title=f"{title} - {stress_component.replace('_', ' ').title()}")
-        
+       
         # Enhanced radar layout
         layout.update(
             polar=dict(
@@ -2044,19 +2044,10 @@ class EnhancedHabitPlaneVisualizer:
                         color='black',
                         family='Arial'
                     ),
-                    title=dict(
-                        text='Orientation (°)',
-                        font=dict(
-                            size=self.axis_label_font_size,
-                            color='black',
-                            family='Arial',
-                            weight='bold'
-                        )
-                    ),
                     period=360
                 ),
                 bgcolor="rgba(240, 240, 240, 0.05)",
-                hole=0.15  # Larger hole for better label visibility
+                hole=0.15 # Larger hole for better label visibility
             ),
             showlegend=True,
             legend=dict(
@@ -2082,42 +2073,42 @@ class EnhancedHabitPlaneVisualizer:
             ),
             margin=dict(l=200, r=300, t=150, b=200)
         )
-        
-        # Add interactive controls annotation
-        layout.update(
-            annotations=[
-                dict(
-                    text="📱 <b>Interactive Controls:</b><br>• Hover for details<br>• Click legend to toggle<br>• Use mouse wheel to zoom",
-                    x=0.02,
-                    y=-0.15,
-                    xref="paper",
-                    yref="paper",
-                    showarrow=False,
-                    font=dict(
-                        size=self.annotation_font_size,
-                        color='darkblue',
-                        family='Arial'
-                    ),
-                    align="left",
-                    bgcolor="rgba(255, 255, 255, 0.8)",
-                    bordercolor="blue",
-                    borderwidth=1,
-                    borderpad=10
-                )
-            ]
+       
+        # Add annotation for angular axis label
+        fig.add_annotation(
+            dict(
+                font=dict(
+                    size=self.axis_label_font_size,
+                    color='black',
+                    family='Arial',
+                    weight='bold'
+                ),
+                text='Orientation (°)',
+                x=0.5,
+                y=-0.1,
+                showarrow=False,
+                xref="paper",
+                yref="paper",
+                xanchor='center',
+                yanchor='top'
+            )
         )
-        
+       
         fig.update_layout(layout)
-        
-        # Add configuration for better interactivity
-        fig.update_layout(
-            dragmode='pan',
-            hoverdistance=20,
-            spikedistance=1000
+       
+        # Add interactive features
+        fig.update_traces(
+            hoverinfo="text",
+            hovertemplate=(
+                '<b>%{fullData.name}</b><br>' +
+                'Orientation: %{theta:.1f}°<br>' +
+                'Stress: %{r:.3f} GPa<br>' +
+                '<extra></extra>'
+            )
         )
-        
+       
         return fig
-    
+        
     def create_defect_comparison_plot(self, defect_comparison, stress_component='sigma_hydro',
                                      title="Defect Type Comparison"):
         """Create comparison plot for different defect types"""
