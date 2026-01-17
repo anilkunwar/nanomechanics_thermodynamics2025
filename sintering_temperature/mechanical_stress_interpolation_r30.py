@@ -173,7 +173,11 @@ class AdvancedPhysicsStressAnalyzer:
         props = self.get_defect_properties(defect_type)
         
         # For simplicity, assume maximum stress drives cracking
-        sigma_max = np.max(stress_field) if hasattr(stress_field, '__len__') else stress_field
+        if hasattr(stress_field, '__len__'):
+            sigma_max = np.max(stress_field)
+        else:
+            sigma_max = stress_field
+        
         tau_max = sigma_max * 0.577  # Von Mises relation
         
         K_I = sigma_max * np.sqrt(np.pi * crack_length)
@@ -186,7 +190,7 @@ class AdvancedPhysicsStressAnalyzer:
             'K_I': K_I,  # Opening mode (MPa√m)
             'K_II': K_II,  # Sliding mode (MPa√m)
             'K_III': K_III,  # Tearing mode (MPa√m)
-            'K_equiv': np.sqrt(K_I**2 + K_II**2 + K_III**2/(1-nu)**2)  # Equivalent
+            'K_equiv': np.sqrt(K_I**2 + K_II**2 + K_III**2/(1-0.37)**2)  # Equivalent
         }
     
     def calculate_diffusion_enhancement(self, stress_field, temperature=650.0, defect_type='Twin'):
@@ -209,7 +213,10 @@ class AdvancedPhysicsStressAnalyzer:
         # Apply defect-specific multiplier
         D_enhanced = D_D0 * props['diffusion_coefficient_multiplier']
         
-        return D_enhanced.tolist() if len(D_enhanced) > 1 else float(D_enhanced[0])
+        # FIX: Return scalar for single value, array for multiple values
+        if len(D_enhanced) == 1:
+            return float(D_enhanced[0])
+        return D_enhanced.tolist()
     
     def calculate_sintering_temperature_reduction(self, stress_field, T_melt=1234.93):
         """
@@ -219,16 +226,23 @@ class AdvancedPhysicsStressAnalyzer:
         # Get diffusion enhancement
         D_enhancement = self.calculate_diffusion_enhancement(stress_field)
         
+        # FIX: diffusion_enhancement now returns scalar or list appropriately
         if hasattr(D_enhancement, '__len__'):
             D_enhancement = np.array(D_enhancement)
         else:
             D_enhancement = np.array([D_enhancement])
         
+        # Ensure no division by zero or log of zero
+        D_enhancement = np.clip(D_enhancement, 1e-10, None)
+        
         # Calculate temperature reduction
         # T_sinter = T_melt * (1 - f(σ)) where f(σ) derived from diffusion enhancement
         T_reduction = T_melt * (1 - 1/(1 + np.log(D_enhancement)/10))
         
-        return T_reduction.tolist() if len(T_reduction) > 1 else float(T_reduction[0])
+        # Return scalar for single value
+        if len(T_reduction) == 1:
+            return float(T_reduction[0])
+        return T_reduction.tolist()
     
     def calculate_energy_density_distribution(self, stress_field, strain_field=None):
         """
@@ -249,7 +263,10 @@ class AdvancedPhysicsStressAnalyzer:
         # Energy density
         W = 0.5 * sigma * epsilon
         
-        return W / 1e6  # Convert to MJ/m³
+        # Return appropriate format
+        if len(W) == 1:
+            return float(W[0] / 1e6)  # Convert to MJ/m³
+        return (W / 1e6).tolist()  # Convert to MJ/m³
     
     def analyze_crystallographic_orientation_effects(self, angle_degrees):
         """
@@ -354,22 +371,37 @@ class AdvancedPhysicsStressAnalyzer:
                 'angular_fwhm_degrees': self._calculate_fwhm(stresses, angle_range),
                 'stress_integral_gpa_degree': float(np.trapz(stresses, angle_range))
             }
+        else:
+            # Handle scalar input
+            peak_stress = stress_patterns
+            insights['stress_analysis'] = {
+                'peak_stress_gpa': float(peak_stress),
+                'peak_angle_degrees': None,
+                'mean_stress_gpa': float(peak_stress),
+                'stress_amplitude_gpa': 0.0,
+                'stress_concentration_factor': 1.0,
+                'max_gradient_gpa_per_degree': 0.0,
+                'angular_fwhm_degrees': 0.0,
+                'stress_integral_gpa_degree': 0.0
+            }
+            stresses = np.array([stress_patterns])
         
-        # Diffusion implications
+        # Diffusion implications - FIX: Use peak stress for scalar value
         T_sinter = 650.0  # Typical sintering temperature for Ag
         diffusion_enhancement = self.calculate_diffusion_enhancement(
-            stresses if 'stresses' in locals() else peak_stress,
+            peak_stress,  # Use peak stress instead of entire array
             T_sinter,
             defect_type
         )
         
+        # FIX: diffusion_enhancement is now guaranteed to be a scalar
         insights['diffusion_implications'] = {
             'diffusion_enhancement_factor': float(diffusion_enhancement),
             'effective_activation_energy_eV': self._calculate_effective_activation_energy(
                 diffusion_enhancement, T_sinter
             ),
             'sintering_temperature_reduction_k': float(
-                self.calculate_sintering_temperature_reduction(stresses if 'stresses' in locals() else peak_stress)
+                self.calculate_sintering_temperature_reduction(peak_stress)  # Use peak stress
             ),
             'atomic_flux_enhancement': float(diffusion_enhancement * props['diffusion_coefficient_multiplier'])
         }
@@ -424,6 +456,13 @@ class AdvancedPhysicsStressAnalyzer:
         # D = D0 exp(-Q_eff/(kT))
         # Q_eff = Q0 - kT ln(D/D0)
         Q0 = 1.1  # eV for Ag self-diffusion
+        # Ensure diffusion_enhancement is scalar
+        if hasattr(diffusion_enhancement, '__len__'):
+            if len(diffusion_enhancement) > 0:
+                diffusion_enhancement = diffusion_enhancement[0]
+            else:
+                diffusion_enhancement = 1.0
+        
         Q_eff = Q0 - self.k_B_eV * temperature * np.log(diffusion_enhancement)
         return float(max(0.1, Q_eff))  # Ensure positive
     
@@ -440,7 +479,7 @@ class AdvancedPhysicsStressAnalyzer:
         taylor_factor = 3.06
         
         # Stress concentration reduces effective yield stress
-        yield_reduction = stress / (taylor_factor * props['eigen_strain'])
+        yield_reduction = stress / (taylor_factor * props['eigen_strain']) if props['eigen_strain'] > 0 else 0
         
         return float(min(100, yield_reduction * 100))  # Percentage
     
