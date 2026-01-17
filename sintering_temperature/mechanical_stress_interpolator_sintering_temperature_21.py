@@ -48,7 +48,11 @@ class PhysicsBasedStressAnalyzer:
     
     def compute_strain_energy_density(self, stress_fields):
         """Compute strain energy density from stress tensor components."""
-        if not all(key in stress_fields for key in ['sigma_xx', 'sigma_yy', 'sigma_xy']):
+        # Check for required stress components
+        required_keys = {'sigma_xx', 'sigma_yy', 'sigma_xy'}
+        if not required_keys.issubset(stress_fields.keys()):
+            missing_keys = required_keys - set(stress_fields.keys())
+            st.warning(f"Missing required stress components for strain energy calculation: {missing_keys}")
             return None
             
         sigma_xx = stress_fields['sigma_xx']
@@ -193,19 +197,19 @@ class PhysicsBasedStressAnalyzer:
                         'abs_max': float(np.nanmax(np.abs(region_stress))),
                         'percentile_95': float(np.nanpercentile(np.abs(region_stress), 95)),
                         'area_fraction': float(mask.sum() / mask.size),
-                        'skewness': float(pd.Series(region_stress.flatten()).skew()),
-                        'kurtosis': float(pd.Series(region_stress.flatten()).kurtosis())
+                        'skewness': float(pd.Series(region_stress.flatten()).skew()) if len(region_stress.flatten()) > 0 else 0.0,
+                        'kurtosis': float(pd.Series(region_stress.flatten()).kurtosis()) if len(region_stress.flatten()) > 0 else 0.0
                     }
                     
                     # Additional metrics for hydrostatic stress
                     if stress_name == 'sigma_hydro':
-                        compressive_fraction = np.sum(region_stress < 0) / len(region_stress)
-                        tensile_fraction = np.sum(region_stress > 0) / len(region_stress)
+                        compressive_fraction = np.sum(region_stress < 0) / len(region_stress) if len(region_stress) > 0 else 0
+                        tensile_fraction = np.sum(region_stress > 0) / len(region_stress) if len(region_stress) > 0 else 0
                         region_stats[region_name][stress_name].update({
                             'compressive_fraction': float(compressive_fraction),
                             'tensile_fraction': float(tensile_fraction),
-                            'mean_compressive': float(np.nanmean(region_stress[region_stress < 0]) if np.any(region_stress < 0) else 0),
-                            'mean_tensile': float(np.nanmean(region_stress[region_stress > 0]) if np.any(region_stress > 0) else 0)
+                            'mean_compressive': float(np.nanmean(region_stress[region_stress < 0])) if np.any(region_stress < 0) else 0.0,
+                            'mean_tensile': float(np.nanmean(region_stress[region_stress > 0])) if np.any(region_stress > 0) else 0.0
                         })
         
         results['region_stats'] = region_stats
@@ -241,11 +245,14 @@ class PhysicsBasedStressAnalyzer:
                 'mean': float(np.nanmean(strain_energy)),
                 'max': float(np.nanmax(strain_energy)),
                 'min': float(np.nanmin(strain_energy)),
-                'defect_mean': float(np.nanmean(strain_energy[defect_mask])) if defect_mask.any() else 0,
-                'interface_mean': float(np.nanmean(strain_energy[interface_mask])) if interface_mask.any() else 0,
-                'bulk_mean': float(np.nanmean(strain_energy[bulk_mask])) if bulk_mask.any() else 0,
+                'defect_mean': float(np.nanmean(strain_energy[defect_mask])) if defect_mask.any() else 0.0,
+                'interface_mean': float(np.nanmean(strain_energy[interface_mask])) if interface_mask.any() else 0.0,
+                'bulk_mean': float(np.nanmean(strain_energy[bulk_mask])) if bulk_mask.any() else 0.0,
                 'energy_density_GPa': float(np.nanmean(strain_energy))
             }
+        else:
+            st.warning("Strain energy calculation skipped: missing required stress components (sigma_xx, sigma_yy, sigma_xy).")
+            results['strain_energy'] = {}  # Set to empty dictionary
         
         # Compute additional stress invariants if not already present
         if 'sigma_hydro' in processed_stresses and 'sigma_xx' in processed_stresses:
@@ -653,7 +660,7 @@ class PhysicsAwareInterpolator:
         
         # Interpolate stress fields
         interpolated_stress = {}
-        stress_keys = source_stresses[0].keys()
+        stress_keys = source_stresses[0].keys() if source_stresses else []
         
         for key in stress_keys:
             # Weighted average of stress fields
@@ -837,6 +844,14 @@ class EnhancedSolutionLoader:
                     solution['params'] = {}
                 if 'history' not in solution:
                     solution['history'] = []
+                
+                # Validate stress fields
+                if solution['history']:
+                    last_frame = solution['history'][-1]
+                    stresses = last_frame.get('stresses', {})
+                    required_keys = {'sigma_xx', 'sigma_yy', 'sigma_xy'}
+                    if not required_keys.issubset(stresses.keys()):
+                        st.warning(f"Solution {filename} missing required stress components: {required_keys - set(stresses.keys())}")
                 
                 solutions.append(solution)
                 
@@ -2426,9 +2441,10 @@ T<sub>sinter</sub>(σ) = (Qₐ - Ω|σ|)/[k<sub>B</sub> ln(D₀/D<sub>crit</sub>
                                             elif isinstance(fig, plt.Figure) or isinstance(fig, matplotlib.figure.Figure):
                                                 buf = BytesIO()
                                                 fig.savefig(buf, format="png", dpi=viz_settings['figure_dpi'])
+                                                buf.seek(0)
                                                 st.download_button(
                                                     label="📥 Download PNG",
-                                                    data=buf.getvalue(),
+                                                    data=buf,
                                                     file_name=f"{fig_name}_{defect_type}_{orientation_angle}deg.png",
                                                     mime="image/png",
                                                     use_container_width=True
@@ -2453,9 +2469,10 @@ T<sub>sinter</sub>(σ) = (Qₐ - Ω|σ|)/[k<sub>B</sub> ln(D₀/D<sub>crit</sub>
                                             elif isinstance(fig, plt.Figure) or isinstance(fig, matplotlib.figure.Figure):
                                                 buf_pdf = BytesIO()
                                                 fig.savefig(buf_pdf, format="pdf")
+                                                buf_pdf.seek(0)
                                                 st.download_button(
                                                     label="📥 Download PDF",
-                                                    data=buf_pdf.getvalue(),
+                                                    data=buf_pdf,
                                                     file_name=f"{fig_name}_{defect_type}_{orientation_angle}deg.pdf",
                                                     mime="application/pdf",
                                                     use_container_width=True
@@ -2497,8 +2514,8 @@ T<sub>sinter</sub>(σ) = (Qₐ - Ω|σ|)/[k<sub>B</sub> ln(D₀/D<sub>crit</sub>
                                                 with col_stat4:
                                                     st.metric("Area Fraction", f"{stats['sigma_hydro']['area_fraction']:.1%}")
                                     
-                                    # Strain energy analysis
-                                    if 'strain_energy' in report['analysis']:
+                                    # Strain energy analysis - FIXED: Check if strain_energy exists and is non-empty
+                                    if 'strain_energy' in report['analysis'] and report['analysis']['strain_energy']:
                                         st.markdown("#### ⚡ Strain Energy Analysis")
                                         energy = report['analysis']['strain_energy']
                                         col_energy1, col_energy2, col_energy3 = st.columns(3)
@@ -2508,6 +2525,8 @@ T<sub>sinter</sub>(σ) = (Qₐ - Ω|σ|)/[k<sub>B</sub> ln(D₀/D<sub>crit</sub>
                                             st.metric("Mean Energy", f"{energy['mean']:.3e} J/m³")
                                         with col_energy3:
                                             st.metric("Max Energy", f"{energy['max']:.3e} J/m³")
+                                    else:
+                                        st.info("Strain energy analysis unavailable (insufficient stress component data).")
                                     
                                     # Orientation analysis
                                     if 'orientation_analysis' in report['analysis']:
