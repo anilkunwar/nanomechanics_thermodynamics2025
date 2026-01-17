@@ -1355,32 +1355,32 @@ class EnhancedHabitPlaneVisualizer:
             plot_bgcolor='white',
             hovermode='closest'
         )
-    
+    #
     def create_enhanced_vicinity_sunburst(self, angles, stresses, stress_component='sigma_hydro',
-                                         title="Habit Plane Vicinity Analysis", 
+                                         title="Habit Plane Vicinity Analysis",
                                          radius_scale=1.0, show_grid=True):
         """Enhanced sunburst chart with publication quality"""
-        
+       
         # Ensure angles are numpy arrays
         angles = np.array(angles)
         stresses = np.array(stresses)
-        
+       
         # Check if data is empty
         if len(angles) == 0 or len(stresses) == 0:
             return self._create_empty_figure(title)
-        
+       
         # Filter to vicinity
         vicinity_range = 45.0
         mask = (angles >= self.habit_angle - vicinity_range) & (angles <= self.habit_angle + vicinity_range)
         vic_angles = angles[mask]
         vic_stresses = stresses[mask]
-        
+       
         if len(vic_angles) == 0:
             return self._create_empty_figure(title)
-        
+       
         # Create polar plot
         fig = go.Figure()
-        
+       
         # Add main stress distribution with enhanced styling
         fig.add_trace(go.Scatterpolar(
             r=vic_stresses * radius_scale,
@@ -1404,7 +1404,7 @@ class EnhancedHabitPlaneVisualizer:
                 symbol='circle'
             ),
             line=dict(
-                color='rgba(100, 100, 100, 0.5)', 
+                color='rgba(100, 100, 100, 0.5)',
                 width=self.line_width,
                 shape='spline'
             ),
@@ -1416,7 +1416,7 @@ class EnhancedHabitPlaneVisualizer:
                 '<extra></extra>'
             )
         ))
-        
+       
         # Highlight habit plane with enhanced styling
         habit_idx = np.argmin(np.abs(vic_angles - self.habit_angle))
         if habit_idx < len(vic_stresses):
@@ -1446,10 +1446,10 @@ class EnhancedHabitPlaneVisualizer:
                     '<extra></extra>'
                 )
             ))
-        
+       
         # Create publication quality layout
         layout = self.create_publication_plotly_layout(title=title)
-        
+       
         # Enhanced polar layout
         layout.update(
             polar=dict(
@@ -1490,15 +1490,6 @@ class EnhancedHabitPlaneVisualizer:
                         color='black',
                         family='Arial'
                     ),
-                    title=dict(
-                        text='Orientation (°)',
-                        font=dict(
-                            size=self.axis_label_font_size,
-                            color='black',
-                            family='Arial',
-                            weight='bold'
-                        )
-                    ),
                     period=360,
                     thetaunit="degrees"
                 ),
@@ -1527,9 +1518,31 @@ class EnhancedHabitPlaneVisualizer:
             ),
             margin=dict(l=100, r=200, t=120, b=100)
         )
-        
+       
         fig.update_layout(layout)
+        
+        # Add annotation for angular axis label
+        fig.add_annotation(
+            dict(
+                font=dict(
+                    size=self.axis_label_font_size,
+                    color='black',
+                    family='Arial',
+                    weight='bold'
+                ),
+                text='Orientation (°)',
+                x=0.5,
+                y=-0.1,
+                showarrow=False,
+                xref="paper",
+                yref="paper",
+                xanchor='center',
+                yanchor='top'
+            )
+        )
+        
         return fig
+    
     
     def create_enhanced_stress_comparison_radar(self, comparison_data, 
                                                title="Stress Component Comparison",
