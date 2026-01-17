@@ -298,6 +298,7 @@ class DefectRadarVisualizer:
             'Twin': '#45B7D1',    # Blue
             'No Defect': '#96CEB4' # Green
         }
+        # FIXED: Initialize stress_component_colors attribute
         self.stress_component_colors = {
             'sigma_hydro': '#1F77B4',  # Blue
             'von_mises': '#FF7F0E',   # Orange
@@ -1032,6 +1033,7 @@ class DefectRadarVisualizer:
         
         return fig
     
+    # FIXED: Added the missing create_interactive_3d_defect_sunburst method
     def create_interactive_3d_defect_sunburst(self, defect_comparison,
                                            stress_component='sigma_hydro',
                                            title="3D Defect Stress Distribution"):
@@ -1667,6 +1669,7 @@ def main():
                                 color_scale=color_scale
                             )
                         elif chart_type == "3D Interactive View":
+                            # FIXED: This method now exists in the DefectRadarVisualizer class
                             fig = st.session_state.visualizer.create_interactive_3d_defect_sunburst(
                                 defect_comparison,
                                 stress_component=stress_component,
@@ -1925,6 +1928,13 @@ def main():
                                 title=chart_title,
                                 show_habit_plane=show_habit_plane,
                                 fill_opacity=fill_opacity
+                            )
+                        elif chart_type == "3D Interactive View":
+                            # Ensure the method exists
+                            fig = st.session_state.visualizer.create_interactive_3d_defect_sunburst(
+                                defect_comparison,
+                                stress_component=stress_component,
+                                title=chart_title
                             )
                         else:  # Default to basic radar
                             fig = st.session_state.visualizer.create_basic_defect_radar(
