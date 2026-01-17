@@ -2108,6 +2108,7 @@ class EnhancedHabitPlaneVisualizer:
         )
        
         return fig
+    
         
     def create_defect_comparison_plot(self, defect_comparison, stress_component='sigma_hydro',
                                      title="Defect Type Comparison"):
