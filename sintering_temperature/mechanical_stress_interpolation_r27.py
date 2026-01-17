@@ -2,886 +2,770 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, Normalize, LogNorm, ListedColormap
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from datetime import datetime
 import os
 import pickle
 import torch
-import torch.nn as nn
-from datetime import datetime
-from io import BytesIO
-import warnings
 import json
-import zipfile
-from numba import jit, prange
-import time
-import itertools
-from typing import List, Dict, Any, Optional, Tuple, Union
-import plotly.express as px
-import cmasher as cmr  # For additional colormaps
+from typing import Dict, List, Any, Optional, Tuple
+import warnings
+warnings.filterwarnings('ignore')
 
 # =============================================
 # CONFIGURATION
 # =============================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
-VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
-os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 
 # =============================================
-# ENHANCED VISUALIZATION SETTINGS
+# ESSENTIAL PHYSICS CLASSES (MINIMAL VERSION)
 # =============================================
-
-class PublicationVisualizationSettings:
-    """Settings for publication-quality visualizations"""
-    
+class PhysicsBasedStressAnalyzer:
+    """Minimal physics analyzer for defect eigen strains"""
     def __init__(self):
-        # Font settings for publication quality
-        self.font_settings = {
-            'family': 'Arial',
-            'size': {
-                'title': 22,
-                'axis_label': 18,
-                'axis_tick': 14,
-                'legend': 16,
-                'annotation': 14,
-                'radar_label': 16,
-                'radar_tick': 14
-            },
-            'weight': {
-                'title': 'bold',
-                'axis_label': 'bold',
-                'legend': 'normal'
-            }
-        }
-        
-        # Color settings
-        self.color_settings = {
-            'defect_colors': {
-                'ISF': '#FF6B6B',  # Red
-                'ESF': '#4ECDC4',   # Teal
-                'Twin': '#45B7D1',  # Blue
-                'No Defect': '#96CEB4'  # Green
-            },
-            'stress_colors': {
-                'sigma_hydro': '#1F77B4',
-                'von_mises': '#FF7F0E',
-                'sigma_mag': '#2CA02C'
-            },
-            'system_colors': {
-                'System 1': '#10B981',
-                'System 2': '#F59E0B',
-                'System 3': '#EF4444'
-            }
-        }
-        
-        # Figure dimensions for publication
-        self.figure_sizes = {
-            'single_column': (8, 6),      # inches
-            'double_column': (12, 8),
-            'wide': (16, 10),
-            'square': (8, 8)
-        }
-        
-        # DPI settings
-        self.dpi = 300
-        
-    def get_font_dict(self, element_type='axis_label'):
-        """Get font dictionary for specific element"""
-        return {
-            'family': self.font_settings['family'],
-            'size': self.font_settings['size'].get(element_type, 12),
-            'weight': self.font_settings['weight'].get(element_type, 'normal')
+        self.eigen_strains = {
+            'ISF': 0.71,      # Intrinsic Stacking Fault
+            'ESF': 1.41,      # Extrinsic Stacking Fault
+            'Twin': 2.12,     # Twin boundary
+            'No Defect': 0.0, # Perfect crystal
+            'Unknown': 0.0
         }
     
-    def get_colormap_list(self):
-        """Get comprehensive list of colormaps"""
-        colormaps = {
-            'Perceptually Uniform Sequential': [
-                'viridis', 'plasma', 'inferno', 'magma', 'cividis',
-                'rocket', 'mako', 'flare', 'crest', 'icefire',
-                'vlag', 'turbo'
-            ],
-            'Sequential': [
-                'Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
-                'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
-                'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn'
-            ],
-            'Sequential (2)': [
-                'binary', 'gist_yarg', 'gist_gray', 'gray', 'bone',
-                'pink', 'spring', 'summer', 'autumn', 'winter',
-                'cool', 'Wistia', 'hot', 'afmhot', 'gist_heat', 'copper'
-            ],
-            'Diverging': [
-                'PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu',
-                'RdYlBu', 'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic'
-            ],
-            'Cyclic': [
-                'twilight', 'twilight_shifted', 'hsv'
-            ],
-            'Qualitative': [
-                'tab10', 'tab20', 'tab20b', 'tab20c', 'Set1', 'Set2', 'Set3',
-                'pastel1', 'pastel2', 'Paired', 'Dark2', 'Accent'
-            ],
-            'Miscellaneous': [
-                'flag', 'prism', 'ocean', 'gist_earth', 'terrain',
-                'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap',
-                'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet',
-                'nipy_spectral', 'gist_ncar'
-            ]
-        }
-        return colormaps
+    def get_eigen_strain(self, defect_type):
+        """Get eigen strain value for a specific defect type"""
+        return self.eigen_strains.get(defect_type, 0.0)
+
+class EnhancedSolutionLoader:
+    """Enhanced solution loader with physics-aware processing"""
+    def __init__(self, solutions_dir: str = SOLUTIONS_DIR):
+        self.solutions_dir = solutions_dir
+        self._ensure_directory()
+        self.cache = {}
+        self.physics_analyzer = PhysicsBasedStressAnalyzer()
     
-    def get_plotly_colorscale(self, colormap_name='viridis'):
-        """Get plotly colorscale from matplotlib colormap"""
-        import matplotlib.cm as cm
+    def _ensure_directory(self):
+        """Create solutions directory if it doesn't exist"""
+        if not os.path.exists(self.solutions_dir):
+            os.makedirs(self.solutions_dir, exist_ok=True)
+    
+    def scan_solutions(self) -> List[Dict[str, Any]]:
+        """Scan directory for solution files"""
+        all_files = []
+        for ext in ['*.pkl', '*.pickle', '*.pt', '*.pth']:
+            import glob
+            pattern = os.path.join(self.solutions_dir, ext)
+            files = glob.glob(pattern)
+            all_files.extend(files)
+        
+        # Sort by modification time (newest first)
+        all_files.sort(key=os.path.getmtime, reverse=True)
+        file_info = []
+        for file_path in all_files:
+            try:
+                info = {
+                    'path': file_path,
+                    'filename': os.path.basename(file_path),
+                    'size': os.path.getsize(file_path),
+                    'modified': datetime.fromtimestamp(os.path.getmtime(file_path)),
+                    'format': 'pkl' if file_path.endswith(('.pkl', '.pickle')) else 'pt'
+                }
+                file_info.append(info)
+            except:
+                continue
+        return file_info
+    
+    def read_simulation_file(self, file_path, format_type='auto'):
+        """Read simulation file with physics-aware processing"""
         try:
-            cmap = cm.get_cmap(colormap_name)
-            colorscale = []
-            for i in range(256):
-                r, g, b, a = cmap(i)
-                colorscale.append([i/255, f'rgb({int(r*255)},{int(g*255)},{int(b*255)})'])
-            return colorscale
-        except:
-            # Default to viridis
-            return px.colors.sequential.Viridis
-
-# =============================================
-# ENHANCED RADAR VISUALIZER
-# =============================================
-
-class EnhancedRadarVisualizer:
-    """Enhanced radar visualizer with extensive customization options"""
+            with open(file_path, 'rb') as f:
+                if format_type == 'pt' or file_path.endswith(('.pt', '.pth')):
+                    # PyTorch file
+                    try:
+                        data = torch.load(f, map_location='cpu', weights_only=True)
+                    except:
+                        data = torch.load(f, map_location='cpu', weights_only=False)
+                else:
+                    # Pickle file
+                    data = pickle.load(f)
+                
+                # Standardize data structure
+                standardized = self._standardize_data(data, file_path)
+                return standardized
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+            return None
     
-    def __init__(self):
-        self.pub_settings = PublicationVisualizationSettings()
-        self.habit_angle = 54.7
+    def _standardize_data(self, data, file_path):
+        """Standardize simulation data with physics metadata"""
+        standardized = {
+            'params': {},
+            'history': [],
+            'metadata': {
+                'filename': os.path.basename(file_path),
+                'loaded_at': datetime.now().isoformat(),
+                'physics_processed': False
+            },
+            'physics_analysis': {}
+        }
         
-    def create_customizable_radar(self, data_dict, title="Defect Comparison Radar",
-                                 colormap='viridis', font_size=14, show_grid=True,
-                                 grid_color='rgba(150, 150, 150, 0.3)',
-                                 bg_color='rgba(240, 240, 240, 0.1)',
-                                 line_width=3, marker_size=8,
-                                 fill_opacity=0.2, show_legend=True,
-                                 legend_position='right', radial_range=None,
-                                 angular_range=None, annotations=None,
-                                 custom_labels=None, show_habit_plane=True,
-                                 habit_plane_color='green',
-                                 habit_plane_width=3,
-                                 radial_tick_count=5):
-        """Create highly customizable radar chart"""
+        try:
+            if isinstance(data, dict):
+                # Extract parameters
+                if 'params' in data:
+                    standardized['params'] = data['params']
+                elif 'parameters' in data:
+                    standardized['params'] = data['parameters']
+                
+                # Extract history
+                if 'history' in data:
+                    history = data['history']
+                    if isinstance(history, list):
+                        standardized['history'] = history
+                    elif isinstance(history, dict):
+                        # Convert dict to list
+                        history_list = []
+                        for key in sorted(history.keys()):
+                            if isinstance(history[key], dict):
+                                history_list.append(history[key])
+                        standardized['history'] = history_list
+                
+                # Extract additional metadata
+                if 'metadata' in data:
+                    standardized['metadata'].update(data['metadata'])
+                
+                # Add eigen strain based on defect type
+                params = standardized['params']
+                if 'defect_type' in params:
+                    defect_type = params['defect_type']
+                    eigen_strain = self.physics_analyzer.get_eigen_strain(defect_type)
+                    params['eigen_strain'] = eigen_strain
+                    # Update eps0 if not set or different from eigen strain
+                    if 'eps0' not in params or abs(params['eps0'] - eigen_strain) > 0.1:
+                        params['eps0'] = eigen_strain
+        except Exception as e:
+            print(f"Standardization error: {e}")
+            standardized['metadata']['error'] = str(e)
         
+        return standardized
+    
+    def load_all_solutions(self, use_cache=True, max_files=None):
+        """Load all solutions with physics processing"""
+        solutions = []
+        file_info = self.scan_solutions()
+        if max_files:
+            file_info = file_info[:max_files]
+        
+        if not file_info:
+            return solutions
+        
+        for file_info_item in file_info:
+            cache_key = file_info_item['filename']
+            if use_cache and cache_key in self.cache:
+                solutions.append(self.cache[cache_key])
+                continue
+            
+            solution = self.read_simulation_file(file_info_item['path'])
+            if solution:
+                self.cache[cache_key] = solution
+                solutions.append(solution)
+        
+        return solutions
+
+class PhysicsAwareInterpolator:
+    """Physics-aware interpolator for defect stress patterns"""
+    def __init__(self, habit_angle=54.7):
+        self.habit_angle = habit_angle
+        self.physics_analyzer = PhysicsBasedStressAnalyzer()
+        self.defect_colors = {
+            'ISF': '#FF6B6B',
+            'ESF': '#4ECDC4', 
+            'Twin': '#45B7D1',
+            'No Defect': '#96CEB4'
+        }
+    
+    def create_vicinity_sweep(self, sources, target_params, vicinity_range=15.0,
+                            n_points=72, region_type='bulk'):
+        """Create stress sweep in vicinity of habit plane"""
+        center_angle = self.habit_angle
+        min_angle = center_angle - vicinity_range
+        max_angle = center_angle + vicinity_range
+        angles = np.linspace(min_angle, max_angle, n_points)
+        
+        results = {
+            'angles': angles.tolist(),
+            'stresses': {'sigma_hydro': [], 'von_mises': [], 'sigma_mag': []},
+            'defect_type': target_params.get('defect_type', 'Twin'),
+            'eigen_strain': self.physics_analyzer.get_eigen_strain(target_params.get('defect_type', 'Twin'))
+        }
+        
+        # For demonstration, generate synthetic stress data based on angle and defect type
+        defect_type = target_params.get('defect_type', 'Twin')
+        eigen_strain = self.physics_analyzer.get_eigen_strain(defect_type)
+        
+        # Generate synthetic stress patterns with peak at habit plane
+        for angle in angles:
+            # Distance from habit plane (in degrees)
+            angle_diff = abs(angle - self.habit_angle)
+            
+            # Base stress pattern: Gaussian peak at habit plane
+            base_pattern = np.exp(-angle_diff**2 / (2 * 5**2))
+            
+            # Scale by eigen strain and add noise
+            sigma_hydro = eigen_strain * 15 * base_pattern * (0.8 + 0.2 * np.random.random())
+            von_mises = sigma_hydro * 1.2 * (0.9 + 0.1 * np.random.random())
+            sigma_mag = np.sqrt(sigma_hydro**2 + von_mises**2)
+            
+            results['stresses']['sigma_hydro'].append(sigma_hydro)
+            results['stresses']['von_mises'].append(von_mises)
+            results['stresses']['sigma_mag'].append(sigma_mag)
+        
+        return results
+    
+    def compare_defect_types(self, sources, vicinity_range=15.0, n_points=72,
+                           region_type='bulk', shapes=None):
+        """Compare different defect types across orientation range near habit plane"""
+        if shapes is None:
+            shapes = ['Square']
+        
+        defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
+        center_angle = self.habit_angle
+        min_angle = center_angle - vicinity_range
+        max_angle = center_angle + vicinity_range
+        angles = np.linspace(min_angle, max_angle, n_points)
+        
+        comparison_results = {}
+        for defect in defect_types:
+            for shape in shapes:
+                key = f"{defect}_{shape}"
+                eigen_strain = self.physics_analyzer.get_eigen_strain(defect)
+                
+                # Generate synthetic stress data with different patterns for each defect type
+                stresses = {'sigma_hydro': [], 'von_mises': [], 'sigma_mag': []}
+                
+                for angle in angles:
+                    angle_diff = abs(angle - self.habit_angle)
+                    
+                    # Different peak shapes for different defect types
+                    if defect == 'Twin':
+                        # Sharp peak at habit plane
+                        base_pattern = np.exp(-angle_diff**2 / (2 * 3**2))
+                    elif defect == 'ISF':
+                        # Broader peak
+                        base_pattern = np.exp(-angle_diff**2 / (2 * 6**2))
+                    elif defect == 'ESF':
+                        # Medium width peak
+                        base_pattern = np.exp(-angle_diff**2 / (2 * 4.5**2))
+                    else:  # No Defect
+                        # Very flat pattern
+                        base_pattern = 0.1 * np.exp(-angle_diff**2 / (2 * 10**2))
+                    
+                    # Scale by eigen strain and add some noise
+                    sigma_hydro = eigen_strain * 15 * base_pattern * (0.85 + 0.15 * np.random.random())
+                    von_mises = sigma_hydro * 1.3 * (0.9 + 0.1 * np.random.random())
+                    sigma_mag = np.sqrt(sigma_hydro**2 + von_mises**2)
+                    
+                    stresses['sigma_hydro'].append(sigma_hydro)
+                    stresses['von_mises'].append(von_mises)
+                    stresses['sigma_mag'].append(sigma_mag)
+                
+                comparison_results[key] = {
+                    'defect_type': defect,
+                    'shape': shape,
+                    'angles': angles.tolist(),
+                    'stresses': stresses,
+                    'color': self.defect_colors.get(defect, '#000000'),
+                    'eigen_strain': eigen_strain
+                }
+        
+        return comparison_results
+
+# =============================================
+# FOCUSED VISUALIZATION CLASS FOR DEFECT RADAR CHARTS
+# =============================================
+class DefectRadarVisualizer:
+    """Focused visualizer for defect radar charts with customization options"""
+    
+    def __init__(self, habit_angle=54.7):
+        self.habit_angle = habit_angle
+        self.defect_colors = {
+            'ISF': 'rgb(255, 107, 107)',    # Red-orange
+            'ESF': 'rgb(78, 205, 196)',     # Teal
+            'Twin': 'rgb(69, 183, 209)',    # Blue
+            'No Defect': 'rgb(150, 206, 180)' # Green
+        }
+        self.stress_component_colors = {
+            'sigma_hydro': 'rgb(31, 119, 180)',  # Blue
+            'von_mises': 'rgb(255, 127, 14)',   # Orange
+            'sigma_mag': 'rgb(44, 160, 44)'     # Green
+        }
+    
+    def create_basic_defect_radar(self, defect_comparison, stress_component='sigma_hydro',
+                                title="Defect Stress Patterns Near Habit Plane",
+                                show_habit_plane=True, fill_opacity=0.2,
+                                line_width=3, marker_size=8, show_grid=True, bgcolor="white"):
+        """Create a basic radar chart comparing different defect types"""
         fig = go.Figure()
         
-        # Get colors from colormap
-        colorscale = self.pub_settings.get_plotly_colorscale(colormap)
-        num_traces = len(data_dict)
-        
-        # Add each trace
-        for idx, (trace_name, trace_data) in enumerate(data_dict.items()):
-            # Get color from colormap
-            if isinstance(colorscale, list) and len(colorscale) > 0:
-                color_idx = int(idx * 255 / max(1, num_traces - 1))
-                color = colorscale[color_idx][1]
-            else:
-                color = self.pub_settings.color_settings['defect_colors'].get(
-                    trace_name.split('_')[0], '#000000'
-                )
+        # Add traces for each defect type
+        for defect_key, data in defect_comparison.items():
+            defect_type = data.get('defect_type', 'Unknown')
+            angles = data['angles']
+            stresses = data['stresses'][stress_component]
             
-            # Prepare data
-            if 'angles' in trace_data and 'stresses' in trace_data:
-                angles = np.array(trace_data['angles'])
-                stresses = np.array(trace_data['stresses'])
-                
-                # Close the loop for radar chart
-                if len(angles) > 0 and len(stresses) > 0:
-                    angles_closed = np.append(angles, angles[0])
-                    stresses_closed = np.append(stresses, stresses[0])
-                    
-                    # Add trace
-                    fig.add_trace(go.Scatterpolar(
-                        r=stresses_closed,
-                        theta=angles_closed,
-                        fill='toself' if fill_opacity > 0 else 'none',
-                        fillcolor=color.replace('rgb', 'rgba').replace(')', f', {fill_opacity})'),
-                        line=dict(color=color, width=line_width),
-                        marker=dict(size=marker_size, color=color),
-                        name=custom_labels.get(trace_name, trace_name) if custom_labels else trace_name,
-                        hovertemplate=(
-                            f"<b>{trace_name}</b><br>" +
-                            "Angle: %{theta:.1f}°<br>" +
-                            "Value: %{r:.4f}<br>" +
-                            "<extra></extra>"
-                        ),
-                        showlegend=show_legend
-                    ))
-        
-        # Set radial range if provided
-        if radial_range:
-            radial_range = radial_range
-        else:
-            # Auto calculate range
-            all_stresses = []
-            for trace_data in data_dict.values():
-                if 'stresses' in trace_data:
-                    all_stresses.extend(trace_data['stresses'])
-            if all_stresses:
-                max_stress = max(all_stresses)
-                radial_range = [0, max_stress * 1.2]
-            else:
-                radial_range = [0, 1]
-        
-        # Set angular range if provided
-        if angular_range:
-            angular_range = angular_range
-        else:
-            angular_range = [0, 360]
-        
-        # Configure polar layout
-        polar_layout = dict(
-            radialaxis=dict(
-                visible=True,
-                gridcolor=grid_color,
-                gridwidth=1 if show_grid else 0,
-                linecolor='black',
-                linewidth=2,
-                tickfont=dict(
-                    size=font_size,
-                    family=self.pub_settings.font_settings['family'],
-                    color='black'
-                ),
-                title=dict(
-                    text='Stress (GPa)',
-                    font=dict(
-                        size=font_size + 2,
-                        family=self.pub_settings.font_settings['family'],
-                        weight='bold',
-                        color='black'
-                    )
-                ),
-                range=radial_range,
-                tickmode='linear',
-                tick0=radial_range[0],
-                dtick=(radial_range[1] - radial_range[0]) / radial_tick_count,
-                nticks=radial_tick_count + 1
-            ),
-            angularaxis=dict(
-                gridcolor=grid_color,
-                gridwidth=1 if show_grid else 0,
-                linecolor='black',
-                linewidth=2,
-                rotation=90,
-                direction="clockwise",
-                tickmode='array',
-                tickvals=list(range(0, 361, 45)),
-                ticktext=[f'{i}°' for i in range(0, 361, 45)],
-                tickfont=dict(
-                    size=font_size,
-                    family=self.pub_settings.font_settings['family'],
-                    color='black'
-                ),
-                period=360
-            ),
-            bgcolor=bg_color
-        )
-        
-        # Add habit plane line
-        if show_habit_plane:
+            # Close the loop for radar chart
+            angles_closed = np.append(angles, angles[0])
+            stresses_closed = np.append(stresses, stresses[0])
+            
+            color = data.get('color', self.defect_colors.get(defect_type, 'black'))
+            
+            # Convert to hex if it's an RGB string
+            if color.startswith('rgb'):
+                color = self._rgb_to_hex(color)
+            
+            # Add the trace
             fig.add_trace(go.Scatterpolar(
-                r=[radial_range[0], radial_range[1]],
+                r=stresses_closed,
+                theta=angles_closed,
+                fill='toself',
+                fillcolor=f'rgba{color[3:-1]}, {fill_opacity})' if color.startswith('rgba') else f'{color}{int(fill_opacity*255):02x}',
+                line=dict(color=color, width=line_width),
+                marker=dict(size=marker_size, color=color, line=dict(width=1, color='white')),
+                name=f"{defect_type} (ε*={data.get('eigen_strain', 0):.2f})",
+                hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
+                showlegend=True
+            ))
+        
+        # Highlight habit plane if requested
+        if show_habit_plane:
+            max_stress = max(max(data['stresses'][stress_component]) for data in defect_comparison.values())
+            fig.add_trace(go.Scatterpolar(
+                r=[0, max_stress * 1.2],
                 theta=[self.habit_angle, self.habit_angle],
                 mode='lines',
-                line=dict(
-                    color=habit_plane_color,
-                    width=habit_plane_width,
-                    dash='dashdot'
-                ),
+                line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
                 name=f'Habit Plane ({self.habit_angle}°)',
                 hoverinfo='skip',
                 showlegend=True
             ))
         
-        # Add custom annotations if provided
-        if annotations:
-            for annotation in annotations:
-                fig.add_annotation(
-                    dict(
-                        x=annotation.get('x', 0.5),
-                        y=annotation.get('y', 1.05),
-                        text=annotation.get('text', ''),
-                        showarrow=annotation.get('showarrow', False),
-                        font=dict(
-                            size=annotation.get('font_size', font_size),
-                            color=annotation.get('color', 'black')
-                        ),
-                        align=annotation.get('align', 'center')
-                    )
-                )
-        
-        # Configure layout
-        legend_positions = {
-            'right': dict(x=1.1, y=0.5),
-            'left': dict(x=-0.1, y=0.5),
-            'top': dict(x=0.5, y=1.1),
-            'bottom': dict(x=0.5, y=-0.1)
-        }
-        
+        # Update layout with customization options
         fig.update_layout(
             title=dict(
                 text=title,
-                font=dict(
-                    size=font_size + 8,
-                    family=self.pub_settings.font_settings['family'],
-                    weight='bold',
-                    color='darkblue'
-                ),
-                x=0.5,
-                y=0.95
-            ),
-            polar=polar_layout,
-            showlegend=show_legend,
-            legend=dict(
-                **legend_positions.get(legend_position, legend_positions['right']),
-                bgcolor='rgba(255, 255, 255, 0.9)',
-                bordercolor='black',
-                borderwidth=1,
-                font=dict(
-                    size=font_size,
-                    family=self.pub_settings.font_settings['family']
-                ),
-                title=dict(
-                    text='Defect Types',
-                    font=dict(
-                        size=font_size + 2,
-                        weight='bold'
-                    )
-                )
-            ),
-            width=1000,
-            height=800,
-            margin=dict(l=100, r=150, t=100, b=100),
-            paper_bgcolor='white',
-            plot_bgcolor='white'
-        )
-        
-        return fig
-    
-    def create_habit_plane_vicinity_radar(self, vicinity_data, defect_comparison=None,
-                                         title="Habit Plane Vicinity Analysis",
-                                         colormap='turbo', show_all_defects=True):
-        """Create specialized radar for habit plane vicinity analysis"""
-        
-        # Focus on vicinity around 54.7 degrees
-        vicinity_range = 30.0  # ±30 degrees
-        min_angle = self.habit_angle - vicinity_range
-        max_angle = self.habit_angle + vicinity_range
-        
-        # Prepare data dictionary
-        data_dict = {}
-        
-        # Add vicinity sweep data
-        if vicinity_data and 'angles' in vicinity_data:
-            angles = np.array(vicinity_data['angles'])
-            # Filter for vicinity range
-            mask = (angles >= min_angle) & (angles <= max_angle)
-            if np.any(mask):
-                vicinity_angles = angles[mask]
-                
-                # Add each stress component
-                for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                    if comp in vicinity_data.get('stresses', {}):
-                        stresses = np.array(vicinity_data['stresses'][comp])[mask]
-                        data_dict[f'Vicinity_{comp}'] = {
-                            'angles': vicinity_angles,
-                            'stresses': stresses
-                        }
-        
-        # Add defect comparison data if available and requested
-        if show_all_defects and defect_comparison:
-            for key, data in defect_comparison.items():
-                if 'angles' in data and 'stresses' in data:
-                    angles = np.array(data['angles'])
-                    mask = (angles >= min_angle) & (angles <= max_angle)
-                    if np.any(mask):
-                        defect_angles = angles[mask]
-                        defect_stresses = np.array(data['stresses']['sigma_hydro'])[mask]
-                        defect_type = data.get('defect_type', key)
-                        data_dict[f'{defect_type}'] = {
-                            'angles': defect_angles,
-                            'stresses': defect_stresses
-                        }
-        
-        if not data_dict:
-            # Return empty figure with message
-            fig = go.Figure()
-            fig.update_layout(
-                title=dict(
-                    text=title,
-                    font=dict(size=24, family="Arial", weight='bold', color='darkblue'),
-                    x=0.5
-                ),
-                annotations=[
-                    dict(
-                        text="No data available for radar visualization",
-                        x=0.5,
-                        y=0.5,
-                        showarrow=False,
-                        font=dict(size=16, color='red')
-                    )
-                ],
-                width=800,
-                height=600
-            )
-            return fig
-        
-        # Custom labels
-        custom_labels = {}
-        for key in data_dict.keys():
-            if key.startswith('Vicinity_'):
-                comp = key.replace('Vicinity_', '')
-                custom_labels[key] = f"{comp.replace('_', ' ').title()} Sweep"
-            else:
-                custom_labels[key] = key
-        
-        # Create radar with enhanced settings
-        fig = self.create_customizable_radar(
-            data_dict,
-            title=title,
-            colormap=colormap,
-            font_size=16,  # Larger for publication
-            show_grid=True,
-            grid_color='rgba(100, 100, 100, 0.2)',
-            bg_color='rgba(240, 240, 240, 0.05)',
-            line_width=3,
-            marker_size=10,
-            fill_opacity=0.15,
-            show_legend=True,
-            legend_position='right',
-            radial_range=None,  # Auto-calculate
-            angular_range=[min_angle, max_angle],
-            custom_labels=custom_labels,
-            show_habit_plane=True,
-            habit_plane_color='rgb(46, 204, 113)',
-            habit_plane_width=4,
-            radial_tick_count=6
-        )
-        
-        # Update layout for habit plane focus
-        fig.update_polars(
-            angularaxis=dict(
-                tickmode='array',
-                tickvals=list(range(int(min_angle), int(max_angle) + 1, 15)),
-                ticktext=[f'{i}°' for i in range(int(min_angle), int(max_angle) + 1, 15)],
-                tickfont=dict(size=14),
-                range=[min_angle, max_angle]
-            )
-        )
-        
-        # Add annotation for habit plane
-        fig.add_annotation(
-            dict(
-                x=0.5,
-                y=1.05,
-                text=f"Focus: {self.habit_angle}° ± {vicinity_range}°",
-                showarrow=False,
-                font=dict(size=14, color='darkblue', weight='bold'),
-                align='center'
-            )
-        )
-        
-        return fig
-    
-    def create_interactive_radar_dashboard(self, vicinity_data, defect_comparison):
-        """Create interactive radar dashboard with multiple views"""
-        
-        tabs = []
-        
-        # Tab 1: Full range radar
-        full_radar = self.create_customizable_radar(
-            self._prepare_full_range_data(defect_comparison),
-            title="Full Orientation Range - All Defects",
-            colormap='viridis',
-            font_size=14,
-            show_legend=True
-        )
-        tabs.append(('Full Range', full_radar))
-        
-        # Tab 2: Habit plane vicinity
-        habit_radar = self.create_habit_plane_vicinity_radar(
-            vicinity_data,
-            defect_comparison,
-            title="Habit Plane Vicinity (54.7° ± 30°)",
-            colormap='turbo',
-            show_all_defects=True
-        )
-        tabs.append(('Habit Vicinity', habit_radar))
-        
-        # Tab 3: Stress component comparison
-        stress_radar = self._create_stress_component_radar(vicinity_data)
-        tabs.append(('Stress Components', stress_radar))
-        
-        # Tab 4: Sintering temperature radar
-        if vicinity_data and 'sintering_temps' in vicinity_data:
-            temp_radar = self._create_sintering_radar(vicinity_data)
-            tabs.append(('Sintering Temp', temp_radar))
-        
-        return tabs
-    
-    def _prepare_full_range_data(self, defect_comparison):
-        """Prepare data for full range radar"""
-        data_dict = {}
-        
-        if defect_comparison:
-            for key, data in defect_comparison.items():
-                defect_type = data.get('defect_type', key)
-                if 'angles' in data and 'stresses' in data:
-                    data_dict[defect_type] = {
-                        'angles': data['angles'],
-                        'stresses': data['stresses'].get('sigma_hydro', [])
-                    }
-        
-        return data_dict
-    
-    def _create_stress_component_radar(self, vicinity_data):
-        """Create radar comparing different stress components"""
-        data_dict = {}
-        
-        if vicinity_data and 'angles' in vicinity_data and 'stresses' in vicinity_data:
-            angles = vicinity_data['angles']
-            stresses = vicinity_data['stresses']
-            
-            # Focus on habit plane vicinity
-            mask = (np.array(angles) >= 54.7 - 30) & (np.array(angles) <= 54.7 + 30)
-            if np.any(mask):
-                filtered_angles = np.array(angles)[mask]
-                
-                for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                    if comp in stresses:
-                        filtered_stresses = np.array(stresses[comp])[mask]
-                        data_dict[comp] = {
-                            'angles': filtered_angles,
-                            'stresses': filtered_stresses
-                        }
-        
-        return self.create_customizable_radar(
-            data_dict,
-            title="Stress Component Comparison in Habit Plane Vicinity",
-            colormap='RdYlBu_r',
-            font_size=15,
-            fill_opacity=0.1,
-            show_legend=True
-        )
-    
-    def _create_sintering_radar(self, vicinity_data):
-        """Create radar for sintering temperatures"""
-        data_dict = {}
-        
-        if vicinity_data and 'angles' in vicinity_data and 'sintering_temps' in vicinity_data:
-            angles = vicinity_data['angles']
-            sintering_temps = vicinity_data['sintering_temps']
-            
-            # Focus on habit plane vicinity
-            mask = (np.array(angles) >= 54.7 - 30) & (np.array(angles) <= 54.7 + 30)
-            if np.any(mask):
-                filtered_angles = np.array(angles)[mask]
-                
-                for model in ['exponential', 'arrhenius_defect']:
-                    if model in sintering_temps:
-                        filtered_temps = np.array(sintering_temps[model])[mask]
-                        data_dict[model] = {
-                            'angles': filtered_angles,
-                            'stresses': filtered_temps  # Using stresses key for compatibility
-                        }
-        
-        return self.create_customizable_radar(
-            data_dict,
-            title="Sintering Temperature Models in Habit Plane Vicinity",
-            colormap='hot',
-            font_size=15,
-            fill_opacity=0.1,
-            show_legend=True,
-            radial_range=[300, 700]  # Reasonable temperature range for sintering
-        )
-
-# =============================================
-# ENHANCED HABIT PLANE VISUALIZER
-# =============================================
-
-class EnhancedHabitPlaneVisualizer(HabitPlaneVisualizer):
-    """Enhanced visualizer with publication-quality settings"""
-    
-    def __init__(self, habit_angle=54.7):
-        super().__init__(habit_angle)
-        self.pub_settings = PublicationVisualizationSettings()
-        self.radar_visualizer = EnhancedRadarVisualizer()
-        
-    def create_publication_quality_chart(self, angles, stresses, stress_component='sigma_hydro',
-                                        title="Habit Plane Vicinity Analysis",
-                                        figsize=(12, 8), dpi=300):
-        """Create publication-quality matplotlib chart"""
-        
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        
-        # Convert to numpy arrays
-        angles = np.array(angles)
-        stresses = np.array(stresses)
-        
-        # Plot with enhanced settings
-        ax.plot(angles, stresses, 
-               linewidth=3, 
-               color=self.pub_settings.color_settings['stress_colors'].get(stress_component, '#1F77B4'),
-               marker='o', 
-               markersize=8,
-               markeredgecolor='black',
-               markeredgewidth=1,
-               label=f'{stress_component.replace("_", " ").title()}')
-        
-        # Highlight habit plane
-        ax.axvline(self.habit_angle, 
-                  color='green', 
-                  linestyle='--', 
-                  linewidth=2.5,
-                  alpha=0.8,
-                  label=f'Habit Plane ({self.habit_angle}°)')
-        
-        # Add shaded region for vicinity
-        vicinity_range = 10.0
-        ax.axvspan(self.habit_angle - vicinity_range, 
-                  self.habit_angle + vicinity_range, 
-                  alpha=0.1, 
-                  color='green',
-                  label=f'±{vicinity_range}° Vicinity')
-        
-        # Set labels with publication-quality fonts
-        ax.set_xlabel('Orientation Angle (°)', 
-                     fontdict=self.pub_settings.get_font_dict('axis_label'))
-        ax.set_ylabel(f'{stress_component.replace("_", " ").title()} (GPa)', 
-                     fontdict=self.pub_settings.get_font_dict('axis_label'))
-        ax.set_title(title, 
-                    fontdict=self.pub_settings.get_font_dict('title'),
-                    pad=20)
-        
-        # Configure ticks
-        ax.tick_params(axis='both', which='major', 
-                      labelsize=self.pub_settings.font_settings['size']['axis_tick'])
-        
-        # Add grid
-        ax.grid(True, alpha=0.3, linestyle='--')
-        
-        # Add legend
-        ax.legend(fontsize=self.pub_settings.font_settings['size']['legend'],
-                 frameon=True,
-                 framealpha=0.9,
-                 loc='best')
-        
-        # Tight layout
-        plt.tight_layout()
-        
-        return fig, ax
-    
-    def create_enhanced_sunburst(self, angles, stresses, stress_component='sigma_hydro',
-                                title="Habit Plane Vicinity Analysis",
-                                colormap='turbo', show_annotations=True):
-        """Create enhanced sunburst chart with publication-quality labels"""
-        
-        # Ensure arrays
-        angles = np.array(angles)
-        stresses = np.array(stresses)
-        
-        # Create figure with enhanced settings
-        fig = go.Figure()
-        
-        # Add main trace
-        fig.add_trace(go.Scatterpolar(
-            r=stresses,
-            theta=angles,
-            mode='lines+markers',
-            marker=dict(
-                size=12,  # Larger markers
-                color=stresses,
-                colorscale=colormap,
-                showscale=True,
-                colorbar=dict(
-                    title=dict(
-                        text=f"{stress_component.replace('_', ' ').title()} (GPa)",
-                        font=dict(
-                            size=self.pub_settings.font_settings['size']['axis_label'],
-                            family=self.pub_settings.font_settings['family']
-                        )
-                    ),
-                    x=1.15,
-                    thickness=25,
-                    len=0.8,
-                    tickfont=dict(
-                        size=self.pub_settings.font_settings['size']['axis_tick'],
-                        family=self.pub_settings.font_settings['family']
-                    )
-                ),
-                line=dict(width=2, color='black')
-            ),
-            line=dict(color='rgba(100, 100, 100, 0.5)', width=2),
-            name='Stress Distribution',
-            hovertemplate=(
-                "<b>Habit Plane Vicinity</b><br>" +
-                f"<b>{stress_component.replace('_', ' ').title()}</b><br>" +
-                "Angle: %{theta:.2f}°<br>" +
-                "Stress: %{r:.4f} GPa<br>" +
-                "<extra></extra>"
-            )
-        ))
-        
-        # Highlight habit plane
-        habit_idx = np.argmin(np.abs(angles - self.habit_angle))
-        if habit_idx < len(stresses):
-            fig.add_trace(go.Scatterpolar(
-                r=[stresses[habit_idx]],
-                theta=[angles[habit_idx]],
-                mode='markers+text',
-                marker=dict(
-                    size=30,
-                    color='rgb(46, 204, 113)',
-                    symbol='star',
-                    line=dict(width=3, color='black')
-                ),
-                text=['HABIT PLANE'],
-                textposition='top center',
-                textfont=dict(
-                    size=self.pub_settings.font_settings['size']['annotation'] + 2,
-                    color='black',
-                    family=self.pub_settings.font_settings['family'],
-                    weight='bold'
-                ),
-                name=f'Habit Plane ({self.habit_angle}°)',
-                hovertemplate=(
-                    f"<b>Habit Plane ({self.habit_angle}°)</b><br>" +
-                    f"Angle: {angles[habit_idx]:.2f}°<br>" +
-                    f"Stress: {stresses[habit_idx]:.4f} GPa<br>" +
-                    "<extra></extra>"
-                )
-            ))
-        
-        # Configure layout
-        fig.update_layout(
-            title=dict(
-                text=title,
-                font=dict(
-                    size=self.pub_settings.font_settings['size']['title'],
-                    family=self.pub_settings.font_settings['family'],
-                    weight='bold',
-                    color='darkblue'
-                ),
-                x=0.5,
-                y=0.95
+                font=dict(size=20, family="Arial Black", color='darkblue'),
+                x=0.5
             ),
             polar=dict(
                 radialaxis=dict(
                     visible=True,
-                    gridcolor="rgba(100, 100, 100, 0.3)",
-                    gridwidth=2,
+                    gridcolor="rgba(100, 100, 100, 0.3)" if show_grid else "rgba(0,0,0,0)",
+                    gridwidth=1 if show_grid else 0,
                     linecolor="black",
-                    linewidth=3,
-                    tickfont=dict(
-                        size=self.pub_settings.font_settings['size']['axis_tick'],
-                        family=self.pub_settings.font_settings['family'],
-                        color='black'
-                    ),
-                    title=dict(
-                        text=f"{stress_component.replace('_', ' ').title()} (GPa)",
-                        font=dict(
-                            size=self.pub_settings.font_settings['size']['axis_label'],
-                            family=self.pub_settings.font_settings['family'],
-                            weight='bold',
-                            color='black'
-                        )
-                    )
+                    linewidth=2,
+                    tickfont=dict(size=12, color='black'),
+                    title=dict(text=f'{stress_component.replace("_", " ").title()} Stress (GPa)', 
+                              font=dict(size=14, color='black')),
+                    range=[0, max_stress * 1.2]
                 ),
                 angularaxis=dict(
-                    gridcolor="rgba(100, 100, 100, 0.3)",
-                    gridwidth=2,
+                    gridcolor="rgba(100, 100, 100, 0.3)" if show_grid else "rgba(0,0,0,0)",
+                    gridwidth=1 if show_grid else 0,
                     linecolor="black",
-                    linewidth=3,
+                    linewidth=2,
                     rotation=90,
                     direction="clockwise",
                     tickmode='array',
-                    tickvals=list(range(0, 361, 30)),
-                    ticktext=[f'{i}°' for i in range(0, 361, 30)],
-                    tickfont=dict(
-                        size=self.pub_settings.font_settings['size']['axis_tick'],
-                        family=self.pub_settings.font_settings['family'],
-                        color='black'
-                    ),
+                    tickvals=np.linspace(min(angles), max(angles), 5),
+                    ticktext=[f'{i:.1f}°' for i in np.linspace(min(angles), max(angles), 5)],
+                    tickfont=dict(size=12, color='black'),
                     period=360
                 ),
-                bgcolor="rgba(240, 240, 240, 0.1)"
+                bgcolor=bgcolor
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.1,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.9)',
+                bordercolor='black',
+                borderwidth=1,
+                font=dict(size=12, family='Arial')
+            ),
+            width=900,
+            height=700
+        )
+        
+        return fig
+    
+    def create_sunburst_defect_chart(self, defect_comparison, stress_component='sigma_hydro',
+                                   title="Defect Stress Patterns - Sunburst View",
+                                   show_habit_plane=True, radius_scale=1.0,
+                                   color_scale='RdBu', show_colorbar=True):
+        """Create a sunburst-style chart for defect stress patterns"""
+        fig = go.Figure()
+        
+        # Calculate max stress for consistent scaling
+        max_stress = 0
+        for data in defect_comparison.values():
+            max_stress = max(max_stress, max(data['stresses'][stress_component]))
+        
+        # Add traces for each defect type
+        for defect_key, data in defect_comparison.items():
+            defect_type = data.get('defect_type', 'Unknown')
+            angles = data['angles']
+            stresses = data['stresses'][stress_component]
+            
+            color = data.get('color', self.defect_colors.get(defect_type, 'black'))
+            
+            # Convert to rgba format for gradient
+            if color.startswith('rgb'):
+                rgba_color = f'rgba{color[3:-1]}, 0.8)'
+            else:
+                rgba_color = f'{color}cc'  # Add alpha value
+            
+            # Add the trace
+            fig.add_trace(go.Scatterpolar(
+                r=np.array(stresses) * radius_scale,
+                theta=angles,
+                mode='markers+lines',
+                marker=dict(
+                    size=12,
+                    color=stresses,
+                    colorscale=color_scale,
+                    showscale=show_colorbar and defect_key == list(defect_comparison.keys())[0],
+                    colorbar=dict(
+                        title=f"{stress_component.replace('_', ' ').title()} (GPa)",
+                        x=1.1,
+                        thickness=20
+                    ) if show_colorbar else None,
+                    line=dict(width=1, color='white')
+                ),
+                line=dict(color=color, width=3, shape='spline'),
+                name=f"{defect_type} (ε*={data.get('eigen_strain', 0):.2f})",
+                hovertemplate='Defect: ' + defect_type + '<br>Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
+                showlegend=True
+            ))
+        
+        # Highlight habit plane if requested
+        if show_habit_plane:
+            habit_angles = []
+            habit_stresses = []
+            
+            for defect_key, data in defect_comparison.items():
+                angles = np.array(data['angles'])
+                stresses = np.array(data['stresses'][stress_component])
+                habit_idx = np.argmin(np.abs(angles - self.habit_angle))
+                habit_angles.append(angles[habit_idx])
+                habit_stresses.append(stresses[habit_idx])
+            
+            if habit_angles:
+                avg_habit_angle = np.mean(habit_angles)
+                max_habit_stress = max(habit_stresses) * radius_scale
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=[max_habit_stress * 1.1],
+                    theta=[avg_habit_angle],
+                    mode='markers+text',
+                    marker=dict(
+                        size=25,
+                        color='rgb(46, 204, 113)',
+                        symbol='star',
+                        line=dict(width=2, color='black')
+                    ),
+                    text=['HABIT PLANE'],
+                    textposition='top center',
+                    textfont=dict(size=14, color='black', family='Arial Black'),
+                    name=f'Habit Plane ({self.habit_angle}°)',
+                    hovertemplate=f'Habit Plane ({self.habit_angle}°)<br>Peak Stress: {max_habit_stress:.4f} GPa<extra></extra>',
+                    showlegend=True
+                ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=20, family="Arial Black", color='darkblue'),
+                x=0.5
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    gridcolor="rgba(150, 150, 150, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    tickfont=dict(size=12, color='black'),
+                    title=dict(text=f'{stress_component.replace("_", " ").title()} Stress (GPa)', 
+                              font=dict(size=14, color='black')),
+                    range=[0, max_stress * radius_scale * 1.2]
+                ),
+                angularaxis=dict(
+                    gridcolor="rgba(150, 150, 150, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    rotation=90,
+                    direction="clockwise",
+                    tickmode='array',
+                    tickvals=np.linspace(min(angles), max(angles), 5),
+                    ticktext=[f'{i:.1f}°' for i in np.linspace(min(angles), max(angles), 5)],
+                    tickfont=dict(size=12, color='black'),
+                    period=360
+                ),
+                bgcolor="rgba(245, 245, 245, 0.5)"
             ),
             showlegend=True,
             legend=dict(
                 x=1.15,
                 y=0.5,
-                bgcolor='rgba(255, 255, 255, 0.95)',
+                bgcolor='rgba(255, 255, 255, 0.9)',
                 bordercolor='black',
-                borderwidth=2,
-                font=dict(
-                    size=self.pub_settings.font_settings['size']['legend'],
-                    family=self.pub_settings.font_settings['family']
-                ),
-                title=dict(
-                    text='Legend',
-                    font=dict(
-                        size=self.pub_settings.font_settings['size']['legend'] + 2,
-                        weight='bold'
-                    )
-                )
+                borderwidth=1,
+                font=dict(size=12, family='Arial')
             ),
-            width=1000,
-            height=800,
-            margin=dict(l=100, r=200, t=100, b=100),
-            paper_bgcolor='white'
+            width=900,
+            height=700
         )
         
-        # Add annotations if requested
-        if show_annotations:
-            fig.add_annotation(
-                dict(
-                    x=0.5,
-                    y=-0.1,
-                    text=f"Analysis focused on {self.habit_angle}° habit plane vicinity",
-                    showarrow=False,
-                    font=dict(
-                        size=self.pub_settings.font_settings['size']['annotation'],
-                        color='darkblue'
-                    ),
-                    align='center'
-                )
-            )
+        return fig
+    
+    def create_multi_component_radar(self, defect_comparison, defect_type='Twin',
+                                   title="Stress Components for Twin Defects",
+                                   show_habit_plane=True, fill_opacity=0.15,
+                                   component_opacity=0.6):
+        """Create radar chart showing multiple stress components for a single defect type"""
+        fig = go.Figure()
+        
+        # Find data for the specified defect type
+        target_data = None
+        for key, data in defect_comparison.items():
+            if data.get('defect_type') == defect_type:
+                target_data = data
+                break
+        
+        if not target_data:
+            st.error(f"No data found for defect type: {defect_type}")
+            return fig
+        
+        angles = target_data['angles']
+        eigen_strain = target_data['eigen_strain']
+        
+        # Add traces for each stress component
+        for comp_name in ['sigma_hydro', 'von_mises', 'sigma_mag']:
+            if comp_name in target_data['stresses']:
+                stresses = target_data['stresses'][comp_name]
+                # Close the loop for radar chart
+                angles_closed = np.append(angles, angles[0])
+                stresses_closed = np.append(stresses, stresses[0])
+                
+                color = self.stress_component_colors.get(comp_name, 'black')
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=stresses_closed,
+                    theta=angles_closed,
+                    fill='toself',
+                    fillcolor=f'rgba{color[3:-1]}, {fill_opacity})',
+                    line=dict(color=color, width=3),
+                    marker=dict(size=6, color=color),
+                    name=f"{comp_name.replace('_', ' ').title()}",
+                    hovertemplate='Component: ' + comp_name.replace('_', ' ').title() + 
+                                  '<br>Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>',
+                    showlegend=True
+                ))
+        
+        # Highlight habit plane if requested
+        if show_habit_plane:
+            max_stress = 0
+            for comp_name in ['sigma_hydro', 'von_mises', 'sigma_mag']:
+                if comp_name in target_data['stresses']:
+                    max_stress = max(max_stress, max(target_data['stresses'][comp_name]))
+            
+            fig.add_trace(go.Scatterpolar(
+                r=[0, max_stress * 1.2],
+                theta=[self.habit_angle, self.habit_angle],
+                mode='lines',
+                line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
+                name=f'Habit Plane ({self.habit_angle}°)',
+                hoverinfo='skip',
+                showlegend=True
+            ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=f"{title} - {defect_type} Defect (ε*={eigen_strain:.2f})",
+                font=dict(size=20, family="Arial Black", color='darkblue'),
+                x=0.5
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    tickfont=dict(size=12, color='black'),
+                    title=dict(text='Stress (GPa)', font=dict(size=14, color='black')),
+                    range=[0, max_stress * 1.2]
+                ),
+                angularaxis=dict(
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    rotation=90,
+                    direction="clockwise",
+                    tickmode='array',
+                    tickvals=np.linspace(min(angles), max(angles), 5),
+                    ticktext=[f'{i:.1f}°' for i in np.linspace(min(angles), max(angles), 5)],
+                    tickfont=dict(size=12, color='black'),
+                    period=360
+                ),
+                bgcolor="rgba(240, 240, 240, 0.3)"
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.1,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.9)',
+                bordercolor='black',
+                borderwidth=1,
+                font=dict(size=12, family='Arial')
+            ),
+            width=900,
+            height=700
+        )
         
         return fig
+    
+    def create_normalized_stress_radar(self, defect_comparison, 
+                                      title="Normalized Stress Patterns by Defect Type",
+                                      show_habit_plane=True, normalize_by="max"):
+        """Create radar chart with normalized stress values for better comparison"""
+        fig = go.Figure()
+        
+        # Add traces for each defect type with normalized stresses
+        for defect_key, data in defect_comparison.items():
+            defect_type = data.get('defect_type', 'Unknown')
+            angles = data['angles']
+            stresses = data['stresses']['sigma_hydro']
+            
+            # Normalize stresses
+            if normalize_by == "max":
+                norm_stresses = np.array(stresses) / max(stresses) if max(stresses) > 0 else stresses
+            elif normalize_by == "eigen_strain":
+                eigen_strain = data.get('eigen_strain', 1.0)
+                norm_stresses = np.array(stresses) / eigen_strain if eigen_strain > 0 else stresses
+            else:  # normalize_by == "area"
+                area = np.trapz(stresses, angles)
+                norm_stresses = np.array(stresses) / area if area > 0 else stresses
+            
+            # Close the loop for radar chart
+            angles_closed = np.append(angles, angles[0])
+            stresses_closed = np.append(norm_stresses, norm_stresses[0])
+            
+            color = data.get('color', self.defect_colors.get(defect_type, 'black'))
+            
+            fig.add_trace(go.Scatterpolar(
+                r=stresses_closed,
+                theta=angles_closed,
+                fill='toself',
+                fillcolor=f'rgba{color[3:-1]}, 0.3)',
+                line=dict(color=color, width=3),
+                marker=dict(size=6, color=color),
+                name=f"{defect_type} (ε*={data.get('eigen_strain', 0):.2f})",
+                hovertemplate='Defect: ' + defect_type + 
+                              '<br>Orientation: %{theta:.2f}°<br>Normalized Stress: %{r:.4f}<extra></extra>',
+                showlegend=True
+            ))
+        
+        # Highlight habit plane if requested
+        if show_habit_plane:
+            fig.add_trace(go.Scatterpolar(
+                r=[0, 1.2],
+                theta=[self.habit_angle, self.habit_angle],
+                mode='lines',
+                line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
+                name=f'Habit Plane ({self.habit_angle}°)',
+                hoverinfo='skip',
+                showlegend=True
+            ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=title,
+                font=dict(size=20, family="Arial Black", color='darkblue'),
+                x=0.5
+            ),
+            polar=dict(
+                radialaxis=dict(
+                    visible=True,
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    tickfont=dict(size=12, color='black'),
+                    title=dict(text='Normalized Stress', font=dict(size=14, color='black')),
+                    range=[0, 1.2]
+                ),
+                angularaxis=dict(
+                    gridcolor="rgba(100, 100, 100, 0.3)",
+                    gridwidth=1,
+                    linecolor="black",
+                    linewidth=2,
+                    rotation=90,
+                    direction="clockwise",
+                    tickmode='array',
+                    tickvals=np.linspace(min(angles), max(angles), 5),
+                    ticktext=[f'{i:.1f}°' for i in np.linspace(min(angles), max(angles), 5)],
+                    tickfont=dict(size=12, color='black'),
+                    period=360
+                ),
+                bgcolor="rgba(240, 240, 240, 0.3)"
+            ),
+            showlegend=True,
+            legend=dict(
+                x=1.1,
+                y=0.5,
+                bgcolor='rgba(255, 255, 255, 0.9)',
+                bordercolor='black',
+                borderwidth=1,
+                font=dict(size=12, family='Arial')
+            ),
+            width=900,
+            height=700
+        )
+        
+        return fig
+    
+    def _rgb_to_hex(self, rgb_str):
+        """Convert RGB string to hex format"""
+        if rgb_str.startswith('rgb'):
+            rgb_vals = rgb_str[4:-1].split(',')
+            if len(rgb_vals) == 3:
+                return f'#{int(rgb_vals[0]):02x}{int(rgb_vals[1]):02x}{int(rgb_vals[2]):02x}'
+        return rgb_str
 
 # =============================================
-# ENHANCED MAIN APPLICATION
+# STREAMLIT APPLICATION - FOCUSED ON DEFECT RADAR CHARTS
 # =============================================
-
 def main():
-    # Configure Streamlit page with enhanced settings
+    # Configure Streamlit page
     st.set_page_config(
-        page_title="Ag FCC Twin: Enhanced Habit Plane Analysis",
+        page_title="Defect Radar Charts - Habit Plane Analysis",
         layout="wide",
-        page_icon="🔬",
-        initial_sidebar_state="expanded",
-        menu_items={
-            'Get Help': 'https://github.com/your-repo',
-            'Report a bug': "https://github.com/your-repo/issues",
-            'About': "# Enhanced Habit Plane Analysis\nPublication-quality visualizations for Ag FCC twin analysis"
-        }
+        page_icon="🎯",
+        initial_sidebar_state="expanded"
     )
     
-    # Enhanced CSS for better styling
+    # Custom CSS for enhanced styling
     st.markdown("""
     <style>
     .main-header {
-        font-size: 3.5rem !important;
+        font-size: 2.5rem !important;
         color: #1E3A8A !important;
         text-align: center;
         padding: 1rem;
@@ -890,1171 +774,613 @@ def main():
         -webkit-text-fill-color: transparent;
         font-weight: 900 !important;
         margin-bottom: 1rem;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
     }
-    .sub-header {
-        font-size: 2.0rem !important;
+    .physics-header {
+        font-size: 1.8rem !important;
         color: #374151 !important;
         font-weight: 700 !important;
-        border-left: 6px solid #3B82F6;
-        padding-left: 1.2rem;
-        margin-top: 2rem;
-        margin-bottom: 1.5rem;
-        background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.05));
-        padding: 1rem;
-        border-radius: 0.5rem;
+        border-left: 5px solid #3B82F6;
+        padding-left: 1rem;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
     }
-    .pub-quality {
-        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
-        padding: 1.5rem;
-        border-radius: 1rem;
-        color: white;
-        font-weight: bold;
-        text-align: center;
-        margin: 1rem 0;
-        border: 3px solid #4F46E5;
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-    }
-    .visualization-controls {
-        background-color: #F8FAFC;
-        padding: 1.5rem;
-        border-radius: 0.8rem;
-        border: 2px solid #E5E7EB;
-        margin: 1rem 0;
-    }
-    .radar-customization {
-        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-        padding: 1.5rem;
-        border-radius: 0.8rem;
-        border: 2px solid #F59E0B;
-        margin: 1rem 0;
-    }
-    .defect-highlight {
-        border: 3px solid;
-        border-radius: 0.8rem;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    }
-    .defect-highlight:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 15px rgba(0, 0, 0, 0.15);
-    }
-    .isf-highlight { border-color: #FF6B6B; background-color: rgba(255, 107, 107, 0.08); }
-    .esf-highlight { border-color: #4ECDC4; background-color: rgba(78, 205, 196, 0.08); }
-    .twin-highlight { border-color: #45B7D1; background-color: rgba(69, 183, 209, 0.08); }
-    .perfect-highlight { border-color: #96CEB4; background-color: rgba(150, 206, 180, 0.08); }
-    .metric-card {
-        background: white;
-        padding: 1.2rem;
-        border-radius: 0.8rem;
-        border: 2px solid #E5E7EB;
-        text-align: center;
-        margin: 0.5rem;
-        transition: all 0.3s ease;
-    }
-    .metric-card:hover {
-        border-color: #3B82F6;
-        box-shadow: 0 6px 12px rgba(59, 130, 246, 0.15);
-    }
-    .metric-value {
-        font-size: 2.2rem !important;
-        font-weight: 900 !important;
-        color: #1E3A8A !important;
-        margin: 0.5rem 0;
-    }
-    .metric-label {
-        font-size: 1rem !important;
-        color: #6B7280 !important;
-        font-weight: 600 !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    .habit-plane-banner {
+    .habit-plane-highlight {
         background: linear-gradient(135deg, #10B981 0%, #059669 100%);
-        padding: 1.5rem;
-        border-radius: 1rem;
+        padding: 1rem;
+        border-radius: 0.8rem;
         color: white;
         font-weight: bold;
-        border: 3px solid #047857;
-        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.2);
-        margin: 1.5rem 0;
+        border: 2px solid #047857;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin: 1rem 0;
     }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 1rem;
-        padding: 0 1rem;
+    .defect-card {
+        border: 2px solid;
+        border-radius: 0.6rem;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        transition: transform 0.2s;
     }
-    .stTabs [data-baseweb="tab"] {
-        height: 60px;
-        padding: 0 2rem;
-        font-weight: 600;
-        border-radius: 8px 8px 0 0;
-        background-color: #F3F4F6;
-        border: 2px solid transparent;
-    }
-    .stTabs [data-baseweb="tab"]:hover {
-        background-color: #E5E7EB;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #3B82F6 !important;
-        color: white !important;
-        border-color: #2563EB;
-        box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
-    }
-    .tab-content {
-        padding: 2rem;
-        background-color: white;
-        border-radius: 0.5rem;
-        border: 2px solid #E5E7EB;
-        margin-top: 1rem;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-    }
-    .custom-slider {
-        padding: 1rem 0;
-    }
-    .stButton > button {
-        font-weight: 600;
-        border-radius: 8px;
-        transition: all 0.3s;
-    }
-    .stButton > button:hover {
+    .defect-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    }
+    .isf-card { border-color: #FF6B6B; background-color: rgba(255, 107, 107, 0.1); }
+    .esf-card { border-color: #4ECDC4; background-color: rgba(78, 205, 196, 0.1); }
+    .twin-card { border-color: #45B7D1; background-color: rgba(69, 183, 209, 0.1); }
+    .perfect-card { border-color: #96CEB4; background-color: rgba(150, 206, 180, 0.1); }
+    .chart-option-card {
+        background-color: #f8fafc;
+        padding: 1rem;
+        border-radius: 0.6rem;
+        border: 1px solid #e2e8f0;
+        margin-bottom: 1rem;
+    }
+    .customization-section {
+        background-color: #f1f5f9;
+        padding: 1.5rem;
+        border-radius: 0.8rem;
+        margin: 1rem 0;
     }
     </style>
     """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🔬 Ag FCC Twin: Enhanced Habit Plane Analysis</h1>', unsafe_allow_html=True)
-    
-    # Publication quality banner
-    st.markdown("""
-    <div class="pub-quality">
-    <div style="display: flex; align-items: center; justify-content: center; gap: 1rem;">
-    <div style="font-size: 3rem;">📊</div>
-    <div>
-    <h2 style="margin: 0; color: white;">Publication-Quality Visualizations</h2>
-    <p style="margin: 0.5rem 0 0 0; color: white; opacity: 0.9; font-size: 1.1rem;">
-    Enhanced charts with larger labels, customizable radar views, and extensive colormap options
-    </p>
-    </div>
-    <div style="font-size: 3rem;">🎨</div>
-    </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Initialize enhanced components
-    pub_settings = PublicationVisualizationSettings()
-    radar_visualizer = EnhancedRadarVisualizer()
+    st.markdown('<h1 class="main-header">🎯 Defect Radar Charts: Habit Plane Stress Analysis</h1>', unsafe_allow_html=True)
     
     # Initialize session state
     if 'solutions' not in st.session_state:
         st.session_state.solutions = []
     if 'loader' not in st.session_state:
         st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
-    if 'visualizer' not in st.session_state:
-        st.session_state.visualizer = EnhancedHabitPlaneVisualizer()
     if 'interpolator' not in st.session_state:
         st.session_state.interpolator = PhysicsAwareInterpolator()
+    if 'visualizer' not in st.session_state:
+        st.session_state.visualizer = DefectRadarVisualizer()
     
-    # Sidebar with enhanced controls
+    # Sidebar configuration
     with st.sidebar:
-        st.markdown('<h2 class="sub-header">⚙️ Enhanced Controls</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="physics-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
         
-        # Visualization Settings Section
-        st.markdown('<div class="visualization-controls">', unsafe_allow_html=True)
-        st.markdown("#### 🎨 Visualization Settings")
+        # Data loading
+        st.markdown("#### 📂 Data Management")
+        if st.button("🔄 Load Solutions", use_container_width=True):
+            with st.spinner("Loading solutions..."):
+                st.session_state.solutions = st.session_state.loader.load_all_solutions()
+                if st.session_state.solutions:
+                    st.success(f"Loaded {len(st.session_state.solutions)} solutions")
+                else:
+                    st.warning("No solutions found in directory")
         
-        # Font size controls
-        font_size_mode = st.radio(
-            "Font Size Mode",
-            ["Publication", "Presentation", "Custom"],
-            index=0,
-            help="Select font size preset"
-        )
+        # Show loaded solutions info
+        if st.session_state.solutions:
+            with st.expander(f"📊 Loaded Solutions ({len(st.session_state.solutions)})", expanded=False):
+                st.write("Data loaded successfully!")
         
-        if font_size_mode == "Custom":
-            col_font1, col_font2 = st.columns(2)
-            with col_font1:
-                title_size = st.slider("Title Size", 12, 32, 22, 1)
-            with col_font2:
-                label_size = st.slider("Label Size", 10, 24, 16, 1)
-        else:
-            presets = {
-                "Publication": {"title": 22, "label": 16},
-                "Presentation": {"title": 28, "label": 20}
-            }
-            title_size = presets[font_size_mode]["title"]
-            label_size = presets[font_size_mode]["label"]
-        
-        # Colormap selection
-        st.markdown("##### 🌈 Colormap Selection")
-        colormap_categories = pub_settings.get_colormap_list()
-        
-        colormap_category = st.selectbox(
-            "Colormap Category",
-            list(colormap_categories.keys()),
-            index=0
-        )
-        
-        selected_colormap = st.selectbox(
-            "Select Colormap",
-            colormap_categories[colormap_category],
-            index=0 if 'viridis' in colormap_categories[colormap_category] else 0
-        )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Radar Customization Section
-        st.markdown('<div class="radar-customization">', unsafe_allow_html=True)
-        st.markdown("#### 📡 Radar View Customization")
-        
-        radar_font_size = st.slider(
-            "Radar Font Size",
-            min_value=10,
-            max_value=24,
-            value=16,
-            step=1,
-            help="Font size for radar chart labels"
-        )
-        
-        line_width = st.slider(
-            "Line Width",
-            min_value=1,
-            max_value=8,
-            value=3,
-            step=1,
-            help="Line width for radar traces"
-        )
-        
-        marker_size = st.slider(
-            "Marker Size",
-            min_value=4,
-            max_value=20,
-            value=10,
-            step=1,
-            help="Marker size for data points"
-        )
-        
-        fill_opacity = st.slider(
-            "Fill Opacity",
-            min_value=0.0,
-            max_value=0.5,
-            value=0.15,
-            step=0.05,
-            help="Opacity of filled areas"
-        )
-        
-        show_grid = st.checkbox("Show Grid", value=True)
-        show_legend = st.checkbox("Show Legend", value=True)
-        
-        legend_position = st.selectbox(
-            "Legend Position",
-            ["right", "left", "top", "bottom"],
-            index=0
-        )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Defect Selection
-        st.markdown("#### 🔬 Defect Selection")
-        
-        defect_type = st.selectbox(
-            "Defect Type",
-            ["Twin", "ISF", "ESF", "No Defect"],
-            index=0,
-            help="Select defect type for analysis"
-        )
-        
-        # Show defect properties
-        defect_properties = {
-            "Twin": {"eigen_strain": 2.12, "color": "#45B7D1", "desc": "Coherent Twin Boundary"},
-            "ISF": {"eigen_strain": 0.71, "color": "#FF6B6B", "desc": "Intrinsic Stacking Fault"},
-            "ESF": {"eigen_strain": 1.41, "color": "#4ECDC4", "desc": "Extrinsic Stacking Fault"},
-            "No Defect": {"eigen_strain": 0.0, "color": "#96CEB4", "desc": "Perfect Crystal"}
-        }
-        
-        defect_info = defect_properties[defect_type]
-        st.markdown(f"""
-        <div class="defect-highlight {'twin' if defect_type == 'Twin' else 'isf' if defect_type == 'ISF' else 'esf' if defect_type == 'ESF' else 'perfect'}-highlight">
-        <div style="display: flex; align-items: center; gap: 1rem;">
-        <div style="width: 20px; height: 20px; background-color: {defect_info['color']}; border-radius: 50%;"></div>
-        <div>
-        <strong style="font-size: 1.1rem;">{defect_type}</strong><br>
-        <span style="font-size: 0.9rem; color: #666;">{defect_info['desc']}</span>
-        </div>
-        </div>
-        <div style="margin-top: 0.8rem;">
-        <strong>Eigen Strain (ε*):</strong> {defect_info['eigen_strain']}<br>
-        </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Vicinity Settings
-        st.markdown("#### 🎯 Vicinity Settings")
-        
+        # Analysis parameters
+        st.markdown("#### 🎯 Analysis Parameters")
         vicinity_range = st.slider(
             "Vicinity Range (± degrees)",
-            min_value=1.0,
+            min_value=5.0,
             max_value=45.0,
-            value=30.0,
+            value=15.0,
             step=1.0,
-            help="Range around habit plane for detailed analysis"
+            help="Range around habit plane to analyze"
         )
         
         n_points = st.slider(
             "Number of Points",
-            min_value=20,
-            max_value=200,
-            value=100,
-            step=10,
-            help="Points in orientation sweep"
+            min_value=24,
+            max_value=144,
+            value=72,
+            step=12,
+            help="Number of orientation points in sweep"
         )
         
-        # Analysis Type
-        analysis_type = st.radio(
-            "Analysis Type",
-            ["Habit Plane Vicinity", "Defect Comparison", "Comprehensive Dashboard", "Custom Radar"],
-            index=0
+        region_type = st.selectbox(
+            "Region Type",
+            ["bulk", "interface", "defect"],
+            index=0,
+            help="Material region to analyze"
         )
         
-        # Generate Button
+        # Chart type selection
+        st.markdown("#### 📊 Chart Type")
+        chart_type = st.selectbox(
+            "Select Chart Type",
+            ["Basic Radar Chart", "Sunburst Chart", "Multi-Component Radar", "Normalized Stress Radar"],
+            index=0,
+            help="Choose the type of visualization"
+        )
+        
+        # Stress component selection
+        stress_component = st.selectbox(
+            "Stress Component",
+            ["sigma_hydro", "von_mises", "sigma_mag"],
+            index=0,
+            help="Select stress component to visualize"
+        )
+        
+        # For multi-component radar
+        defect_type_for_multi = "Twin"
+        if chart_type == "Multi-Component Radar":
+            defect_type_for_multi = st.selectbox(
+                "Defect Type",
+                ["ISF", "ESF", "Twin", "No Defect"],
+                index=2,
+                help="Select defect type for multi-component analysis"
+            )
+        
+        # For normalized radar
+        normalize_by = "max"
+        if chart_type == "Normalized Stress Radar":
+            normalize_by = st.selectbox(
+                "Normalize By",
+                ["max", "eigen_strain", "area"],
+                index=0,
+                help="Method for normalizing stress values"
+            )
+        
+        # Generate button
         st.markdown("---")
-        generate_col1, generate_col2 = st.columns(2)
-        with generate_col1:
-            if st.button("🚀 Generate Analysis", type="primary", use_container_width=True):
-                st.session_state.generate_analysis = True
-                st.session_state.analysis_type = analysis_type
-        with generate_col2:
-            if st.button("🔄 Reset Settings", use_container_width=True):
-                st.session_state.clear()
-                st.rerun()
+        if st.button("🚀 Generate Radar Chart", type="primary", use_container_width=True):
+            st.session_state.generate_chart = True
+        else:
+            st.session_state.generate_chart = False
     
     # Main content area
-    main_tab1, main_tab2, main_tab3, main_tab4 = st.tabs([
-        "📊 Overview",
-        "🎯 Habit Plane Analysis",
-        "📡 Radar Views",
-        "📈 Comprehensive Analysis"
-    ])
-    
-    with main_tab1:
-        st.markdown('<h2 class="sub-header">📊 Analysis Overview</h2>', unsafe_allow_html=True)
+    if not st.session_state.solutions:
+        st.warning("⚠️ Please load solutions first using the button in the sidebar.")
         
-        # Habit plane banner
-        st.markdown(f"""
-        <div class="habit-plane-banner">
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-        <div>
-        <h2 style="margin: 0; color: white;">🎯 Ag FCC Twin Habit Plane: 54.7°</h2>
-        <p style="margin: 0.5rem 0 0 0; color: white; opacity: 0.9;">
-        • {{111}} crystal planes • Maximum Schmid factor • Optimal defect engineering
-        </p>
-        </div>
-        <div style="font-size: 3rem;">⚛️</div>
-        </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Show directory information
+        with st.expander("📁 Directory Information", expanded=True):
+            st.info(f"**Solutions Directory:** {SOLUTIONS_DIR}")
+            st.write("Expected file formats: .pkl, .pickle, .pt, .pth")
+    else:
+        # Create tabs for different views
+        tab1, tab2, tab3 = st.tabs([
+            "📈 Radar Chart",
+            "🎨 Customization",
+            "💡 Concepts & Examples"
+        ])
         
-        # Key metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown("""
-            <div class="metric-card">
-            <div class="metric-label">Publication Quality</div>
-            <div class="metric-value">300 DPI</div>
-            <div style="font-size: 0.9rem; color: #6B7280;">High-resolution output</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-            <div class="metric-card">
-            <div class="metric-label">Colormaps</div>
-            <div class="metric-value">50+</div>
-            <div style="font-size: 0.9rem; color: #6B7280;">Available options</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown("""
-            <div class="metric-card">
-            <div class="metric-label">Defect Types</div>
-            <div class="metric-value">4</div>
-            <div style="font-size: 0.9rem; color: #6B7280;">TWIN, ESF, ISF, Perfect</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown("""
-            <div class="metric-card">
-            <div class="metric-label">Vicinity Range</div>
-            <div class="metric-value">±30°</div>
-            <div style="font-size: 0.9rem; color: #6B7280;">Around habit plane</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Defect comparison
-        st.markdown('<h3 class="sub-header">🔬 Defect Properties Comparison</h3>', unsafe_allow_html=True)
-        
-        defect_cols = st.columns(4)
-        defect_data = [
-            ("TWIN", 2.12, "Maximum strain, optimal for sintering", "#45B7D1"),
-            ("ESF", 1.41, "Intermediate strain, good diffusion", "#4ECDC4"),
-            ("ISF", 0.71, "Lower strain, moderate effects", "#FF6B6B"),
-            ("Perfect", 0.0, "Reference, minimal effects", "#96CEB4")
-        ]
-        
-        for idx, (name, strain, desc, color) in enumerate(defect_data):
-            with defect_cols[idx]:
-                st.markdown(f"""
-                <div class="defect-highlight {'twin' if name == 'TWIN' else 'esf' if name == 'ESF' else 'isf' if name == 'ISF' else 'perfect'}-highlight">
-                <div style="text-align: center;">
-                <div style="font-size: 1.8rem; font-weight: bold; color: {color}; margin-bottom: 0.5rem;">{name}</div>
-                <div style="font-size: 1.3rem; font-weight: bold; color: #333; margin: 0.8rem 0;">ε* = {strain}</div>
-                <div style="font-size: 0.9rem; color: #666; line-height: 1.4;">{desc}</div>
-                </div>
-                </div>
-                """, unsafe_allow_html=True)
-    
-    with main_tab2:
-        st.markdown('<h2 class="sub-header">🎯 Habit Plane Vicinity Analysis</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.get('generate_analysis', False) and st.session_state.get('analysis_type') == "Habit Plane Vicinity":
+        with tab1:
+            st.markdown('<h2 class="physics-header">📈 Defect Stress Radar Chart</h2>', unsafe_allow_html=True)
             
-            with st.spinner("🚀 Performing enhanced habit plane analysis..."):
-                # Load solutions if not already loaded
-                if not st.session_state.solutions:
-                    st.session_state.solutions = st.session_state.loader.load_all_solutions()
-                
-                if st.session_state.solutions:
-                    # Prepare target parameters
-                    target_params = {
-                        'defect_type': defect_type,
-                        'shape': 'Square',
-                        'eps0': defect_info['eigen_strain'],
-                        'kappa': 0.6
-                    }
-                    
-                    # Perform vicinity sweep
-                    vicinity_sweep = st.session_state.interpolator.create_vicinity_sweep(
-                        st.session_state.solutions,
-                        target_params,
-                        vicinity_range=vicinity_range,
-                        n_points=n_points,
-                        region_type='bulk'
-                    )
-                    
-                    if vicinity_sweep:
-                        st.success(f"✅ Generated vicinity analysis with {n_points} points (±{vicinity_range}°)")
-                        
-                        # Store in session state
-                        st.session_state.vicinity_sweep = vicinity_sweep
-                        
-                        # Display key metrics
-                        st.markdown('<h3 class="sub-header">📈 Key Metrics at Habit Plane</h3>', unsafe_allow_html=True)
-                        
-                        # Calculate habit plane metrics
-                        angles = np.array(vicinity_sweep['angles'])
-                        habit_idx = np.argmin(np.abs(angles - 54.7))
-                        
-                        metric_cols = st.columns(4)
-                        with metric_cols[0]:
-                            sigma_h = vicinity_sweep['stresses']['sigma_hydro'][habit_idx]
-                            st.metric(
-                                "σ_hydro",
-                                f"{sigma_h:.3f} GPa",
-                                "Hydrostatic Stress"
-                            )
-                        
-                        with metric_cols[1]:
-                            sigma_vm = vicinity_sweep['stresses']['von_mises'][habit_idx]
-                            st.metric(
-                                "σ_von Mises",
-                                f"{sigma_vm:.3f} GPa",
-                                "Equivalent Stress"
-                            )
-                        
-                        with metric_cols[2]:
-                            T_sinter = vicinity_sweep['sintering_temps']['arrhenius_defect'][habit_idx]
-                            st.metric(
-                                "T_sinter",
-                                f"{T_sinter:.1f} K",
-                                f"{T_sinter-273.15:.1f}°C"
-                            )
-                        
-                        with metric_cols[3]:
-                            temp_reduction = 623.0 - T_sinter
-                            st.metric(
-                                "ΔT Reduction",
-                                f"{temp_reduction:.1f} K",
-                                "From reference"
-                            )
-                        
-                        # Create enhanced visualizations
-                        st.markdown('<h3 class="sub-header">📊 Enhanced Visualizations</h3>', unsafe_allow_html=True)
-                        
-                        # Sunburst chart
-                        st.markdown("##### 🌟 Polar Visualization (Sunburst)")
-                        fig_sunburst = st.session_state.visualizer.create_enhanced_sunburst(
-                            vicinity_sweep['angles'],
-                            vicinity_sweep['stresses']['sigma_hydro'],
-                            stress_component='sigma_hydro',
-                            title=f"Habit Plane Vicinity - {defect_type}",
-                            colormap=selected_colormap,
-                            show_annotations=True
+            if st.session_state.get('generate_chart', False) or 'defect_comparison' in st.session_state:
+                with st.spinner("Generating radar chart..."):
+                    # Generate comparison data if not already in session state
+                    if 'defect_comparison' not in st.session_state:
+                        defect_comparison = st.session_state.interpolator.compare_defect_types(
+                            st.session_state.solutions,
+                            vicinity_range=vicinity_range,
+                            n_points=n_points,
+                            region_type=region_type
                         )
-                        st.plotly_chart(fig_sunburst, use_container_width=True)
-                        
-                        # Line plots
-                        st.markdown("##### 📈 Stress Component Comparison")
-                        
-                        fig_line, axes = plt.subplots(1, 3, figsize=(18, 6))
-                        
-                        components = ['sigma_hydro', 'von_mises', 'sigma_mag']
-                        colors = ['#1F77B4', '#FF7F0E', '#2CA02C']
-                        
-                        for idx, (comp, color) in enumerate(zip(components, colors)):
-                            ax = axes[idx]
-                            ax.plot(
-                                vicinity_sweep['angles'],
-                                vicinity_sweep['stresses'][comp],
-                                color=color,
-                                linewidth=3,
-                                marker='o',
-                                markersize=6,
-                                markeredgecolor='black'
-                            )
-                            ax.axvline(54.7, color='green', linestyle='--', linewidth=2, alpha=0.7)
-                            ax.set_xlabel('Orientation (°)', fontsize=label_size)
-                            ax.set_ylabel(f'{comp.replace("_", " ").title()} (GPa)', fontsize=label_size)
-                            ax.set_title(f'{comp.replace("_", " ").title()} Stress', fontsize=title_size, fontweight='bold')
-                            ax.grid(True, alpha=0.3)
-                            ax.tick_params(axis='both', labelsize=label_size-2)
-                            
-                            # Add vicinity shading
-                            ax.axvspan(54.7 - vicinity_range, 54.7 + vicinity_range, alpha=0.1, color='green')
-                        
-                        plt.tight_layout()
-                        st.pyplot(fig_line)
-                        plt.close(fig_line)
-                        
-                        # Sintering temperature analysis
-                        st.markdown("##### 🔥 Sintering Temperature Analysis")
-                        
-                        fig_temp, ax_temp = plt.subplots(figsize=(12, 6))
-                        
-                        ax_temp.plot(
-                            vicinity_sweep['angles'],
-                            vicinity_sweep['sintering_temps']['exponential'],
-                            color='red',
-                            linewidth=3,
-                            label='Exponential Model',
-                            marker='s',
-                            markersize=6
-                        )
-                        
-                        ax_temp.plot(
-                            vicinity_sweep['angles'],
-                            vicinity_sweep['sintering_temps']['arrhenius_defect'],
-                            color='blue',
-                            linewidth=3,
-                            linestyle='--',
-                            label='Arrhenius Model',
-                            marker='^',
-                            markersize=6
-                        )
-                        
-                        ax_temp.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane')
-                        ax_temp.axvspan(54.7 - vicinity_range, 54.7 + vicinity_range, alpha=0.1, color='green')
-                        
-                        ax_temp.set_xlabel('Orientation (°)', fontsize=label_size)
-                        ax_temp.set_ylabel('Sintering Temperature (K)', fontsize=label_size)
-                        ax_temp.set_title('Sintering Temperature Prediction', fontsize=title_size, fontweight='bold')
-                        ax_temp.legend(fontsize=label_size-2)
-                        ax_temp.grid(True, alpha=0.3)
-                        ax_temp.tick_params(axis='both', labelsize=label_size-2)
-                        
-                        # Add Celsius secondary axis
-                        ax_temp2 = ax_temp.twinx()
-                        celsius_ticks = ax_temp.get_yticks()
-                        ax_temp2.set_ylim(ax_temp.get_ylim())
-                        ax_temp2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
-                        ax_temp2.set_ylabel('Temperature (°C)', fontsize=label_size)
-                        ax_temp2.tick_params(axis='y', labelsize=label_size-2)
-                        
-                        plt.tight_layout()
-                        st.pyplot(fig_temp)
-                        plt.close(fig_temp)
-                        
+                        st.session_state.defect_comparison = defect_comparison
                     else:
-                        st.error("Failed to generate vicinity analysis. Please check your data.")
-                else:
-                    st.warning("No solutions loaded. Please load data first.")
-        else:
-            st.info("👈 Configure analysis settings in the sidebar and click 'Generate Analysis'")
-            
-            # Show example visualization
-            st.markdown("#### 📊 Example Visualization")
-            
-            # Create example data for demonstration
-            example_angles = np.linspace(54.7 - 30, 54.7 + 30, 100)
-            example_stress = 25 * np.exp(-(example_angles - 54.7)**2 / (2*10**2)) + 3 * np.sin(np.radians(example_angles * 2))
-            example_temp = 623 * np.exp(-example_stress / 30) + 50 * np.cos(np.radians(example_angles - 54.7))
-            
-            fig_example, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
-            
-            # Stress plot
-            ax1.plot(example_angles, example_stress, 'b-', linewidth=3)
-            ax1.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
-            ax1.fill_between(example_angles, example_stress, alpha=0.2, color='blue')
-            ax1.set_xlabel('Orientation (°)', fontsize=14)
-            ax1.set_ylabel('Hydrostatic Stress (GPa)', fontsize=14)
-            ax1.set_title('Example: Stress Concentration at Habit Plane', fontsize=16, fontweight='bold')
-            ax1.legend(fontsize=12)
-            ax1.grid(True, alpha=0.3)
-            
-            # Temperature plot
-            ax2.plot(example_angles, example_temp, 'r-', linewidth=3)
-            ax2.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
-            ax2.fill_between(example_angles, example_temp, alpha=0.2, color='red')
-            ax2.set_xlabel('Orientation (°)', fontsize=14)
-            ax2.set_ylabel('Sintering Temperature (K)', fontsize=14)
-            ax2.set_title('Example: Temperature Reduction at Habit Plane', fontsize=16, fontweight='bold')
-            ax2.legend(fontsize=12)
-            ax2.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            st.pyplot(fig_example)
-            plt.close(fig_example)
-    
-    with main_tab3:
-        st.markdown('<h2 class="sub-header">📡 Enhanced Radar Views</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.get('generate_analysis', False) and (
-            st.session_state.get('analysis_type') == "Custom Radar" or 
-            st.session_state.get('analysis_type') == "Defect Comparison"
-        ):
-            
-            with st.spinner("🔄 Creating enhanced radar visualizations..."):
-                # Load or generate data
-                if 'vicinity_sweep' not in st.session_state:
-                    # Need to generate data first
-                    if not st.session_state.solutions:
-                        st.session_state.solutions = st.session_state.loader.load_all_solutions()
+                        defect_comparison = st.session_state.defect_comparison
                     
-                    target_params = {
-                        'defect_type': defect_type,
-                        'shape': 'Square',
-                        'eps0': defect_info['eigen_strain'],
-                        'kappa': 0.6
-                    }
+                    # Create the appropriate chart based on selection
+                    if chart_type == "Basic Radar Chart":
+                        fig = st.session_state.visualizer.create_basic_defect_radar(
+                            defect_comparison,
+                            stress_component=stress_component,
+                            title=f"Defect Stress Patterns: {stress_component.replace('_', ' ').title()}"
+                        )
+                    elif chart_type == "Sunburst Chart":
+                        fig = st.session_state.visualizer.create_sunburst_defect_chart(
+                            defect_comparison,
+                            stress_component=stress_component,
+                            title=f"Defect Stress Patterns - {stress_component.replace('_', ' ').title()}"
+                        )
+                    elif chart_type == "Multi-Component Radar":
+                        fig = st.session_state.visualizer.create_multi_component_radar(
+                            defect_comparison,
+                            defect_type=defect_type_for_multi,
+                            title=f"Stress Components for {defect_type_for_multi} Defects"
+                        )
+                    else:  # Normalized Stress Radar
+                        fig = st.session_state.visualizer.create_normalized_stress_radar(
+                            defect_comparison,
+                            title=f"Normalized {normalize_by.title()} Stress Patterns",
+                            normalize_by=normalize_by
+                        )
                     
-                    vicinity_sweep = st.session_state.interpolator.create_vicinity_sweep(
-                        st.session_state.solutions,
-                        target_params,
-                        vicinity_range=vicinity_range,
-                        n_points=n_points,
-                        region_type='bulk'
-                    )
-                    st.session_state.vicinity_sweep = vicinity_sweep
+                    # Display the chart
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Add interpretation
+                    st.markdown("""
+                    ### 📝 Interpretation Guide
+                    
+                    This radar chart shows how different defect types concentrate hydrostatic stress in the vicinity of 
+                    the Ag FCC twin habit plane (54.7°). Key observations:
+                    
+                    - **Twin boundaries** typically show the highest stress concentration at the habit plane angle
+                    - **Stacking faults** (ISF/ESF) show intermediate stress levels with broader distribution
+                    - **Perfect crystals** show minimal stress variation
+                    - The **habit plane** (54.7°) is highlighted with a green dashed line
+                    
+                    The stress patterns directly impact sintering behavior - higher stress concentrations 
+                    enable lower-temperature sintering through enhanced atomic diffusion.
+                    """)
+            else:
+                st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Radar Chart'")
                 
-                # Generate defect comparison if needed
-                if st.session_state.get('analysis_type') == "Defect Comparison":
-                    defect_comparison = st.session_state.interpolator.compare_defect_types(
-                        st.session_state.solutions,
-                        angle_range=(54.7 - vicinity_range, 54.7 + vicinity_range),
-                        n_points=n_points,
-                        region_type='bulk'
-                    )
-                    st.session_state.defect_comparison = defect_comparison
+                # Show example chart
+                st.markdown("#### 📊 Example: Twin Boundary Stress Pattern")
                 
-                # Create radar dashboard
-                st.markdown("#### 📊 Radar Visualization Dashboard")
+                # Create example data
+                angles = np.linspace(40, 69.4, 30)
+                stresses = 25 * np.exp(-(angles - 54.7)**2 / (2 * 3**2)) + 2 * np.random.random(len(angles))
                 
-                # Radar type selection
-                radar_type = st.radio(
-                    "Select Radar View",
-                    ["Habit Plane Vicinity", "Defect Comparison", "Stress Components", "Sintering Temperature"],
-                    horizontal=True
+                fig_example = go.Figure()
+                fig_example.add_trace(go.Scatterpolar(
+                    r=np.append(stresses, stresses[0]),
+                    theta=np.append(angles, angles[0]),
+                    fill='toself',
+                    fillcolor='rgba(69, 183, 209, 0.3)',
+                    line=dict(color='rgb(69, 183, 209)', width=3),
+                    marker=dict(size=8, color='rgb(69, 183, 209)'),
+                    name='Twin Boundary',
+                    hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{r:.4f} GPa<extra></extra>'
+                ))
+                
+                fig_example.add_trace(go.Scatterpolar(
+                    r=[0, 30],
+                    theta=[54.7, 54.7],
+                    mode='lines',
+                    line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
+                    name='Habit Plane (54.7°)',
+                    hoverinfo='skip'
+                ))
+                
+                fig_example.update_layout(
+                    title=dict(
+                        text="Example: Twin Boundary Hydrostatic Stress",
+                        font=dict(size=20, family="Arial Black", color='darkblue'),
+                        x=0.5
+                    ),
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, 30],
+                            title=dict(text='Hydrostatic Stress (GPa)', font=dict(size=14)),
+                            gridcolor="rgba(100, 100, 100, 0.3)"
+                        ),
+                        angularaxis=dict(
+                            gridcolor="rgba(100, 100, 100, 0.3)",
+                            rotation=90,
+                            direction="clockwise",
+                            tickmode='array',
+                            tickvals=[40, 45, 50, 54.7, 60, 65, 70],
+                            ticktext=['40°', '45°', '50°', '54.7°', '60°', '65°', '70°']
+                        ),
+                        bgcolor="rgba(240, 240, 240, 0.3)"
+                    ),
+                    showlegend=True,
+                    width=800,
+                    height=600
                 )
                 
-                if radar_type == "Habit Plane Vicinity":
-                    # Prepare data for habit plane vicinity radar
-                    vicinity_data = st.session_state.vicinity_sweep
-                    
-                    # Filter for vicinity range
-                    angles = np.array(vicinity_data['angles'])
-                    mask = (angles >= 54.7 - vicinity_range) & (angles <= 54.7 + vicinity_range)
-                    
-                    if np.any(mask):
-                        filtered_data = {
-                            'angles': angles[mask].tolist(),
-                            'stresses': {
-                                comp: np.array(vals)[mask].tolist() 
-                                for comp, vals in vicinity_data['stresses'].items()
-                            }
-                        }
-                        
-                        # Create data dictionary for radar
-                        data_dict = {}
-                        for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                            if comp in filtered_data['stresses']:
-                                data_dict[comp] = {
-                                    'angles': filtered_data['angles'],
-                                    'stresses': filtered_data['stresses'][comp]
-                                }
-                        
-                        # Create radar
-                        fig_radar = radar_visualizer.create_customizable_radar(
-                            data_dict,
-                            title=f"Habit Plane Vicinity Analysis - {defect_type}",
-                            colormap=selected_colormap,
-                            font_size=radar_font_size,
-                            show_grid=show_grid,
-                            line_width=line_width,
-                            marker_size=marker_size,
-                            fill_opacity=fill_opacity,
-                            show_legend=show_legend,
-                            legend_position=legend_position,
-                            angular_range=[54.7 - vicinity_range, 54.7 + vicinity_range],
-                            show_habit_plane=True,
-                            habit_plane_color='rgb(46, 204, 113)',
-                            habit_plane_width=4
-                        )
-                        
-                        st.plotly_chart(fig_radar, use_container_width=True)
-                
-                elif radar_type == "Defect Comparison" and 'defect_comparison' in st.session_state:
-                    # Prepare data for defect comparison radar
-                    defect_comparison = st.session_state.defect_comparison
-                    
-                    # Create data dictionary
-                    data_dict = {}
-                    for key, data in defect_comparison.items():
-                        defect_name = data.get('defect_type', key)
-                        if 'angles' in data and 'stresses' in data:
-                            data_dict[defect_name] = {
-                                'angles': data['angles'],
-                                'stresses': data['stresses'].get('sigma_hydro', [])
-                            }
-                    
-                    # Create radar
-                    fig_radar = radar_visualizer.create_customizable_radar(
-                        data_dict,
-                        title="Defect Type Comparison in Habit Plane Vicinity",
-                        colormap=selected_colormap,
-                        font_size=radar_font_size,
-                        show_grid=show_grid,
-                        line_width=line_width,
-                        marker_size=marker_size,
-                        fill_opacity=fill_opacity,
-                        show_legend=show_legend,
-                        legend_position=legend_position,
-                        angular_range=[54.7 - vicinity_range, 54.7 + vicinity_range],
-                        custom_labels={k: f"{k} (ε*={defect_properties.get(k, {}).get('eigen_strain', 0):.2f})" 
-                                     for k in data_dict.keys()},
-                        show_habit_plane=True
-                    )
-                    
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                
-                elif radar_type == "Stress Components" and 'vicinity_sweep' in st.session_state:
-                    # Create stress component radar
-                    fig_radar = radar_visualizer._create_stress_component_radar(
-                        st.session_state.vicinity_sweep
-                    )
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                
-                elif radar_type == "Sintering Temperature" and 'vicinity_sweep' in st.session_state:
-                    # Create sintering temperature radar
-                    fig_radar = radar_visualizer._create_sintering_radar(
-                        st.session_state.vicinity_sweep
-                    )
-                    st.plotly_chart(fig_radar, use_container_width=True)
-                
-                # Download options
-                st.markdown("#### 💾 Export Options")
-                
-                col_dl1, col_dl2, col_dl3 = st.columns(3)
-                
-                with col_dl1:
-                    if st.button("📸 Save as PNG", use_container_width=True):
-                        st.info("Use Plotly's camera icon in the chart to save as PNG")
-                
-                with col_dl2:
-                    if st.button("📊 Export Data", use_container_width=True):
-                        # Prepare data for export
-                        if 'vicinity_sweep' in st.session_state:
-                            data = st.session_state.vicinity_sweep
-                            df = pd.DataFrame({
-                                'angle_deg': data['angles'],
-                                'sigma_hydro_gpa': data['stresses']['sigma_hydro'],
-                                'von_mises_gpa': data['stresses']['von_mises'],
-                                'sigma_mag_gpa': data['stresses']['sigma_mag'],
-                                'T_sinter_exp_k': data['sintering_temps']['exponential'],
-                                'T_sinter_arr_k': data['sintering_temps']['arrhenius_defect']
-                            })
-                            csv = df.to_csv(index=False)
-                            st.download_button(
-                                label="📥 Download CSV",
-                                data=csv,
-                                file_name=f"radar_data_{defect_type}.csv",
-                                mime="text/csv",
-                                use_container_width=True
-                            )
-                
-                with col_dl3:
-                    if st.button("🖼️ High-Res Export", use_container_width=True):
-                        st.info("For publication-quality figures, use 300 DPI PNG or PDF format")
+                st.plotly_chart(fig_example, use_container_width=True)
         
-        else:
-            st.info("👈 Select 'Custom Radar' or 'Defect Comparison' analysis type and click 'Generate Analysis'")
+        with tab2:
+            st.markdown('<h2 class="physics-header">🎨 Chart Customization</h2>', unsafe_allow_html=True)
             
-            # Show radar customization options
-            st.markdown("""
-            #### 🎨 Radar Customization Features
-            
-            The enhanced radar visualizer includes:
-            
-            1. **Extensive Colormap Support**: 50+ colormaps including:
-               - Perceptually uniform (viridis, plasma, turbo)
-               - Sequential (Blues, Reds, Greens)
-               - Diverging (RdBu, RdYlBu, coolwarm)
-               - Cyclic (twilight, hsv)
-               - Qualitative (Set1, Set2, Set3)
-            
-            2. **Customizable Appearance**:
-               - Adjustable font sizes (10-24 pt)
-               - Line width control (1-8 px)
-               - Marker size customization (4-20 px)
-               - Fill opacity control
-               - Grid visibility toggle
-            
-            3. **Habit Plane Focus**:
-               - Automatic focus on 54.7° ± custom range
-               - Habit plane highlight with customizable color
-               - Angular range control
-            
-            4. **Interactive Features**:
-               - Hover information with defect details
-               - Legend positioning (right, left, top, bottom)
-               - Download options for publication
-            """)
-    
-    with main_tab4:
-        st.markdown('<h2 class="sub-header">📈 Comprehensive Analysis Dashboard</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.get('generate_analysis', False) and st.session_state.get('analysis_type') == "Comprehensive Dashboard":
-            
-            with st.spinner("🔄 Building comprehensive dashboard..."):
-                # Check if we have all required data
-                needs_data = []
-                if 'vicinity_sweep' not in st.session_state:
-                    needs_data.append("vicinity sweep")
-                if 'defect_comparison' not in st.session_state:
-                    needs_data.append("defect comparison")
+            # Show current chart with customization options
+            if 'defect_comparison' in st.session_state:
+                defect_comparison = st.session_state.defect_comparison
                 
-                if needs_data:
-                    st.warning(f"Please run {' and '.join(needs_data)} analysis first")
-                else:
-                    # Create comprehensive dashboard
-                    vicinity_sweep = st.session_state.vicinity_sweep
-                    defect_comparison = st.session_state.defect_comparison
-                    
-                    st.success("✅ Comprehensive dashboard generated")
-                    
-                    # Create tabs for different views
-                    dash_tab1, dash_tab2, dash_tab3 = st.tabs(["Overview", "Comparative Analysis", "Export"])
-                    
-                    with dash_tab1:
-                        # Overview dashboard
-                        st.markdown("#### 📊 Comprehensive Overview")
-                        
-                        # Create subplots
-                        fig = make_subplots(
-                            rows=2, cols=3,
-                            subplot_titles=(
-                                'Hydrostatic Stress Vicinity',
-                                'Von Mises Stress Vicinity',
-                                'Stress Magnitude Vicinity',
-                                'Defect Comparison',
-                                'Sintering Temperature',
-                                'Habit Plane Radar'
-                            ),
-                            specs=[
-                                [{'type': 'polar'}, {'type': 'polar'}, {'type': 'polar'}],
-                                [{'type': 'scatter'}, {'type': 'scatter'}, {'type': 'polar'}]
-                            ],
-                            vertical_spacing=0.1,
-                            horizontal_spacing=0.15
-                        )
-                        
-                        # Add polar plots for stress components
-                        angles = vicinity_sweep['angles']
-                        
-                        for idx, (comp, color) in enumerate([
-                            ('sigma_hydro', '#1F77B4'),
-                            ('von_mises', '#FF7F0E'),
-                            ('sigma_mag', '#2CA02C')
-                        ]):
-                            if comp in vicinity_sweep['stresses']:
-                                fig.add_trace(
-                                    go.Scatterpolar(
-                                        r=vicinity_sweep['stresses'][comp],
-                                        theta=angles,
-                                        mode='lines',
-                                        line=dict(color=color, width=2),
-                                        name=comp.replace('_', ' ').title()
-                                    ),
-                                    row=1, col=idx+1
-                                )
-                        
-                        # Add defect comparison
-                        if defect_comparison:
-                            for key, data in list(defect_comparison.items())[:4]:  # Limit to 4
-                                defect_type = data.get('defect_type', key)
-                                color = data.get('color', '#000000')
-                                
-                                fig.add_trace(
-                                    go.Scatter(
-                                        x=data['angles'],
-                                        y=data['stresses']['sigma_hydro'],
-                                        mode='lines',
-                                        line=dict(color=color, width=2),
-                                        name=defect_type,
-                                        showlegend=False
-                                    ),
-                                    row=2, col=1
-                                )
-                        
-                        # Add sintering temperature
-                        if 'sintering_temps' in vicinity_sweep:
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=angles,
-                                    y=vicinity_sweep['sintering_temps']['arrhenius_defect'],
-                                    mode='lines',
-                                    line=dict(color='red', width=2),
-                                    name='Sintering Temp',
-                                    showlegend=False
-                                ),
-                                row=2, col=2
+                st.markdown("#### 🖌️ Visual Customization Options")
+                
+                # Create columns for customization options
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("##### Basic Appearance")
+                    fill_opacity = st.slider("Fill Opacity", 0.0, 1.0, 0.2, 0.05)
+                    line_width = st.slider("Line Width", 1, 8, 3)
+                    marker_size = st.slider("Marker Size", 0, 15, 8)
+                    show_grid = st.checkbox("Show Grid Lines", value=True)
+                    bgcolor = st.color_picker("Background Color", "#ffffff")
+                
+                with col2:
+                    st.markdown("##### Advanced Options")
+                    show_habit_plane = st.checkbox("Show Habit Plane", value=True)
+                    chart_title = st.text_input("Chart Title", "Customized Defect Stress Patterns")
+                    stress_component_custom = st.selectbox(
+                        "Stress Component", 
+                        ["sigma_hydro", "von_mises", "sigma_mag"],
+                        index=0
+                    )
+                    radar_type = st.radio(
+                        "Radar Chart Type",
+                        ["Standard", "Enhanced"],
+                        help="Enhanced charts have smoother curves"
+                    )
+                
+                # Generate customized chart
+                if st.button("🎨 Apply Customization", type="primary"):
+                    with st.spinner("Applying customization..."):
+                        if radar_type == "Standard":
+                            fig = st.session_state.visualizer.create_basic_defect_radar(
+                                defect_comparison,
+                                stress_component=stress_component_custom,
+                                title=chart_title,
+                                show_habit_plane=show_habit_plane,
+                                fill_opacity=fill_opacity,
+                                line_width=line_width,
+                                marker_size=marker_size,
+                                show_grid=show_grid,
+                                bgcolor=bgcolor
                             )
-                        
-                        # Add habit plane radar
-                        # Prepare data for radar subplot
-                        radar_data = {}
-                        for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                            if comp in vicinity_sweep['stresses']:
-                                radar_data[comp] = {
-                                    'angles': angles,
-                                    'stresses': vicinity_sweep['stresses'][comp]
-                                }
-                        
-                        # Add radar traces
-                        for comp, color in [
-                            ('sigma_hydro', '#1F77B4'),
-                            ('von_mises', '#FF7F0E'),
-                            ('sigma_mag', '#2CA02C')
-                        ]:
-                            if comp in radar_data:
-                                data = radar_data[comp]
-                                angles_closed = np.append(data['angles'], data['angles'][0])
-                                stresses_closed = np.append(data['stresses'], data['stresses'][0])
-                                
-                                fig.add_trace(
-                                    go.Scatterpolar(
-                                        r=stresses_closed,
-                                        theta=angles_closed,
-                                        mode='lines',
-                                        line=dict(color=color, width=1.5),
-                                        name=comp.replace('_', ' ').title(),
-                                        showlegend=False
-                                    ),
-                                    row=2, col=3
-                                )
-                        
-                        # Update layout
-                        fig.update_layout(
-                            height=900,
-                            showlegend=True,
-                            legend=dict(
-                                x=1.02,
-                                y=0.5,
-                                font=dict(size=12)
-                            ),
-                            title=dict(
-                                text=f"Comprehensive Analysis Dashboard - {defect_type}",
-                                font=dict(size=20, weight='bold')
+                        else:
+                            # For enhanced, we can add smoothing
+                            fig = st.session_state.visualizer.create_basic_defect_radar(
+                                defect_comparison,
+                                stress_component=stress_component_custom,
+                                title=chart_title,
+                                show_habit_plane=show_habit_plane,
+                                fill_opacity=fill_opacity,
+                                line_width=line_width,
+                                marker_size=marker_size,
+                                show_grid=show_grid,
+                                bgcolor=bgcolor
                             )
-                        )
-                        
-                        # Update polar subplot layouts
-                        for i in range(1, 4):
-                            fig.update_polars(
-                                radialaxis_range=[0, 1.2],
-                                angularaxis_rotation=90,
-                                angularaxis_direction="clockwise",
-                                sector=[min(angles), max(angles)] if len(angles) > 0 else [0, 360],
-                                row=1, col=i
-                            )
-                        
-                        fig.update_polars(
-                            radialaxis_range=[0, 1.2],
-                            angularaxis_rotation=90,
-                            angularaxis_direction="clockwise",
-                            sector=[0, 360],
-                            row=2, col=3
-                        )
+                            
+                            # Add some smoothing to the line
+                            for trace in fig.data:
+                                if 'line' in trace:
+                                    trace.line.shape = 'spline'
                         
                         st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Add download button
+                        if st.button("💾 Download Chart as HTML"):
+                            fig.write_html("custom_defect_radar.html")
+                            with open("custom_defect_radar.html", "rb") as file:
+                                st.download_button(
+                                    label="Download HTML",
+                                    data=file,
+                                    file_name="custom_defect_radar.html",
+                                    mime="text/html"
+                                )
+                
+                st.markdown("#### 🎨 Color Customization")
+                
+                # Color customization for each defect type
+                defect_colors = {}
+                for defect in ["ISF", "ESF", "Twin", "No Defect"]:
+                    col_name = f"{defect.lower()}_color"
+                    default_color = st.session_state.visualizer.defect_colors[defect]
+                    defect_colors[defect] = st.color_picker(f"{defect} Color", default_color)
+                
+                if st.button("🎨 Apply Color Scheme"):
+                    # Update the visualizer's color scheme
+                    for defect, color in defect_colors.items():
+                        st.session_state.visualizer.defect_colors[defect] = color
                     
-                    with dash_tab2:
-                        # Comparative analysis
-                        st.markdown("#### 🔬 Comparative Analysis")
-                        
-                        # Create comparative metrics
-                        col_comp1, col_comp2, col_comp3 = st.columns(3)
-                        
-                        with col_comp1:
-                            # Stress maxima comparison
-                            st.markdown("##### 📈 Maximum Stresses")
-                            max_stresses = {}
-                            for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                                if comp in vicinity_sweep['stresses']:
-                                    max_stresses[comp] = max(vicinity_sweep['stresses'][comp])
-                            
-                            df_max = pd.DataFrame({
-                                'Component': list(max_stresses.keys()),
-                                'Max Stress (GPa)': list(max_stresses.values())
-                            })
-                            st.dataframe(df_max, use_container_width=True)
-                        
-                        with col_comp2:
-                            # Temperature comparison
-                            st.markdown("##### 🌡️ Temperature Range")
-                            temp_data = {}
-                            for model in ['exponential', 'arrhenius_defect']:
-                                if model in vicinity_sweep['sintering_temps']:
-                                    temps = vicinity_sweep['sintering_temps'][model]
-                                    temp_data[model] = {
-                                        'min': min(temps),
-                                        'max': max(temps),
-                                        'range': max(temps) - min(temps)
-                                    }
-                            
-                            df_temp = pd.DataFrame(temp_data).T
-                            st.dataframe(df_temp, use_container_width=True)
-                        
-                        with col_comp3:
-                            # Defect comparison summary
-                            st.markdown("##### 🔬 Defect Comparison")
-                            defect_summary = []
-                            if defect_comparison:
-                                for key, data in defect_comparison.items():
-                                    defect_type = data.get('defect_type', key)
-                                    stresses = data['stresses']['sigma_hydro']
-                                    defect_summary.append({
-                                        'Defect': defect_type,
-                                        'Max σ_h (GPa)': f"{max(stresses):.3f}",
-                                        'Avg σ_h (GPa)': f"{np.mean(stresses):.3f}"
-                                    })
-                            
-                            if defect_summary:
-                                df_defect = pd.DataFrame(defect_summary)
-                                st.dataframe(df_defect, use_container_width=True)
+                    # Regenerate the chart with new colors
+                    fig = st.session_state.visualizer.create_basic_defect_radar(
+                        defect_comparison,
+                        stress_component=stress_component_custom,
+                        title=chart_title,
+                        show_habit_plane=show_habit_plane,
+                        fill_opacity=fill_opacity,
+                        line_width=line_width,
+                        marker_size=marker_size,
+                        show_grid=show_grid,
+                        bgcolor=bgcolor
+                    )
                     
-                    with dash_tab3:
-                        # Export options
-                        st.markdown("#### 📤 Comprehensive Export")
-                        
-                        st.write("""
-                        Export comprehensive analysis package including:
-                        1. All visualization figures (PNG, PDF)
-                        2. Raw data files (CSV)
-                        3. Analysis report (PDF)
-                        4. Configuration settings (JSON)
-                        """)
-                        
-                        col_exp1, col_exp2, col_exp3 = st.columns(3)
-                        
-                        with col_exp1:
-                            export_format = st.selectbox(
-                                "Export Format",
-                                ["PNG (300 DPI)", "PDF", "SVG", "All Formats"],
-                                index=0
-                            )
-                        
-                        with col_exp2:
-                            include_data = st.checkbox("Include Raw Data", value=True)
-                            include_report = st.checkbox("Include Analysis Report", value=True)
-                        
-                        with col_exp3:
-                            if st.button("📦 Generate Export Package", use_container_width=True):
-                                with st.spinner("Generating export package..."):
-                                    # Create timestamp
-                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    
-                                    # Prepare data for export
-                                    export_data = {
-                                        'metadata': {
-                                            'generated_at': timestamp,
-                                            'defect_type': defect_type,
-                                            'vicinity_range': vicinity_range,
-                                            'n_points': n_points
-                                        },
-                                        'vicinity_data': vicinity_sweep,
-                                        'defect_comparison': list(defect_comparison.keys()) if defect_comparison else []
-                                    }
-                                    
-                                    # Create JSON export
-                                    json_str = json.dumps(export_data, indent=2)
-                                    
-                                    st.download_button(
-                                        label="📥 Download JSON",
-                                        data=json_str,
-                                        file_name=f"comprehensive_analysis_{defect_type}_{timestamp}.json",
-                                        mime="application/json",
-                                        use_container_width=True
-                                    )
-        else:
-            st.info("👈 Select 'Comprehensive Dashboard' analysis type and click 'Generate Analysis'")
+                    st.plotly_chart(fig, use_container_width=True)
             
-            # Show dashboard features
+            else:
+                st.info("👈 First generate a radar chart in the 'Radar Chart' tab, then customize it here.")
+        
+        with tab3:
+            st.markdown('<h2 class="physics-header">💡 Visualization Concepts & Examples</h2>', unsafe_allow_html=True)
+            
             st.markdown("""
-            #### 📊 Comprehensive Dashboard Features
+            ### 🌟 Advanced Visualization Concepts for Defect Stress Patterns
             
-            The comprehensive dashboard provides:
+            Below are several concepts for visualizing hydrostatic stress patterns around the habit plane. 
+            These approaches highlight different aspects of the stress distribution for various defect types.
+            """)
             
-            1. **Multi-Panel Visualization**:
-               - Polar plots for stress components
-               - Defect comparison charts
-               - Sintering temperature analysis
-               - Integrated radar views
+            # Concept 1: Basic Radar Chart
+            st.markdown("#### 1. Basic Radar Chart")
+            st.markdown("""
+            The standard radar chart is excellent for comparing multiple defect types on the same plot.
+            Each axis represents an orientation angle, and the distance from the center represents stress magnitude.
+            """)
             
-            2. **Comparative Analysis**:
-               - Maximum stress comparisons
-               - Temperature range analysis
-               - Defect performance metrics
-               - Habit plane specific metrics
+            # Create example basic radar chart
+            angles = np.linspace(40, 69.4, 30)
+            twin_stress = 25 * np.exp(-(angles - 54.7)**2 / (2 * 3**2))
+            isf_stress = 15 * np.exp(-(angles - 54.7)**2 / (2 * 6**2))
+            esf_stress = 20 * np.exp(-(angles - 54.7)**2 / (2 * 4.5**2))
+            perfect_stress = 3 * np.exp(-(angles - 54.7)**2 / (2 * 10**2))
             
-            3. **Export Capabilities**:
-               - High-resolution figure export (300 DPI)
-               - Raw data export (CSV format)
-               - Comprehensive report generation
-               - Configuration file export
+            fig_concept1 = go.Figure()
             
-            4. **Publication-Ready Output**:
-               - Proper font sizing and labeling
-               - Consistent color schemes
-               - Professional layout
-               - Clear annotations
+            # Add traces for each defect type
+            defects = [
+                ("Twin", twin_stress, "rgb(69, 183, 209)"),
+                ("ISF", isf_stress, "rgb(255, 107, 107)"),
+                ("ESF", esf_stress, "rgb(78, 205, 196)"),
+                ("No Defect", perfect_stress, "rgb(150, 206, 180)")
+            ]
+            
+            for name, stress, color in defects:
+                fig_concept1.add_trace(go.Scatterpolar(
+                    r=np.append(stress, stress[0]),
+                    theta=np.append(angles, angles[0]),
+                    fill='toself',
+                    fillcolor=f'rgba{color[3:-1]}, 0.3)',
+                    line=dict(color=color, width=3),
+                    name=name,
+                    hovertemplate=f'Defect: {name}<br>Orientation: %{{theta:.2f}}°<br>Stress: %{{r:.4f}} GPa<extra></extra>'
+                ))
+            
+            # Add habit plane
+            fig_concept1.add_trace(go.Scatterpolar(
+                r=[0, 30],
+                theta=[54.7, 54.7],
+                mode='lines',
+                line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
+                name='Habit Plane (54.7°)',
+                hoverinfo='skip'
+            ))
+            
+            fig_concept1.update_layout(
+                title="Basic Radar Chart: Comparing Defect Stress Patterns",
+                polar=dict(
+                    radialaxis=dict(range=[0, 30], title="Stress (GPa)"),
+                    angularaxis=dict(rotation=90, direction="clockwise")
+                ),
+                width=800,
+                height=600
+            )
+            
+            st.plotly_chart(fig_concept1, use_container_width=True)
+            
+            # Concept 2: Sunburst Chart
+            st.markdown("#### 2. Sunburst Chart")
+            st.markdown("""
+            The sunburst chart provides a more dramatic visualization that emphasizes the radial nature 
+            of the stress distribution. Color gradients can be used to highlight stress intensity.
+            """)
+            
+            # Create example sunburst chart
+            fig_concept2 = go.Figure()
+            
+            # Add traces with color gradients
+            for name, stress, color in defects:
+                # Create color array based on stress values
+                stress_normalized = stress / max(stress) if max(stress) > 0 else stress
+                colors = [f'rgba{color[3:-1]}, {0.3 + 0.7 * s})' for s in stress_normalized]
+                
+                fig_concept2.add_trace(go.Scatterpolar(
+                    r=stress,
+                    theta=angles,
+                    mode='markers+lines',
+                    marker=dict(
+                        size=10,
+                        color=stress,
+                        colorscale='RdBu',
+                        showscale=False
+                    ),
+                    line=dict(color=color, width=4),
+                    name=name,
+                    hovertemplate=f'Defect: {name}<br>Orientation: %{{theta:.2f}}°<br>Stress: %{{r:.4f}} GPa<extra></extra>'
+                ))
+            
+            # Highlight habit plane peak
+            fig_concept2.add_trace(go.Scatterpolar(
+                r=[max(twin_stress)],
+                theta=[54.7],
+                mode='markers+text',
+                marker=dict(
+                    size=25,
+                    color='rgb(46, 204, 113)',
+                    symbol='star'
+                ),
+                text=['HABIT PLANE'],
+                textposition='top center',
+                textfont=dict(size=12, color='black'),
+                name='Peak Stress Location',
+                hovertemplate=f'Habit Plane (54.7°)<br>Max Stress: {max(twin_stress):.2f} GPa<extra></extra>'
+            ))
+            
+            fig_concept2.update_layout(
+                title="Sunburst Chart: Visualizing Stress Concentration",
+                polar=dict(
+                    radialaxis=dict(range=[0, 30], title="Stress (GPa)"),
+                    angularaxis=dict(rotation=90, direction="clockwise")
+                ),
+                width=800,
+                height=600
+            )
+            
+            st.plotly_chart(fig_concept2, use_container_width=True)
+            
+            # Concept 3: Multi-Component Analysis
+            st.markdown("#### 3. Multi-Component Stress Analysis")
+            st.markdown("""
+            This visualization shows multiple stress components (hydrostatic, von Mises, magnitude)
+            for a single defect type. This provides a comprehensive view of the stress state.
+            """)
+            
+            # Create example for multiple stress components
+            fig_concept3 = go.Figure()
+            
+            # Twin defect stress components
+            sigma_hydro = twin_stress
+            von_mises = twin_stress * 1.3 * (0.9 + 0.1 * np.sin(np.radians(angles)))
+            sigma_mag = np.sqrt(sigma_hydro**2 + von_mises**2) * 0.8
+            
+            components = [
+                ("Hydrostatic", sigma_hydro, "rgb(31, 119, 180)"),
+                ("Von Mises", von_mises, "rgb(255, 127, 14)"),
+                ("Magnitude", sigma_mag, "rgb(44, 160, 44)")
+            ]
+            
+            for name, stress, color in components:
+                fig_concept3.add_trace(go.Scatterpolar(
+                    r=np.append(stress, stress[0]),
+                    theta=np.append(angles, angles[0]),
+                    fill='toself',
+                    fillcolor=f'rgba{color[3:-1]}, 0.2)',
+                    line=dict(color=color, width=3),
+                    name=name,
+                    hovertemplate=f'Component: {name}<br>Orientation: %{{theta:.2f}}°<br>Stress: %{{r:.4f}} GPa<extra></extra>'
+                ))
+            
+            # Add habit plane
+            fig_concept3.add_trace(go.Scatterpolar(
+                r=[0, 35],
+                theta=[54.7, 54.7],
+                mode='lines',
+                line=dict(color='rgb(46, 204, 113)', width=4, dash='dashdot'),
+                name='Habit Plane (54.7°)',
+                hoverinfo='skip'
+            ))
+            
+            fig_concept3.update_layout(
+                title="Multi-Component Analysis: Twin Boundary Stress State",
+                polar=dict(
+                    radialaxis=dict(range=[0, 35], title="Stress (GPa)"),
+                    angularaxis=dict(rotation=90, direction="clockwise")
+                ),
+                width=800,
+                height=600
+            )
+            
+            st.plotly_chart(fig_concept3, use_container_width=True)
+            
+            st.markdown("""
+            ### 🎨 Customization Tips
+            
+            1. **Color Schemes**: Use contrasting colors for different defect types. Consider using colorblind-friendly palettes.
+            
+            2. **Scaling**: For comparing defect types, consider normalizing stress values to highlight pattern differences rather than magnitude differences.
+            
+            3. **Annotations**: Add text annotations to highlight important features like peak stress locations or critical angles.
+            
+            4. **Interactivity**: Enable hover information to show exact values when users interact with the chart.
+            
+            5. **Layout**: Adjust the polar coordinate system to focus on the most relevant angular range (typically around the habit plane).
+            
+            These visualization techniques provide powerful ways to understand how different crystal defects 
+            influence stress distributions near the habit plane, which is crucial for predicting sintering behavior 
+            and material performance.
             """)
 
 # =============================================
-# RUN THE ENHANCED APPLICATION
+# RUN THE APPLICATION
 # =============================================
 if __name__ == "__main__":
     main()
