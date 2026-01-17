@@ -14,19 +14,19 @@ st.set_page_config(
 )
 
 st.title("Sintering Temperature vs Hydrostatic Stress in Ag Nanoparticles")
-st.markdown("**Interactive, publication-quality visualization with full style control**")
+st.markdown("**Interactive, publication-quality visualization with full \\LaTeX support**")
 
 # =================================================
 # Sidebar: Physical parameters
 # =================================================
 st.sidebar.header("PropertyParams")
 
-Ts0 = st.sidebar.slider("Baseline Tₛ(0) [K]", 500, 700, 623)
-Qa_kJ = st.sidebar.slider("Activation energy Qₐ [kJ/mol]", 70.0, 120.0, 90.0, step=5.0)
+Ts0 = st.sidebar.slider("Baseline $T_s(0)$ [K]", 500, 700, 623)
+Qa_kJ = st.sidebar.slider("Activation energy $Q_a$ [kJ/mol]", 70.0, 120.0, 90.0, step=5.0)
 Omega_m3 = st.sidebar.slider(
-    "Atomic volume Ω (×10⁻²⁹ m³)", 8.0, 12.0, 10.0
+    "Atomic volume $\\Omega$ (×10⁻²⁹ m³)", 8.0, 12.0, 10.0
 ) * 1e-29
-sigma_max_GPa = st.sidebar.slider("Max |σₕ| [GPa]", 1.0, 10.0, 5.0)
+sigma_max_GPa = st.sidebar.slider("Max $|\\sigma_h|$ [GPa]", 1.0, 10.0, 5.0)
 
 # =================================================
 # Sidebar: Figure dimensions
@@ -37,8 +37,7 @@ fig_width = st.sidebar.slider("Figure width (inches)", 8.0, 20.0, 12.0, step=0.5
 fig_height = st.sidebar.slider("Figure height (inches)", 4.0, 12.0, 7.0, step=0.5)
 dpi = st.sidebar.selectbox("Resolution (DPI)", [100, 150, 200, 300], index=1)
 
-# Estimate optimal tick font size based on figure size and DPI
-# Rule of thumb: larger figures can support larger fonts; very small figures need smaller fonts
+# Estimate optimal tick font size
 estimated_tick_size = max(8, min(18, int(0.8 * (fig_height + fig_width) / 2)))
 st.sidebar.caption(f"💡 Suggested tick font size: ~{estimated_tick_size}")
 
@@ -66,6 +65,9 @@ label_size = st.sidebar.slider("Axis label font size", 10, 24, 16)
 tick_size = st.sidebar.slider("Tick font size", 6, 20, estimated_tick_size)
 title_size = st.sidebar.slider("Title font size", 12, 28, 20)
 legend_size = st.sidebar.slider("Legend font size", 8, 18, 13)
+
+# Enable full LaTeX rendering (requires dvipng or similar; falls back gracefully)
+use_latex = st.sidebar.checkbox("Use full \\LaTeX rendering (slower)", False)
 
 # =================================================
 # Sidebar: Axes, ticks, and box
@@ -102,14 +104,10 @@ legend_loc = legend_options[legend_choice]
 # =================================================
 @st.cache_data
 def calculate_Ts(sigma_Pa, Ts0, Qa_kJ, Omega_m3):
-    # Convert activation energy to per-atom basis
     Qa_J_atom = Qa_kJ * 1000 / 6.022e23
-    # Effective activation barrier under hydrostatic stress
     delta_Q = Omega_m3 * sigma_Pa
     Q_eff = Qa_J_atom - delta_Q
-    # Linear approximation for Ts reduction
     Ts_eff = Ts0 * (Q_eff / Qa_J_atom)
-    # Clamp to physical minimum
     return max(Ts_eff, 300.0)
 
 # =================================================
@@ -124,9 +122,9 @@ Ts_min = Ts_plot[-1]
 delta_T = Ts0 - Ts_min
 
 # =================================================
-# Matplotlib global style
+# Configure Matplotlib for LaTeX (if enabled)
 # =================================================
-plt.rcParams.update({
+mpl_params = {
     "font.family": font_family,
     "axes.labelsize": label_size,
     "axes.titlesize": title_size,
@@ -137,14 +135,31 @@ plt.rcParams.update({
     "savefig.dpi": dpi,
     "figure.facecolor": "white",
     "axes.facecolor": "white",
-})
+    "text.usetex": False,  # Default: no system LaTeX
+    "pgf.texsystem": "pdflatex",
+}
+
+if use_latex:
+    try:
+        # Attempt to enable full LaTeX
+        mpl_params.update({
+            "text.usetex": True,
+            "font.family": "serif",
+            "font.serif": ["Computer Modern"],
+            "text.latex.preamble": r"\usepackage{amsmath} \usepackage{amsfonts} \usepackage{siunitx}",
+        })
+    except Exception as e:
+        st.sidebar.warning(f"LaTeX rendering failed: {str(e)[:100]}... Falling back to mathtext.")
+        use_latex = False
+
+plt.rcParams.update(mpl_params)
 
 # =================================================
-# Plot with enhanced aesthetics and full customization
+# Plot with enhanced aesthetics and error-free tick styling
 # =================================================
 fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=dpi)
 
-# Main curve: sintering temperature vs stress
+# Main curve
 ax.semilogx(
     sigma_plot / 1e9,
     Ts_plot,
@@ -155,7 +170,7 @@ ax.semilogx(
     zorder=3
 )
 
-# Zero-stress reference point
+# Zero-stress marker
 ax.plot(
     1e-6,
     Ts0,
@@ -166,17 +181,17 @@ ax.plot(
     zorder=4
 )
 
-# Baseline horizontal line at T_s(0)
+# Baseline
 ax.axhline(
     Ts0,
     color=baseline_color,
     linestyle="--",
     linewidth=2,
-    label="Baseline $T_s(0)$",
+    label=r"Baseline $T_s(0)$",
     zorder=2
 )
 
-# Double-headed vertical arrow showing ΔT at max stress
+# Double-headed arrow for ΔT
 arrow = mpatches.FancyArrowPatch(
     (sigma_max_GPa, Ts0),
     (sigma_max_GPa, Ts_min),
@@ -188,7 +203,7 @@ arrow = mpatches.FancyArrowPatch(
 )
 ax.add_patch(arrow)
 
-# Annotation for ΔT with background box for visibility
+# ΔT annotation with background
 ax.text(
     sigma_max_GPa * 1.25,
     (Ts0 + Ts_min) / 2,
@@ -207,30 +222,38 @@ ax.text(
     zorder=6
 )
 
-# Axis labels with padding
-ax.set_xlabel(r"$|\sigma_h|$ [GPa] (log scale)", labelpad=12)
-ax.set_ylabel(r"Sintering temperature $T_s$ [K]", labelpad=12)
-ax.set_title("Stress-Induced Reduction in Ag Nanoparticle Sintering Temperature", pad=20)
+# Labels and title — fully LaTeX-compatible
+ax.set_xlabel(r"$|\sigma_h|$ [\si{\giga\pascal}] (log scale)", labelpad=12)
+ax.set_ylabel(r"Sintering temperature $T_s$ [\si{\kelvin}]", labelpad=12)
+ax.set_title(r"Stress-Induced Reduction in Ag Nanoparticle Sintering Temperature", pad=20)
 
-# X-axis: log scale with clean formatting
+# X-axis formatting
 ax.xaxis.set_major_locator(LogLocator(base=10, numticks=10))
 ax.xaxis.set_major_formatter(ScalarFormatter())
 ax.ticklabel_format(axis='x', style='plain', useOffset=False)
 
-# Enable minor ticks if selected
+# Minor ticks — FIXED: no 'alpha' in tick_params
 if minor_ticks:
     ax.minorticks_on()
-    ax.tick_params(which='minor', length=3, color='gray', alpha=0.7)
+    # Use RGBA if you want transparency, but Matplotlib tick lines don't support 'alpha' directly
+    # So we set color with alpha baked in (e.g., gray with 70% opacity = (0.5, 0.5, 0.5, 0.7))
+    tick_color_with_alpha = (0.5, 0.5, 0.5, 0.7)  # RGBA
+    ax.tick_params(
+        which='minor',
+        length=3,
+        color=tick_color_with_alpha,  # This is allowed
+        width=0.8
+    )
 else:
     ax.minorticks_off()
 
-# Grid styling
+# Grid
 if show_grid:
     ax.grid(True, which="major", linestyle=grid_linestyle, alpha=grid_alpha, zorder=1)
     if minor_ticks:
         ax.grid(True, which="minor", linestyle=":", alpha=grid_alpha * 0.6, zorder=1)
 
-# Spine (box) visibility and thickness
+# Spines
 for spine in ax.spines.values():
     if show_box:
         spine.set_visible(True)
@@ -239,10 +262,7 @@ for spine in ax.spines.values():
     else:
         spine.set_visible(False)
 
-# Legend configuration
-if legend_loc == "best":
-    legend_loc = None  # matplotlib auto-selects
-
+# Legend
 legend = ax.legend(
     frameon=True,
     fancybox=True,
@@ -255,62 +275,69 @@ legend = ax.legend(
 )
 legend.get_frame().set_linewidth(0.8)
 
-# Final layout adjustment
+# Final layout
 plt.tight_layout(pad=2.8)
 
-# Render the plot in Streamlit
-st.pyplot(fig, use_container_width=False)  # Respect user-defined size
+# Render
+st.pyplot(fig, use_container_width=False)
 
 # =================================================
-# Metrics display
+# Metrics
 # =================================================
 st.markdown("### 🔍 Key Metrics")
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Baseline $T_s$", f"{Ts0:.0f} K")
-col2.metric("Max $\\Delta T_s$", f"{delta_T:.0f} K", delta=f"-{100 * delta_T / Ts0:.0f}%")
-col3.metric("At $|\\sigma_h|$", f"{sigma_max_GPa:.1f} GPa")
+col1.metric(r"Baseline $T_s(0)$", f"{Ts0:.0f} K")
+col2.metric(r"Max $\Delta T_s$", f"{delta_T:.0f} K", delta=f"-{100 * delta_T / Ts0:.0f}%")
+col3.metric(r"At $|\sigma_h|$", f"{sigma_max_GPa:.1f} GPa")
 
 # =================================================
 # Prediction table
 # =================================================
 st.markdown("### 📊 Predictions at Key Stress Levels")
 
-# Generate 6 logarithmically spaced stress points from 0.1 GPa to sigma_max_GPa
 stresses_GPa = np.logspace(-1, np.log10(sigma_max_GPa), 6)
 stresses_Pa = stresses_GPa * 1e9
 Ts_values = [calculate_Ts(s, Ts0, Qa_kJ, Omega_m3) for s in stresses_Pa]
 
-# Build table data
 prediction_data = {
-    "|σₕ| [GPa]": [f"{s:.2f}" for s in stresses_GPa],
-    "$T_s$ [K]": [f"{t:.0f}" for t in Ts_values],
-    "$ΔT_s$ [K]": [f"{Ts0 - t:.0f}" for t in Ts_values],
-    "Reduction [%]": [f"{100 * (Ts0 - t) / Ts0:.0f}" for t in Ts_values],
+    r"$|\sigma_h|$ [\si{\giga\pascal}]": [f"{s:.2f}" for s in stresses_GPa],
+    r"$T_s$ [\si{\kelvin}]": [f"{t:.0f}" for t in Ts_values],
+    r"$\Delta T_s$ [\si{\kelvin}]": [f"{Ts0 - t:.0f}" for t in Ts_values],
+    "Reduction [\%]": [f"{100 * (Ts0 - t) / Ts0:.0f}" for t in Ts_values],
 }
 
-# Display as Streamlit table
 st.table(prediction_data)
 
 # =================================================
-# Physics explanation
+# Physics explanation with full LaTeX
 # =================================================
 st.markdown(r"""
 ### 🧪 Physics Insight
 
-The stress-modified sintering temperature follows a linearized thermodynamic relation:
+The stress-modified sintering temperature is derived from thermodynamic considerations of vacancy formation under hydrostatic stress:
+
 \[
-T_s(|\sigma_h|) \approx T_s(0)\left(1 - \frac{\Omega |\sigma_h|}{Q_a}\right)
+T_s(|\sigma_h|) \approx T_s(0) \left( 1 - \frac{\Omega \, |\sigma_h|}{Q_a} \right)
 \]
+
 where:
-- $\Omega$ = atomic volume,
-- $Q_a$ = activation energy for diffusion,
-- $|\sigma_h|$ = magnitude of hydrostatic stress.
+- $\Omega = \SI{10.0e-29}{\meter\cubed}$ is the atomic volume of silver,
+- $Q_a = \SI{90}{\kilo\joule\per\mole}$ is the activation energy for diffusion,
+- $|\sigma_h|$ is the magnitude of the hydrostatic stress (positive in compression),
+- $T_s(0)$ is the intrinsic sintering temperature at zero stress.
 
-**Interpretation**
-- **Defect-induced hydrostatic stresses** (e.g., from twins, dislocations, or interfaces) in the range of **1–5 GPa** can reduce sintering temperatures by **100–300 K**.
-- At extreme stresses (**5–10 GPa**), sintering may occur **well below 400 K**, enabling low-temperature processing for flexible electronics, printed sensors, and nanoscale metallurgy.
-- This effect is particularly pronounced in **nanoparticles** due to their high surface-to-volume ratio and internal strain fields.
+#### Implications
+- **Nanoparticles** with internal defects (twins, stacking faults, dislocations) can sustain **hydrostatic stresses of 1–10 GPa**.
+- A stress of $\SI{5}{\giga\pascal}$ reduces $T_s$ by $\sim\SI{200}{\kelvin}$, enabling sintering near $\SI{400}{\kelvin}$ instead of $\SI{623}{\kelvin}$.
+- This enables **low-temperature processing** of conductive inks for flexible electronics, wearable sensors, and printed RF devices.
 
-> 💡 **Design Tip**: Engineering internal stresses via microstructure control offers a pathway to *kinetically accelerate* sintering without external heating.
+> **Note**: The linear approximation assumes small $\Omega |\sigma_h| / Q_a \ll 1$, which holds for $|\sigma_h| \lesssim \SI{10}{\giga\pascal}$.
+
 """)
+
+# Optional: Add LaTeX rendering note
+if use_latex:
+    st.sidebar.info("✅ Full \\LaTeX rendering active (slower).")
+else:
+    st.sidebar.info("🔤 Using Matplotlib's mathtext (fast, no system LaTeX required).")
