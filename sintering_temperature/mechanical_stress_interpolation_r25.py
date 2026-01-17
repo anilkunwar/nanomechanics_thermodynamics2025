@@ -2927,7 +2927,7 @@ def main():
                 with dashboard_tabs[0]:
                     # Create comprehensive dashboard
                     fig_dashboard = st.session_state.heatmap_visualizer.create_source_comparison_dashboard(
-                        [st.session_state.solutions[i] for i in st.session_state.selected_sources],  # Pass selected source objects
+                        [st.session_state.solutions[i] for i in st.session_state.selected_sources],
                         result,
                         cmap_name=colormap_name,
                         figsize=(22, 16)
@@ -3375,28 +3375,43 @@ def main():
                                     if 'stresses' in last_frame:
                                         stresses = last_frame['stresses']
                                         
-                                        # Export each stress component as CSV
-                                        for comp_name in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                                        # Export each stress component
+                                        for comp_name, comp_display in [
+                                            ('von_mises', 'Von Mises Stress'),
+                                            ('sigma_hydro', 'Hydrostatic Stress'),
+                                            ('sigma_mag', 'Stress Magnitude')
+                                        ]:
                                             if comp_name in stresses:
-                                                comp_data = stresses[comp_name]
-                                                df = pd.DataFrame(comp_data)
+                                                component_data = stresses[comp_name]
+                                                df = pd.DataFrame(component_data)
                                                 csv_str = df.to_csv(index=False)
-                                                zip_file.writestr(f"source_{i+1}_{comp_name}_theta_{theta_deg:.1f}.csv", csv_str)
-                                        
-                                        # Export source metadata
-                                        source_metadata = {
-                                            'index': i,
-                                            'source_params': params,
-                                            'theta_degrees': theta_deg,
-                                            'defect_type': defect_type,
-                                            'weight_in_interpolation': result['weights']['combined'][i] if i < len(result['weights']['combined']) else 0
-                                        }
-                                        json_str = json.dumps(source_metadata, indent=2)
-                                        zip_file.writestr(f"source_{i+1}_metadata.json", json_str)
+                                                zip_file.writestr(
+                                                    f"source_{i+1}_{defect_type}_theta_{theta_deg:.1f}_{comp_name}.csv", 
+                                                    csv_str
+                                                )
+                            
+                            # Export source metadata
+                            source_metadata = []
+                            for i, src_idx in enumerate(st.session_state.selected_sources):
+                                source = st.session_state.solutions[src_idx]
+                                params = source['params']
+                                source_metadata.append({
+                                    'source_index': i+1,
+                                    'defect_type': params.get('defect_type', 'Unknown'),
+                                    'theta_deg': np.degrees(params.get('theta', 0)),
+                                    'eps0': params.get('eps0', 0.0),
+                                    'kappa': params.get('kappa', 0.0),
+                                    'shape': params.get('shape', 'Unknown'),
+                                    'weight_in_interpolation': result['weights']['combined'][i] if i < len(result['weights']['combined']) else 0
+                                })
+                            
+                            metadata_df = pd.DataFrame(source_metadata)
+                            csv_metadata = metadata_df.to_csv(index=False)
+                            zip_file.writestr("source_metadata.csv", csv_metadata)
                         
                         zip_buffer.seek(0)
                         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                        filename = f"source_simulation_data_{timestamp}.zip"
+                        filename = f"source_data_theta_{result['target_angle']:.1f}_{timestamp}.zip"
                         
                         st.download_button(
                             label="⬇️ Download Source Data",
@@ -3407,19 +3422,23 @@ def main():
                             key="download_source_data"
                         )
                 
-                # Statistics table
+                # Statistics export
                 st.markdown("---")
-                st.markdown("### 📊 Detailed Stress Statistics")
+                st.markdown("### 📊 Stress Statistics Table")
                 
                 try:
+                    # Create a comprehensive statistics table
                     stats_data = []
-                    for stat_key, display_name in [('von_mises', 'Von Mises Stress'),
-                                                  ('sigma_hydro', 'Hydrostatic Stress'),
-                                                  ('sigma_mag', 'Stress Magnitude')]:
+                    
+                    for stat_key, display_name in [
+                        ('von_mises', 'Von Mises Stress'),
+                        ('sigma_hydro', 'Hydrostatic Stress'),
+                        ('sigma_mag', 'Stress Magnitude')
+                    ]:
                         if stat_key in result['statistics']:
                             component_stats = result['statistics'][stat_key]
-                            max_val = component_stats['max']
-                            min_val = component_stats['min']
+                            max_val = component_stats.get('max', component_stats.get('max_tension', 0))
+                            min_val = component_stats.get('min', component_stats.get('max_compression', 0))
                             mean_val = component_stats.get('mean', 0.0)
                             std_val = component_stats.get('std', 0.0)
                             stats_data.append({
@@ -3456,7 +3475,7 @@ def main():
                     
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
-    
+
     # Add visualization of source data
     with st.expander("🔍 Source Data Visualization", expanded=False):
         if st.session_state.solutions:
@@ -3529,7 +3548,7 @@ def main():
                     st.warning(f"Stress component '{src_component}' not found in source data")
         else:
             st.info("No source simulations loaded. Please load solutions first.")
-    
+
     # Add advanced analysis section
     with st.expander("🔬 Advanced Analysis", expanded=False):
         if st.session_state.interpolation_result:
@@ -3689,7 +3708,7 @@ def main():
                         )
         else:
             st.info("No interpolation results available. Please perform interpolation first.")
-    
+
     # Add about section
     with st.expander("ℹ️ About this Application", expanded=False):
         st.markdown("""
@@ -3706,7 +3725,7 @@ def main():
         - **Export Capabilities**: JSON, CSV, PNG, and ZIP exports for further analysis
         
         #### Technical Details:
-        - **Input Features**: 15-dimensional parameter encoding including:
+        - **Input Features**: 18-dimensional parameter encoding including:
           - Numeric parameters (eigenstrain, kappa)
           - One-hot encoded categorical features (defect type, shape)
           - Orientation features with angular awareness
@@ -3726,7 +3745,7 @@ def main():
         #### Contact:
         For questions, bug reports, or feature requests, please contact: [Contact information would go here]
         """)
-    
+
     # Add footer
     st.markdown("""
     ---
