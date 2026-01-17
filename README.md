@@ -222,6 +222,8 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa26-streamlit-red)](https:///mechanicalstress-interpolation-at-theta26.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface, R20 presented in more advanced form)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa27-streamlit-red)](https:///mechanicalstress-interpolation-at-theta27.streamlit.app/) (Focus on radar chart)
+
 
 
 
