@@ -1972,8 +1972,8 @@ class EnhancedHabitPlaneVisualizer:
                     name=f"{defect_type} (ε*={data.get('eigen_strain', 0):.2f})",
                     hovertemplate=(
                         f'<b>{defect_type}</b><br>' +
-                        'Orientation: %{theta:.1f}°<br>' +
-                        f'{stress_component.replace("_", " ").title()}: %{r:.3f} GPa<br>' +
+                        'Orientation: %{{theta:.1f}}°<br>' +
+                        f'{stress_component.replace("_", " ").title()}: %{{r:.3f}} GPa<br>' +
                         f"Eigen Strain: {data.get('eigen_strain', 0):.2f}" +
                         '<extra></extra>'
                     ),
@@ -2101,13 +2101,14 @@ class EnhancedHabitPlaneVisualizer:
             hoverinfo="text",
             hovertemplate=(
                 '<b>%{fullData.name}</b><br>' +
-                'Orientation: %{theta:.1f}°<br>' +
-                'Stress: %{r:.3f} GPa<br>' +
+                'Orientation: %{{theta:.1f}}°<br>' +
+                'Stress: %{{r:.3f}} GPa<br>' +
                 '<extra></extra>'
             )
         )
        
         return fig
+   
     
         
     def create_defect_comparison_plot(self, defect_comparison, stress_component='sigma_hydro',
