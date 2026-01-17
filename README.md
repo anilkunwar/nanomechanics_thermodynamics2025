@@ -215,6 +215,11 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa23-streamlit-red)](https:///mechanicalstress-interpolation-at-theta23.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa24-streamlit-red)](https:///mechanicalstress-interpolation-at-theta24.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa25-streamlit-red)](https:///mechanicalstress-interpolation-at-theta25.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
+
+
 
 
 
@@ -236,6 +241,10 @@ Sintering Temperature and Mechanical Stress
 [![continuummodelsintering2d](https://img.shields.io/badge/Tsinter2-streamlit-red)](https://sintering-thermoemechanical-modeling2.streamlit.app/) (Ts)
 
 [![continuummodelsintering2d](https://img.shields.io/badge/Tsinter3-streamlit-red)](https://sintering-thermoemechanical-modeling3.streamlit.app/) (Ts)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/Tsinter4-streamlit-red)](https://sintering-thermoemechanical-modeling4.streamlit.app/) (Ts)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/Tsinter5-streamlit-red)](https://sintering-thermoemechanical-modeling5.streamlit.app/) (Ts)
 
 
 
