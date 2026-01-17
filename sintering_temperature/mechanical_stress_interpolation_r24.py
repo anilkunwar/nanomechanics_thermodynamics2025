@@ -685,13 +685,16 @@ class HeatMapVisualizer:
                 hoverinfo='text',
                 text=hover_text,
                 colorbar=dict(
-                    title="Stress (GPa)",
-                    titlefont=dict(size=16, family='Arial', color='black'),
-                    titleside="right",
+                    title=dict(
+                        text="Stress (GPa)",
+                        font=dict(size=16, family='Arial', color='black'),
+                        side="right"
+                    ),
                     tickfont=dict(size=14, family='Arial'),
                     thickness=20,
                     len=0.8
                 )
+                
             )
             
             # Create figure
