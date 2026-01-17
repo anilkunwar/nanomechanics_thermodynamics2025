@@ -810,22 +810,25 @@ class HeatMapVisualizer:
                 height=height,
                 scene=dict(
                     xaxis=dict(
-                        title="X Position",
-                        titlefont=dict(size=18, color='black'),
+                        #title="X Position",
+                        #titlefont=dict(size=18, color='black'),
+                        title=dict(text="X Position", font=dict(size=18, family="Arial", color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
                         backgroundcolor='white'
                     ),
                     yaxis=dict(
-                        title="Y Position",
-                        titlefont=dict(size=18, color='black'),
+                        #title="Y Position",
+                        #titlefont=dict(size=18, color='black'),
+                        title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
                         backgroundcolor='white'
                     ),
                     zaxis=dict(
-                        title="Stress (GPa)",
-                        titlefont=dict(size=18, color='black'),
+                        #title="Stress (GPa)",
+                        #titlefont=dict(size=18, color='black'),
+                        title=dict(text="Stress (GPa)", font=dict(size=18, family="Arial", color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
                         backgroundcolor='white'
