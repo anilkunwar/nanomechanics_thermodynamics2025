@@ -3555,7 +3555,7 @@ def main():
                                     colormap_choice = st.selectbox("Colormap", ["default", "viridis", "plasma", "RdBu", "hot"])
                                     font_size_title = st.slider("Title Font Size", 12, 32, 24)
                                     font_size_axis = st.slider("Axis Label Font Size", 10, 30, 24)
-                                    font_size_tick = st.slider("Tick Font Size", 8, 20, 16)
+                                    font_size_tick = st.slider("Tick Font Size", 8, 30, 28)
                                     custom_label_input = st.text_input(
                                         "Custom Stress Component Label (e.g., 'Hydrostatic Stress')",
                                         value="Hydrostatic Stress"
