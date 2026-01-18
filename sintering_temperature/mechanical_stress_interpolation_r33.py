@@ -3546,16 +3546,16 @@ def main():
                                 with col_r1:
                                     show_labels_radar = st.checkbox("Show Labels", value=True)
                                     radial_tick_color = st.color_picker("Radial Tick Color", "#000000")
-                                    radial_tick_width = st.slider("Radial Tick Width", 1, 5, 2)
+                                    radial_tick_width = st.slider("Radial Tick Width", 1, 10, 5)
                                 with col_r2:
                                     angular_tick_color = st.color_picker("Angular Tick Color", "#000000")
-                                    angular_tick_width = st.slider("Angular Tick Width", 1, 5, 2)
+                                    angular_tick_width = st.slider("Angular Tick Width", 1, 10, 5)
                                     angular_tick_step = st.select_slider("Angular Tick Step (°)", options=[15, 30, 45, 60, 90], value=45)
                                 with col_r3:
                                     colormap_choice = st.selectbox("Colormap", ["default", "viridis", "plasma", "RdBu", "hot"])
-                                    font_size_title = st.slider("Title Font Size", 12, 32, 20)
-                                    font_size_axis = st.slider("Axis Label Font Size", 10, 24, 14)
-                                    font_size_tick = st.slider("Tick Font Size", 8, 20, 12)
+                                    font_size_title = st.slider("Title Font Size", 12, 32, 24)
+                                    font_size_axis = st.slider("Axis Label Font Size", 10, 30, 24)
+                                    font_size_tick = st.slider("Tick Font Size", 8, 20, 16)
                                     custom_label_input = st.text_input(
                                         "Custom Stress Component Label (e.g., 'Hydrostatic Stress')",
                                         value="Hydrostatic Stress"
