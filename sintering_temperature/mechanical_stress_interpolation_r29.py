@@ -1972,7 +1972,6 @@ def main():
                                               help="Controls curve smoothness (0 = straight lines, 1 = maximum smoothing)")
                     show_markers = st.checkbox("Show Data Markers", value=True,
                                               help="Display markers at data points")
-                    
                 
                 with col3:
                     st.markdown("##### **Layout & Grid**")
