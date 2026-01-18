@@ -19,8 +19,8 @@ import zipfile
 import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
-from scipy.ndimage import zoom, rotate
-from scipy.interpolate import interp1d, griddata
+from scipy.ndimage import zoom, rotate, map_coordinates
+from scipy.interpolate import interp1d
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -29,14 +29,14 @@ warnings.filterwarnings('ignore')
 # =============================================
 # Material parameters for Silver (Ag)
 PHYSICS_CONSTANTS = {
-    'Omega': 1.56e-29,      # Atomic volume for Ag (m³)
-    'k_B': 1.38e-23,        # Boltzmann constant (J/K)
-    'Q_bulk': 1.1e-19,      # Activation energy for bulk diffusion (J) ~0.7 eV
-    'Q_gb': 8.0e-20,        # Activation energy for grain boundary diffusion (J) ~0.5 eV
-    'Q_surface': 6.4e-20,   # Activation energy for surface diffusion (J) ~0.4 eV
-    'D0_bulk': 1.0e-6,      # Pre-exponential factor for bulk diffusion (m²/s)
-    'D0_gb': 1.0e-5,        # Pre-exponential factor for GB diffusion (m²/s)
-    'D0_surface': 1.0e-4,   # Pre-exponential factor for surface diffusion (m²/s)
+    'Omega': 1.56e-29,  # Atomic volume for Ag (m³)
+    'k_B': 1.38e-23,    # Boltzmann constant (J/K)
+    'Q_bulk': 1.1e-19,  # Activation energy for bulk diffusion (J) ~0.7 eV
+    'Q_gb': 8.0e-20,    # Activation energy for grain boundary diffusion (J) ~0.5 eV
+    'Q_surface': 6.4e-20, # Activation energy for surface diffusion (J) ~0.4 eV
+    'D0_bulk': 1.0e-6,  # Pre-exponential factor for bulk diffusion (m²/s)
+    'D0_gb': 1.0e-5,    # Pre-exponential factor for GB diffusion (m²/s)
+    'D0_surface': 1.0e-4, # Pre-exponential factor for surface diffusion (m²/s)
 }
 
 # =============================================
@@ -607,7 +607,7 @@ class TransformerSpatialInterpolator:
 # =============================================
 
 class HeatMapVisualizer:
-    """Enhanced heat map visualizer with diffusion physics and proper orientation"""
+    """Enhanced heat map visualizer with diffusion analysis and proper defect orientation"""
     
     def __init__(self):
         self.colormaps = COLORMAP_OPTIONS
@@ -618,9 +618,9 @@ class HeatMapVisualizer:
             'No Defect': '#96CEB4' # Green
         }
     
-    # =============================================
-    # DIFFUSION PHYSICS METHODS
-    # =============================================
+    # =========================================================================
+    # DIFFUSION PHYSICS CORRECTED FOR BOTH TENSILE AND COMPRESSIVE STRESS
+    # =========================================================================
     
     def compute_diffusion_enhancement_factor(self, sigma_hydro, T=650, mode='physics_corrected'):
         """
@@ -685,9 +685,9 @@ class HeatMapVisualizer:
         else:
             raise ValueError(f"Unknown mode: {mode}")
     
-    # =============================================
-    # ORIENTATION CORRECTION METHODS
-    # =============================================
+    # =========================================================================
+    # DEFECT ORIENTATION HANDLING AND ROTATION
+    # =========================================================================
     
     def rotate_stress_field(self, stress_field, theta_degrees, order=3):
         """
@@ -712,7 +712,7 @@ class HeatMapVisualizer:
                         reshape=False, order=order, mode='constant', cval=0.0)
         return rotated
     
-    def create_oriented_stress_heatmap(self, stress_field, theta_degrees, 
+    def create_oriented_stress_heatmap(self, stress_field, theta_degrees, defect_type,
                                       title="Stress Heat Map", cmap_name='viridis',
                                       figsize=(12, 10), rotation_marker=True):
         """
@@ -728,7 +728,6 @@ class HeatMapVisualizer:
             Whether to add orientation marker
         """
         # Rotate the field to align defect with horizontal
-        # (So defect at theta appears at angle theta in the plot)
         rotated_field = self.rotate_stress_field(stress_field, theta_degrees)
         
         fig, ax = plt.subplots(figsize=figsize)
@@ -773,17 +772,85 @@ class HeatMapVisualizer:
                    verticalalignment='center')
         
         # Set title
-        ax.set_title(f"{title}\n(Rotated to show defect at θ={theta_degrees:.1f}°)", 
+        ax.set_title(f"{title}\n{defect_type} at θ={theta_degrees:.1f}° (rotated view)", 
                     fontsize=20, fontweight='bold', pad=20)
-        ax.set_xlabel('X Position (rotated)', fontsize=16)
-        ax.set_ylabel('Y Position (rotated)', fontsize=16)
+        ax.set_xlabel('X Position (rotated coordinate system)', fontsize=16)
+        ax.set_ylabel('Y Position (rotated coordinate system)', fontsize=16)
+        
+        # Add grid
+        ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
         
         plt.tight_layout()
         return fig
     
-    # =============================================
-    # 3D DIFFUSION VISUALIZATION METHODS
-    # =============================================
+    def create_diffusion_enhancement_heatmap(self, hydrostatic_stress, T=650, 
+                                            theta_degrees=0, defect_type="Unknown",
+                                            cmap_name='RdBu_r', figsize=(12, 10)):
+        """
+        Create heatmap showing diffusion enhancement factor D/D_bulk.
+        """
+        # Compute diffusion enhancement
+        diffusion_ratio = self.compute_diffusion_enhancement_factor(hydrostatic_stress, T)
+        
+        # Rotate to match defect orientation
+        rotated_diffusion = self.rotate_stress_field(diffusion_ratio, theta_degrees)
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Use diverging colormap centered at 1.0 (no enhancement)
+        if cmap_name in plt.colormaps():
+            cmap = plt.get_cmap(cmap_name)
+        else:
+            cmap = plt.get_cmap('RdBu_r')
+        
+        # Create heatmap with log normalization for better visualization
+        # Values < 1 (suppression) in blue, > 1 (enhancement) in red
+        norm = LogNorm(vmin=0.1, vmax=10)
+        im = ax.imshow(rotated_diffusion, cmap=cmap, norm=norm, 
+                      aspect='equal', interpolation='bilinear', origin='lower')
+        
+        # Add colorbar with custom ticks
+        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("D/D_bulk Ratio (log scale)", fontsize=16, fontweight='bold')
+        
+        # Set colorbar ticks
+        cbar.ax.set_yticks([0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0])
+        cbar.ax.set_yticklabels(['0.1x', '0.2x', '0.5x', '1x', '2x', '5x', '10x'])
+        
+        # Add regions annotation
+        ax.text(0.02, 0.98, "Red: Enhancement (D/D_bulk > 1)\nBlue: Suppression (D/D_bulk < 1)",
+               transform=ax.transAxes, fontsize=12, fontweight='bold',
+               verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+        
+        # Add defect orientation marker
+        center_x = rotated_diffusion.shape[1] // 2
+        center_y = rotated_diffusion.shape[0] // 2
+        length = min(rotated_diffusion.shape) * 0.3
+        
+        ax.arrow(center_x, center_y, length, 0, 
+                head_width=length*0.1, head_length=length*0.15,
+                fc='green', ec='green', alpha=0.8, linewidth=2)
+        
+        ax.text(center_x + length*1.2, center_y, 
+               f'Defect at θ={theta_degrees:.1f}°',
+               color='green', fontsize=12, fontweight='bold',
+               verticalalignment='center')
+        
+        # Set title
+        ax.set_title(f"Diffusion Enhancement Heatmap\n{defect_type} at T={T}K, θ={theta_degrees:.1f}°", 
+                    fontsize=20, fontweight='bold', pad=20)
+        ax.set_xlabel('X Position (rotated)', fontsize=16)
+        ax.set_ylabel('Y Position (rotated)', fontsize=16)
+        
+        ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+        
+        return fig
+    
+    # =========================================================================
+    # 3D INTERACTIVE DIFFUSION VISUALIZATIONS
+    # =========================================================================
     
     def create_3d_diffusion_doughnut_plot(self, defect_data_dict, T=650, 
                                          width=1000, height=800):
@@ -823,16 +890,11 @@ class HeatMapVisualizer:
             diffusion_ratio = self.compute_diffusion_enhancement_factor(stresses_gpa, T, 'physics_corrected')
             
             # Convert to cylindrical coordinates for 3D plot
-            # Radial coordinate = diffusion ratio (log scale for better visualization)
-            # Use log10 scale to show both enhancement and suppression symmetrically
-            r_log = np.sign(diffusion_ratio - 1) * np.log10(np.abs(diffusion_ratio - 1) + 1)
-            r_vis = np.where(diffusion_ratio >= 1, 
-                            diffusion_ratio,  # Enhancement: use actual value
-                            2 - diffusion_ratio)  # Suppression: mirror inside
-            
+            # Radial coordinate = diffusion ratio
+            r = diffusion_ratio
             theta_rad = np.radians(angles)
-            x = r_vis * np.cos(theta_rad)
-            y = r_vis * np.sin(theta_rad)
+            x = r * np.cos(theta_rad)
+            y = r * np.sin(theta_rad)
             z = stresses_gpa  # Stress as height
             
             # Color coding: red for enhancement, blue for suppression
@@ -881,59 +943,20 @@ class HeatMapVisualizer:
                     ['Enhancement' if r >= 1 else 'Suppression' for r in diffusion_ratio]
                 ])
             ))
-            
-            # Add enhancement/suppression regions as surfaces
-            # Create mesh for filled regions
-            theta_mesh = np.linspace(0, 2*np.pi, 50)
-            r_mesh = np.linspace(0.1, 3, 20)
-            Theta, R = np.meshgrid(theta_mesh, r_mesh)
-            
-            # Convert to Cartesian
-            X_mesh = R * np.cos(Theta)
-            Y_mesh = R * np.sin(Theta)
-            
-            # Create enhancement region surface (outside unit circle)
-            enhancement_mask = R >= 1
-            X_enh = np.where(enhancement_mask, X_mesh, np.nan)
-            Y_enh = np.where(enhancement_mask, Y_mesh, np.nan)
-            
-            fig.add_trace(go.Surface(
-                x=X_enh,
-                y=Y_enh,
-                z=np.zeros_like(X_enh) - 1,  # Place at bottom
-                opacity=0.1,
-                colorscale=[[0, 'rgba(255, 0, 0, 0.1)'], [1, 'rgba(255, 0, 0, 0.1)']],
-                showscale=False,
-                name='Enhancement Region',
-                hovertemplate='Enhancement Region (D/D_bulk > 1)<extra></extra>'
-            ))
-            
-            # Create suppression region surface (inside unit circle)
-            suppression_mask = R <= 1
-            X_sup = np.where(suppression_mask, X_mesh, np.nan)
-            Y_sup = np.where(suppression_mask, Y_mesh, np.nan)
-            
-            fig.add_trace(go.Surface(
-                x=X_sup,
-                y=Y_sup,
-                z=np.zeros_like(X_sup) - 1,  # Place at bottom
-                opacity=0.1,
-                colorscale=[[0, 'rgba(0, 0, 255, 0.1)'], [1, 'rgba(0, 0, 255, 0.1)']],
-                showscale=False,
-                name='Suppression Region',
-                hovertemplate='Suppression Region (D/D_bulk < 1)<extra></extra>'
-            ))
         
         # Add habit plane reference
         habit_angle = 54.7
         theta_habit = np.radians(habit_angle)
         
-        # Create habit plane line
-        r_max = max([np.max(self.compute_diffusion_enhancement_factor(
-            np.array(data['stresses']['sigma_hydro']), T, 'physics_corrected'
-        )) for data in defect_data_dict.values()])
+        # Calculate max enhancement for scaling
+        max_enhancement = 0
+        for data in defect_data_dict.values():
+            stresses = np.array(data['stresses']['sigma_hydro'])
+            enhancement = self.compute_diffusion_enhancement_factor(stresses, T, 'physics_corrected')
+            max_enhancement = max(max_enhancement, np.max(enhancement))
         
-        r_habit = np.linspace(0.1, r_max * 1.2, 2)
+        # Create habit plane line
+        r_habit = np.linspace(0.1, max_enhancement * 1.2, 2)
         x_habit = r_habit * np.cos(theta_habit)
         y_habit = r_habit * np.sin(theta_habit)
         
@@ -961,21 +984,20 @@ class HeatMapVisualizer:
                     titlefont=dict(size=14),
                     gridcolor='lightgray',
                     backgroundcolor='rgba(240, 240, 240, 0.1)',
-                    range=[-3, 3]
+                    range=[-max_enhancement*1.2, max_enhancement*1.2]
                 ),
                 yaxis=dict(
                     title="Y (D/D_bulk × sinθ)",
                     titlefont=dict(size=14),
                     gridcolor='lightgray',
                     backgroundcolor='rgba(240, 240, 240, 0.1)',
-                    range=[-3, 3]
+                    range=[-max_enhancement*1.2, max_enhancement*1.2]
                 ),
                 zaxis=dict(
                     title="Hydrostatic Stress (GPa)",
                     titlefont=dict(size=14),
                     gridcolor='lightgray',
-                    backgroundcolor='rgba(240, 240, 240, 0.1)',
-                    range=[-3, 3]
+                    backgroundcolor='rgba(240, 240, 240, 0.1)'
                 ),
                 camera=dict(
                     eye=dict(x=1.8, y=1.8, z=0.8)
@@ -997,10 +1019,10 @@ class HeatMapVisualizer:
         
         return fig
     
-    def create_3d_diffusion_surface_plot(self, defect_data_dict, T=650, 
-                                        width=1000, height=700):
+    def create_interactive_3d_diffusion_surface(self, defect_data_dict, T=650,
+                                               width=1000, height=800):
         """
-        Create 3D surface plot of diffusion enhancement factor.
+        Create 3D surface plot showing diffusion enhancement as a function of angle and stress.
         """
         
         fig = go.Figure()
@@ -1012,7 +1034,7 @@ class HeatMapVisualizer:
             angles = np.array(data['angles'])
             stresses_gpa = np.array(data['stresses']['sigma_hydro'])
             
-            # Interpolate to common grid
+            # Interpolate to common angle grid
             angles_ext = np.concatenate([angles - 360, angles, angles + 360])
             stresses_ext = np.concatenate([stresses_gpa, stresses_gpa, stresses_gpa])
             
@@ -1021,55 +1043,45 @@ class HeatMapVisualizer:
             stresses_interp = interp_func(angles_common)
             
             # Compute diffusion enhancement
-            diffusion_ratio = self.compute_diffusion_enhancement_factor(stresses_interp, T, 'physics_corrected')
+            diffusion_ratio = self.compute_diffusion_enhancement_factor(stresses_interp, T)
             
-            # Create meshgrid for surface
-            theta_mesh = np.radians(angles_common)
-            r_mesh = np.linspace(0.1, np.max(diffusion_ratio) * 1.1, 50)
-            Theta, R = np.meshgrid(theta_mesh, r_mesh)
+            # Create mesh for surface
+            Theta, R = np.meshgrid(np.radians(angles_common), np.linspace(0.1, np.max(diffusion_ratio)*1.2, 50))
             
             # Create surface coordinates
             X = R * np.cos(Theta)
             Y = R * np.sin(Theta)
+            Z = np.tile(stresses_interp, (R.shape[0], 1))
             
-            # Create Z values (stress) repeated for each radius
-            Z = np.tile(stresses_interp, (len(r_mesh), 1))
-            
-            # Color by diffusion ratio
-            colors = np.tile(diffusion_ratio, (len(r_mesh), 1))
-            
-            # Add surface
+            # Add surface trace
             fig.add_trace(go.Surface(
                 x=X,
                 y=Y,
                 z=Z,
-                surfacecolor=colors,
+                surfacecolor=np.tile(diffusion_ratio, (R.shape[0], 1)),
                 colorscale='RdBu',
-                cmin=0.1,  # For suppression
-                cmax=10,   # For enhancement
+                cmin=0.1, cmax=10,
                 colorbar=dict(
                     title="D/D_bulk",
-                    tickmode='array',
-                    tickvals=[0.1, 1, 10],
-                    ticktext=['0.1x', '1x', '10x']
+                    tickvals=[0.1, 0.5, 1, 2, 5, 10],
+                    ticktext=['0.1x', '0.5x', '1x', '2x', '5x', '10x']
                 ),
                 opacity=0.8,
                 name=defect_type,
                 hovertemplate=(
                     f"Defect: {defect_type}<br>" +
-                    "Angle: %{theta:.1f}°<br>" +
-                    "D/D_bulk: %{surfacecolor:.2f}<br>" +
+                    "Angle: %{x:.1f}°, %{y:.1f}°<br>" +
                     "Stress: %{z:.3f} GPa<br>" +
+                    "D/D_bulk: %{surfacecolor:.3f}<br>" +
                     "<extra></extra>"
-                ),
-                showlegend=True
+                )
             ))
         
         # Update layout
         fig.update_layout(
             title=dict(
                 text=f"3D Diffusion Enhancement Surface (T={T}K)<br>"
-                     f"<span style='font-size:14px;color:gray'>Color = D/D_bulk | Height = Stress (GPa)</span>",
+                     f"<span style='font-size:14px;color:gray'>Surface color = D/D_bulk | Height = Stress</span>",
                 font=dict(size=22, family="Arial Black", color='darkblue'),
                 x=0.5
             ),
@@ -1088,415 +1100,232 @@ class HeatMapVisualizer:
                 ),
                 camera=dict(
                     eye=dict(x=1.5, y=1.5, z=1.2)
-                ),
-                aspectmode='manual',
-                aspectratio=dict(x=1, y=1, z=0.7)
+                )
             ),
             width=width,
-            height=height,
-            showlegend=True
+            height=height
         )
         
         return fig
     
-    # =============================================
-    # DIFFUSION HEATMAP METHODS
-    # =============================================
-    
-    def create_diffusion_enhancement_heatmap(self, stress_field, T=650, 
-                                            title="Diffusion Enhancement Heatmap",
-                                            cmap_name='RdBu', width=800, height=700):
-        """
-        Create heatmap of diffusion enhancement factor from stress field.
-        """
-        # Compute diffusion enhancement
-        diffusion_field = self.compute_diffusion_enhancement_factor(stress_field, T, 'physics_corrected')
-        
-        # Create log-scaled version for better visualization
-        log_diffusion = np.log10(diffusion_field)
-        
-        # Create hover text
-        hover_text = []
-        for i in range(diffusion_field.shape[0]):
-            row_text = []
-            for j in range(diffusion_field.shape[1]):
-                stress_val = stress_field[i, j]
-                diff_val = diffusion_field[i, j]
-                effect = "Enhancement" if diff_val > 1 else "Suppression" if diff_val < 1 else "No Change"
-                color = "green" if diff_val > 1 else "red" if diff_val < 1 else "gray"
-                
-                row_text.append(
-                    f"Position: ({i}, {j})<br>"
-                    f"Stress: {stress_val:.4f} GPa<br>"
-                    f"D/D_bulk: {diff_val:.4f}<br>"
-                    f"Effect: <span style='color:{color}'>{effect}</span>"
-                )
-            hover_text.append(row_text)
-        
-        # Create figure
-        fig = go.Figure(data=go.Heatmap(
-            z=log_diffusion,
-            colorscale=cmap_name,
-            hoverinfo='text',
-            text=hover_text,
-            colorbar=dict(
-                title=dict(
-                    text="log(D/D_bulk)",
-                    font=dict(size=14)
-                ),
-                tickmode='array',
-                tickvals=[-2, -1, 0, 1, 2],
-                ticktext=['0.01x', '0.1x', '1x', '10x', '100x']
-            )
-        ))
-        
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text=f"{title} (T={T}K)",
-                font=dict(size=24, family="Arial Black", color='darkblue'),
-                x=0.5
-            ),
-            width=width,
-            height=height,
-            xaxis=dict(
-                title="X Position",
-                scaleanchor="y",
-                scaleratio=1
-            ),
-            yaxis=dict(
-                title="Y Position",
-                scaleanchor="x",
-                scaleratio=1
-            )
-        )
-        
-        return fig
-    
-    def create_oriented_diffusion_heatmap(self, stress_field, theta_degrees, T=650,
-                                         title="Oriented Diffusion Enhancement",
-                                         cmap_name='RdBu', width=800, height=700):
-        """
-        Create rotated diffusion enhancement heatmap with proper orientation.
-        """
-        # Compute diffusion enhancement
-        diffusion_field = self.compute_diffusion_enhancement_factor(stress_field, T, 'physics_corrected')
-        
-        # Rotate both stress and diffusion fields
-        rotated_stress = self.rotate_stress_field(stress_field, theta_degrees)
-        rotated_diffusion = self.rotate_stress_field(diffusion_field, theta_degrees)
-        
-        # Create log-scaled version
-        log_diffusion = np.log10(rotated_diffusion)
-        
-        # Create hover text
-        hover_text = []
-        for i in range(rotated_diffusion.shape[0]):
-            row_text = []
-            for j in range(rotated_diffusion.shape[1]):
-                stress_val = rotated_stress[i, j]
-                diff_val = rotated_diffusion[i, j]
-                effect = "Enhancement" if diff_val > 1 else "Suppression" if diff_val < 1 else "No Change"
-                color = "green" if diff_val > 1 else "red" if diff_val < 1 else "gray"
-                
-                row_text.append(
-                    f"Position: ({i}, {j})<br>"
-                    f"Stress: {stress_val:.4f} GPa<br>"
-                    f"D/D_bulk: {diff_val:.4f}<br>"
-                    f"Effect: <span style='color:{color}'>{effect}</span><br>"
-                    f"Defect θ: {theta_degrees:.1f}°"
-                )
-            hover_text.append(row_text)
-        
-        # Create figure
-        fig = go.Figure(data=go.Heatmap(
-            z=log_diffusion,
-            colorscale=cmap_name,
-            hoverinfo='text',
-            text=hover_text,
-            colorbar=dict(
-                title=dict(
-                    text="log(D/D_bulk)",
-                    font=dict(size=14)
-                ),
-                tickmode='array',
-                tickvals=[-2, -1, 0, 1, 2],
-                ticktext=['0.01x', '0.1x', '1x', '10x', '100x']
-            )
-        ))
-        
-        # Add orientation line
-        center_x = rotated_diffusion.shape[1] // 2
-        center_y = rotated_diffusion.shape[0] // 2
-        length = min(rotated_diffusion.shape) * 0.4
-        
-        fig.add_shape(
-            type="line",
-            x0=center_x, y0=center_y,
-            x1=center_x + length, y1=center_y,
-            line=dict(color="red", width=3, dash="dash")
-        )
-        
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text=f"{title} - θ={theta_degrees:.1f}° (T={T}K)",
-                font=dict(size=24, family="Arial Black", color='darkblue'),
-                x=0.5
-            ),
-            width=width,
-            height=height,
-            xaxis=dict(
-                title="X Position (rotated)",
-                scaleanchor="y",
-                scaleratio=1
-            ),
-            yaxis=dict(
-                title="Y Position (rotated)",
-                scaleanchor="x",
-                scaleratio=1
-            ),
-            annotations=[
-                dict(
-                    x=center_x + length + 20,
-                    y=center_y,
-                    text=f"Defect Orientation",
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1,
-                    arrowwidth=2,
-                    arrowcolor="red",
-                    font=dict(size=12, color="red")
-                )
-            ]
-        )
-        
-        return fig
-    
-    # =============================================
+    # =========================================================================
     # COMPREHENSIVE VISUALIZATION METHODS
-    # =============================================
+    # =========================================================================
     
-    def create_comprehensive_diffusion_analysis(self, stress_field, theta_degrees, 
-                                               T=650, defect_type="Unknown",
-                                               width=1200, height=900):
+    def create_comprehensive_diffusion_analysis(self, interpolation_result, T=650,
+                                               width=1400, height=900):
         """
-        Create comprehensive analysis with stress and diffusion visualizations.
+        Create comprehensive dashboard showing stress fields and diffusion analysis.
         """
-        # Compute diffusion enhancement
-        diffusion_field = self.compute_diffusion_enhancement_factor(stress_field, T, 'physics_corrected')
+        if not interpolation_result:
+            return None
         
-        # Rotate fields for oriented views
-        rotated_stress = self.rotate_stress_field(stress_field, theta_degrees)
-        rotated_diffusion = self.rotate_stress_field(diffusion_field, theta_degrees)
+        fields = interpolation_result['fields']
+        target_angle = interpolation_result['target_angle']
+        defect_type = interpolation_result['target_params']['defect_type']
+        
+        # Compute diffusion enhancement field
+        diffusion_field = self.compute_diffusion_enhancement_factor(fields['sigma_hydro'], T)
         
         # Create subplots
         fig = make_subplots(
             rows=3, cols=3,
             subplot_titles=(
-                f'Original Stress (θ={theta_degrees:.1f}°)',
-                f'Rotated Stress View',
-                f'Stress Histogram',
-                f'Original Diffusion (T={T}K)',
-                f'Rotated Diffusion View',
-                f'Diffusion Histogram',
-                f'Stress-Diffusion Correlation',
-                f'Angular Distribution',
-                f'3D Visualization'
+                f'Von Mises Stress (θ={target_angle:.1f}°)',
+                f'Hydrostatic Stress (θ={target_angle:.1f}°)',
+                f'Diffusion Enhancement D/D_bulk (T={T}K)',
+                'Rotated Von Mises',
+                'Rotated Hydrostatic',
+                'Rotated Diffusion',
+                'Angular Stress Profile',
+                'Diffusion vs Stress',
+                '3D Diffusion Surface'
             ),
             specs=[
-                [{'type': 'heatmap'}, {'type': 'heatmap'}, {'type': 'xy'}],
-                [{'type': 'heatmap'}, {'type': 'heatmap'}, {'type': 'xy'}],
-                [{'type': 'scatter'}, {'type': 'polar'}, {'type': 'scatter3d'}]
+                [{'type': 'heatmap'}, {'type': 'heatmap'}, {'type': 'heatmap'}],
+                [{'type': 'heatmap'}, {'type': 'heatmap'}, {'type': 'heatmap'}],
+                [{'type': 'scatter'}, {'type': 'scatter'}, {'type': 'scatter3d'}]
             ],
-            column_widths=[0.3, 0.3, 0.4],
-            row_heights=[0.3, 0.3, 0.4]
+            column_widths=[0.33, 0.33, 0.34],
+            row_heights=[0.33, 0.33, 0.34]
         )
         
-        # 1. Original stress heatmap
+        # Row 1: Original heatmaps
+        # 1. Von Mises
         fig.add_trace(go.Heatmap(
-            z=stress_field,
+            z=fields['von_mises'],
             colorscale='Viridis',
-            colorbar=dict(title="Stress (GPa)", x=0.3),
-            showscale=True,
-            hovertemplate="Stress: %{z:.3f} GPa<extra></extra>"
+            colorbar=dict(title="Von Mises (GPa)", x=0.3),
+            hovertemplate="Von Mises: %{z:.3f} GPa<extra></extra>"
         ), row=1, col=1)
         
-        # 2. Rotated stress heatmap
+        # 2. Hydrostatic
         fig.add_trace(go.Heatmap(
-            z=rotated_stress,
-            colorscale='Viridis',
-            colorbar=dict(title="Stress (GPa)", x=0.63),
-            showscale=True,
-            hovertemplate="Rotated Stress: %{z:.3f} GPa<extra></extra>"
+            z=fields['sigma_hydro'],
+            colorscale='RdBu_r',
+            zmid=0,
+            colorbar=dict(title="Hydrostatic (GPa)", x=0.63),
+            hovertemplate="Hydrostatic: %{z:.3f} GPa<extra></extra>"
         ), row=1, col=2)
         
-        # 3. Stress histogram
-        fig.add_trace(go.Histogram(
-            x=stress_field.flatten(),
-            nbinsx=50,
-            marker_color='blue',
-            opacity=0.7,
-            name='Stress Distribution',
-            hovertemplate="Stress: %{x:.3f} GPa<br>Count: %{y}<extra></extra>"
+        # 3. Diffusion enhancement (log scale)
+        fig.add_trace(go.Heatmap(
+            z=diffusion_field,
+            colorscale='RdBu',
+            zmin=0.1, zmax=10,
+            colorbar=dict(
+                title="D/D_bulk",
+                tickvals=[0.1, 0.2, 0.5, 1, 2, 5, 10],
+                ticktext=['0.1x', '0.2x', '0.5x', '1x', '2x', '5x', '10x'],
+                x=0.96
+            ),
+            hovertemplate="D/D_bulk: %{z:.3f}<extra></extra>"
         ), row=1, col=3)
         
-        # 4. Original diffusion heatmap
-        log_diffusion = np.log10(diffusion_field)
+        # Row 2: Rotated heatmaps
+        # 4. Rotated Von Mises
+        rotated_vm = self.rotate_stress_field(fields['von_mises'], target_angle)
         fig.add_trace(go.Heatmap(
-            z=log_diffusion,
-            colorscale='RdBu',
-            zmid=0,
-            colorbar=dict(
-                title="log(D/D_bulk)",
-                x=0.3,
-                tickmode='array',
-                tickvals=[-2, -1, 0, 1, 2],
-                ticktext=['0.01x', '0.1x', '1x', '10x', '100x']
-            ),
-            showscale=True,
-            hovertemplate="D/D_bulk: %{z:.3f}<extra></extra>"
+            z=rotated_vm,
+            colorscale='Viridis',
+            showscale=False,
+            hovertemplate="Rotated Von Mises: %{z:.3f} GPa<extra></extra>"
         ), row=2, col=1)
         
-        # 5. Rotated diffusion heatmap
-        log_rotated_diffusion = np.log10(rotated_diffusion)
+        # 5. Rotated Hydrostatic
+        rotated_hydro = self.rotate_stress_field(fields['sigma_hydro'], target_angle)
         fig.add_trace(go.Heatmap(
-            z=log_rotated_diffusion,
-            colorscale='RdBu',
+            z=rotated_hydro,
+            colorscale='RdBu_r',
             zmid=0,
-            colorbar=dict(
-                title="log(D/D_bulk)",
-                x=0.63,
-                tickmode='array',
-                tickvals=[-2, -1, 0, 1, 2],
-                ticktext=['0.01x', '0.1x', '10x', '100x']
-            ),
-            showscale=True,
-            hovertemplate="Rotated D/D_bulk: %{z:.3f}<extra></extra>"
+            showscale=False,
+            hovertemplate="Rotated Hydrostatic: %{z:.3f} GPa<extra></extra>"
         ), row=2, col=2)
         
-        # 6. Diffusion histogram
-        fig.add_trace(go.Histogram(
-            x=diffusion_field.flatten(),
-            nbinsx=50,
-            marker_color='red',
-            opacity=0.7,
-            name='Diffusion Distribution',
-            hovertemplate="D/D_bulk: %{x:.3f}<br>Count: %{y}<extra></extra>"
+        # 6. Rotated Diffusion
+        rotated_diff = self.rotate_stress_field(diffusion_field, target_angle)
+        fig.add_trace(go.Heatmap(
+            z=rotated_diff,
+            colorscale='RdBu',
+            zmin=0.1, zmax=10,
+            showscale=False,
+            hovertemplate="Rotated D/D_bulk: %{z:.3f}<extra></extra>"
         ), row=2, col=3)
         
-        # 7. Stress-Diffusion correlation
-        fig.add_trace(go.Scatter(
-            x=stress_field.flatten()[::10],  # Sample every 10th point
-            y=diffusion_field.flatten()[::10],
-            mode='markers',
-            marker=dict(
-                size=4,
-                color=diffusion_field.flatten()[::10],
-                colorscale='RdBu',
-                showscale=False,
-                cmin=0.1,
-                cmax=10
-            ),
-            name='Stress vs Diffusion',
-            hovertemplate="Stress: %{x:.3f} GPa<br>D/D_bulk: %{y:.3f}<extra></extra>"
-        ), row=3, col=1)
-        
-        # Add theoretical curve
-        stress_range = np.linspace(np.min(stress_field), np.max(stress_field), 100)
-        diffusion_theory = self.compute_diffusion_enhancement_factor(stress_range, T, 'physics_corrected')
-        fig.add_trace(go.Scatter(
-            x=stress_range,
-            y=diffusion_theory,
-            mode='lines',
-            line=dict(color='black', width=2, dash='dash'),
-            name='Theory',
-            hovertemplate="Theory<br>Stress: %{x:.3f} GPa<br>D/D_bulk: %{y:.3f}<extra></extra>"
-        ), row=3, col=1)
-        
-        # 8. Angular distribution (polar plot)
-        # Sample along a circle
-        angles = np.linspace(0, 360, 36, endpoint=False)
-        center_x = stress_field.shape[1] // 2
-        center_y = stress_field.shape[0] // 2
+        # Row 3: Analysis plots
+        # 7. Angular stress profile
+        angles = np.linspace(0, 360, 36)
+        center_x = fields['von_mises'].shape[1] // 2
+        center_y = fields['von_mises'].shape[0] // 2
         radius = min(center_x, center_y) // 2
         
         stresses_angular = []
         for angle in angles:
-            # Sample in rotated coordinates
-            angle_rad = np.radians(angle + theta_degrees)
+            angle_rad = np.radians(angle + target_angle)
             x_sample = center_x + radius * np.cos(angle_rad)
             y_sample = center_y + radius * np.sin(angle_rad)
-            
-            xi = int(np.clip(x_sample, 0, stress_field.shape[1]-1))
-            yi = int(np.clip(y_sample, 0, stress_field.shape[0]-1))
-            stresses_angular.append(stress_field[yi, xi])
+            xi = int(np.clip(x_sample, 0, fields['sigma_hydro'].shape[1]-1))
+            yi = int(np.clip(y_sample, 0, fields['sigma_hydro'].shape[0]-1))
+            stresses_angular.append(fields['sigma_hydro'][yi, xi])
         
         stresses_angular = np.array(stresses_angular)
         diffusion_angular = self.compute_diffusion_enhancement_factor(stresses_angular, T)
         
-        fig.add_trace(go.Scatterpolar(
-            r=stresses_angular,
-            theta=angles,
+        fig.add_trace(go.Scatter(
+            x=angles,
+            y=stresses_angular,
             mode='lines+markers',
             line=dict(color='blue', width=3),
             marker=dict(size=6, color='blue'),
-            name='Stress',
-            hovertemplate="Angle: %{theta:.1f}°<br>Stress: %{r:.3f} GPa<extra></extra>"
-        ), row=3, col=2)
+            name='Hydrostatic Stress',
+            hovertemplate="Angle: %{x:.1f}°<br>Stress: %{y:.3f} GPa<extra></extra>"
+        ), row=3, col=1)
         
-        fig.add_trace(go.Scatterpolar(
-            r=diffusion_angular,
-            theta=angles,
+        fig.add_trace(go.Scatter(
+            x=angles,
+            y=diffusion_angular,
             mode='lines+markers',
             line=dict(color='red', width=3),
             marker=dict(size=6, color='red'),
             name='D/D_bulk',
-            hovertemplate="Angle: %{theta:.1f}°<br>D/D_bulk: %{r:.3f}<extra></extra>",
-            showlegend=False
-        ), row=3, col=2)
+            yaxis='y2',
+            hovertemplate="Angle: %{x:.1f}°<br>D/D_bulk: %{y:.3f}<extra></extra>"
+        ), row=3, col=1)
         
-        # 9. 3D visualization
-        # Sample points for 3D plot
-        sample_size = 20
-        x_indices = np.linspace(0, stress_field.shape[1]-1, sample_size, dtype=int)
-        y_indices = np.linspace(0, stress_field.shape[0]-1, sample_size, dtype=int)
-        X, Y = np.meshgrid(x_indices, y_indices)
+        # 8. Diffusion vs Stress scatter
+        stress_flat = fields['sigma_hydro'].flatten()
+        diffusion_flat = diffusion_field.flatten()
         
-        # Convert to rotated coordinates
-        theta_rad = np.radians(theta_degrees)
-        X_rot = X * np.cos(theta_rad) - Y * np.sin(theta_rad)
-        Y_rot = X * np.sin(theta_rad) + Y * np.cos(theta_rad)
-        Z_stress = stress_field[Y, X]
-        Z_diffusion = diffusion_field[Y, X]
+        # Sample for performance
+        sample_idx = np.random.choice(len(stress_flat), min(1000, len(stress_flat)), replace=False)
+        stress_sample = stress_flat[sample_idx]
+        diffusion_sample = diffusion_flat[sample_idx]
         
-        fig.add_trace(go.Scatter3d(
-            x=X_rot.flatten(),
-            y=Y_rot.flatten(),
-            z=Z_stress.flatten(),
+        fig.add_trace(go.Scatter(
+            x=stress_sample,
+            y=diffusion_sample,
             mode='markers',
             marker=dict(
                 size=5,
-                color=Z_diffusion.flatten(),
+                color=diffusion_sample,
                 colorscale='RdBu',
-                cmin=0.1,
-                cmax=10,
-                colorbar=dict(title="D/D_bulk", x=0.95),
-                showscale=True
+                cmin=0.1, cmax=10,
+                showscale=True,
+                colorbar=dict(title="D/D_bulk", x=1.2)
             ),
-            name='3D Points',
-            hovertemplate=(
-                "X: %{x:.1f}<br>"
-                "Y: %{y:.1f}<br>"
-                "Stress: %{z:.3f} GPa<br>"
-                "D/D_bulk: %{marker.color:.3f}<extra></extra>"
-            )
+            name='Points',
+            hovertemplate="Stress: %{x:.3f} GPa<br>D/D_bulk: %{y:.3f}<extra></extra>"
+        ), row=3, col=2)
+        
+        # Add theoretical curve
+        stress_range = np.linspace(np.min(stress_flat), np.max(stress_flat), 100)
+        diffusion_theory = self.compute_diffusion_enhancement_factor(stress_range, T)
+        
+        fig.add_trace(go.Scatter(
+            x=stress_range,
+            y=diffusion_theory,
+            mode='lines',
+            line=dict(color='black', width=3, dash='dash'),
+            name='Theory',
+            hovertemplate="Theoretical<br>Stress: %{x:.3f} GPa<br>D/D_bulk: %{y:.3f}<extra></extra>"
+        ), row=3, col=2)
+        
+        # 9. 3D diffusion surface
+        # Create simple 3D scatter of selected points
+        sample_idx_3d = np.random.choice(len(stress_flat), min(500, len(stress_flat)), replace=False)
+        stress_3d = stress_flat[sample_idx_3d]
+        diffusion_3d = diffusion_flat[sample_idx_3d]
+        
+        # Generate random angles for visualization
+        angles_3d = np.random.uniform(0, 360, len(stress_3d))
+        
+        # Convert to cylindrical coordinates
+        r_3d = diffusion_3d
+        theta_rad_3d = np.radians(angles_3d)
+        x_3d = r_3d * np.cos(theta_rad_3d)
+        y_3d = r_3d * np.sin(theta_rad_3d)
+        z_3d = stress_3d
+        
+        fig.add_trace(go.Scatter3d(
+            x=x_3d,
+            y=y_3d,
+            z=z_3d,
+            mode='markers',
+            marker=dict(
+                size=3,
+                color=diffusion_3d,
+                colorscale='RdBu',
+                cmin=0.1, cmax=10,
+                showscale=False
+            ),
+            hovertemplate="D/D_bulk: %{marker.color:.3f}<br>Stress: %{z:.3f} GPa<extra></extra>",
+            name='3D Points'
         ), row=3, col=3)
         
         # Update layout
         fig.update_layout(
             title=dict(
-                text=f"Comprehensive Diffusion Analysis: {defect_type} at θ={theta_degrees:.1f}° (T={T}K)",
+                text=f"Comprehensive Diffusion Analysis: {defect_type} at θ={target_angle:.1f}°, T={T}K",
                 font=dict(size=24, family="Arial Black", color='darkblue'),
                 x=0.5
             ),
@@ -1512,36 +1341,112 @@ class HeatMapVisualizer:
         )
         
         # Update axes
-        fig.update_xaxes(title_text="Stress (GPa)", row=1, col=3)
-        fig.update_yaxes(title_text="Count", row=1, col=3)
+        fig.update_xaxes(title_text="Angle (degrees)", row=3, col=1)
+        fig.update_yaxes(title_text="Stress (GPa)", row=3, col=1)
+        fig.update_yaxes(title_text="D/D_bulk", secondary_y=False, row=3, col=1)
         
-        fig.update_xaxes(title_text="D/D_bulk", row=2, col=3)
-        fig.update_yaxes(title_text="Count", row=2, col=3)
+        fig.update_xaxes(title_text="Hydrostatic Stress (GPa)", row=3, col=2)
+        fig.update_yaxes(title_text="D/D_bulk", type="log", row=3, col=2)
         
-        fig.update_xaxes(title_text="Stress (GPa)", row=3, col=1)
-        fig.update_yaxes(title_text="D/D_bulk", type="log", row=3, col=1)
-        
-        # Update polar
-        fig.update_polars(
-            radialaxis=dict(title="Value"),
-            angularaxis=dict(rotation=90, direction="clockwise"),
-            row=3, col=2
+        fig.update_scenes(
+            xaxis=dict(title="X (D/D_bulk × cosθ)"),
+            yaxis=dict(title="Y (D/D_bulk × sinθ)"),
+            zaxis=dict(title="Stress (GPa)"),
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.0)),
+            row=3, col=3
         )
         
-        # Update 3D scene
-        fig.update_scenes(
-            xaxis=dict(title="X (rotated)"),
-            yaxis=dict(title="Y (rotated)"),
-            zaxis=dict(title="Stress (GPa)"),
-            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
-            row=3, col=3
+        # Add reference lines
+        fig.add_hline(y=0, line_dash="dash", line_color="gray", row=3, col=1)
+        fig.add_hline(y=1, line_dash="dash", line_color="gray", row=3, col=2)
+        fig.add_vline(x=0, line_dash="dash", line_color="gray", row=3, col=2)
+        
+        return fig
+    
+    def create_interactive_oriented_3d(self, stress_field, theta_degrees,
+                                      defect_type="Unknown", cmap_name='viridis',
+                                      width=1000, height=800):
+        """
+        Create 3D surface plot with proper defect orientation.
+        """
+        # Create coordinate grid
+        nx, ny = stress_field.shape[1], stress_field.shape[0]
+        x = np.linspace(-1, 1, nx)
+        y = np.linspace(-1, 1, ny)
+        X, Y = np.meshgrid(x, y)
+        
+        # Rotate coordinates to match defect orientation
+        theta_rad = np.radians(theta_degrees)
+        X_rot = X * np.cos(theta_rad) - Y * np.sin(theta_rad)
+        Y_rot = X * np.sin(theta_rad) + Y * np.cos(theta_rad)
+        
+        # Create 3D surface
+        fig = go.Figure(data=[go.Surface(
+            z=stress_field,
+            x=X_rot,
+            y=Y_rot,
+            colorscale=cmap_name,
+            contours={
+                "z": {"show": True, "usecolormap": True}
+            },
+            hovertemplate=(
+                "X (rotated): %{x:.3f}<br>" +
+                "Y (rotated): %{y:.3f}<br>" +
+                "Stress: %{z:.4f} GPa<br>" +
+                f"θ = {theta_degrees:.1f}°<br>" +
+                f"Defect: {defect_type}<br>" +
+                "<extra></extra>"
+            )
+        )])
+        
+        # Add orientation arrow
+        arrow_length = 1.5
+        fig.add_trace(go.Scatter3d(
+            x=[0, arrow_length * np.cos(theta_rad)],
+            y=[0, arrow_length * np.sin(theta_rad)],
+            z=[np.max(stress_field) * 1.1, np.max(stress_field) * 1.1],
+            mode='lines+markers+text',
+            line=dict(color='red', width=6),
+            marker=dict(size=10, color='red'),
+            text=['', 'Defect Orientation'],
+            textposition="top center",
+            name=f'Defect Orientation (θ={theta_degrees:.1f}°)'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title=dict(
+                text=f"3D Stress Surface - {defect_type} at θ={theta_degrees:.1f}°",
+                font=dict(size=24, family="Arial Black", color='darkblue'),
+                x=0.5
+            ),
+            scene=dict(
+                xaxis=dict(
+                    title="X (rotated)",
+                    gridcolor='lightgray'
+                ),
+                yaxis=dict(
+                    title="Y (rotated)",
+                    gridcolor='lightgray'
+                ),
+                zaxis=dict(
+                    title="Stress (GPa)",
+                    gridcolor='lightgray'
+                ),
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=1.2)
+                ),
+                aspectmode='cube'
+            ),
+            width=width,
+            height=height
         )
         
         return fig
     
-    # =============================================
-    # ORIGINAL VISUALIZATION METHODS (for compatibility)
-    # =============================================
+    # =========================================================================
+    # ORIGINAL METHODS (maintained for compatibility)
+    # =========================================================================
     
     def create_stress_heatmap(self, stress_field, title="Stress Heat Map", 
                              cmap_name='viridis', figsize=(12, 10), 
@@ -1556,7 +1461,7 @@ class HeatMapVisualizer:
         if cmap_name in plt.colormaps():
             cmap = plt.get_cmap(cmap_name)
         else:
-            cmap = plt.get_cmap('viridis')  # Default fallback
+            cmap = plt.get_cmap('viridis')
         
         # Determine vmin and vmax if not provided
         if vmin is None:
@@ -1609,8 +1514,7 @@ class HeatMapVisualizer:
         try:
             # Validate colormap
             if cmap_name not in px.colors.named_colorscales():
-                cmap_name = 'viridis'  # Default fallback
-                st.warning(f"Colormap {cmap_name} not found in Plotly, using viridis instead.")
+                cmap_name = 'viridis'
             
             # Create hover text with enhanced information
             hover_text = []
@@ -1641,7 +1545,6 @@ class HeatMapVisualizer:
                     thickness=20,
                     len=0.8
                 )
-                
             )
             
             # Create figure
@@ -1682,69 +1585,16 @@ class HeatMapVisualizer:
                 margin=dict(l=80, r=80, t=100, b=80)
             )
             
-            # Ensure aspect ratio is 1:1 for square fields
-            fig.update_yaxes(
-                scaleanchor="x",
-                scaleratio=1,
-            )
-            
             return fig
             
         except Exception as e:
             st.error(f"Error creating interactive heatmap: {e}")
-            # Return a simple figure as fallback
             fig = go.Figure()
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
-    
-    def create_angular_orientation_plot(self, target_angle_deg, defect_type="Unknown", 
-                                       figsize=(8, 8), show_habit_plane=True):
-        """Create polar plot showing angular orientation"""
-        
-        fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111, projection='polar')
-        
-        # Convert target angle to radians
-        theta_rad = np.radians(target_angle_deg)
-        
-        # Plot the defect orientation as a red arrow
-        ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, 
-                color='red', alpha=0.8, label=f'Defect Orientation: {target_angle_deg:.1f}°')
-        
-        # Plot habit plane orientation (54.7°) if requested
-        if show_habit_plane:
-            habit_plane_rad = np.radians(54.7)
-            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02,
-                    color='blue', alpha=0.5, label='Habit Plane (54.7°)')
-        
-        # Plot cardinal directions
-        for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
-            ax.axvline(np.radians(angle), color='gray', linestyle='--', alpha=0.3)
-        
-        # Customize plot
-        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}', 
-                    fontsize=20, fontweight='bold', pad=20)
-        ax.set_theta_zero_location('N')  # 0° at top
-        ax.set_theta_direction(-1)  # Clockwise
-        ax.set_ylim(0, 1.5)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
-        
-        # Add annotation for angular difference from habit plane
-        if show_habit_plane:
-            angular_diff = abs(target_angle_deg - 54.7)
-            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom habit plane',
-                       xy=(theta_rad, 1.2), xytext=(theta_rad, 1.4),
-                       arrowprops=dict(arrowstyle='->', color='green', alpha=0.7),
-                       fontsize=12, fontweight='bold',
-                       ha='center', va='center',
-                       bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.7))
-        
-        plt.tight_layout()
-        return fig
 
 # =============================================
-# ENHANCED DEFECT COMPARISON DATABASE
+# DEFECT COMPARISON DATABASE
 # =============================================
 
 class DefectComparisonDatabase:
@@ -1754,12 +1604,12 @@ class DefectComparisonDatabase:
         self.defect_data = {}
         self.visualizer = HeatMapVisualizer()
     
-    def add_defect_data(self, defect_type, angles, stresses_dict):
+    def add_defect_data(self, defect_type, angles, stresses_dict, target_angle):
         """Add defect data to comparison database"""
         self.defect_data[defect_type] = {
             'angles': np.array(angles),
             'stresses': stresses_dict,
-            'defect_type': defect_type
+            'target_angle': target_angle
         }
     
     def get_defect_comparison(self):
@@ -1790,6 +1640,7 @@ class DefectComparisonDatabase:
                 'max_tensile_stress': float(np.max(stresses_gpa[stresses_gpa > 0]) if np.any(stresses_gpa > 0) else 0),
                 'max_compressive_stress': float(np.min(stresses_gpa[stresses_gpa < 0]) if np.any(stresses_gpa < 0) else 0),
                 'peak_enhancement_angle': float(data['angles'][np.argmax(enhancement)]),
+                'target_angle': float(data['target_angle']),
                 'temperature_650K': {
                     'enhancement': enhancement.tolist(),
                     'angles': data['angles'].tolist()
@@ -1890,7 +1741,7 @@ def _calculate_entropy(weights):
     return -np.sum(weights * np.log(weights))
 
 # =============================================
-# MAIN APPLICATION WITH ALL ENHANCEMENTS
+# MAIN APPLICATION
 # =============================================
 
 def main():
@@ -1978,15 +1829,17 @@ def main():
     # Main header
     st.markdown('<h1 class="main-header">🤖 Transformer Stress Field & Diffusion Analysis</h1>', unsafe_allow_html=True)
     
-    # Description
+    # Physics explanation
     st.markdown("""
     <div class="physics-note">
-    <strong>🔬 Physics-aware stress interpolation with vacancy-mediated diffusion enhancement analysis.</strong><br>
-    • Interpolate stress fields at custom polar angles<br>
-    • Compute diffusion enhancement factor D/D_bulk for vacancy-mediated diffusion<br>
-    • 3D interactive visualization of enhancement vs. angle and stress<br>
-    • Corrected defect orientation visualization with proper rotation<br>
-    • Physics-corrected: Both tensile (enhancement) and compressive (suppression) stress affect diffusion
+    <strong>🔬 Physics-Corrected Vacancy-Mediated Diffusion:</strong><br>
+    
+    **Tensile Stress (σ > 0):** D/D_bulk = exp(Ωσ/kT) > 1 → <span style='color:red'>ENHANCEMENT</span><br>
+    **Compressive Stress (σ < 0):** D/D_bulk = exp(Ωσ/kT) < 1 → <span style='color:blue'>SUPPRESSION</span><br>
+    **Zero Stress (σ = 0):** D/D_bulk = 1 → NO CHANGE<br>
+    
+    Where Ω = 1.56×10⁻²⁹ m³ (Ag), k = 1.38×10⁻²³ J/K, T = 650K (sintering temperature)<br>
+    Habit plane at 54.7° shows maximum tensile stress → maximum diffusion enhancement
     </div>
     """, unsafe_allow_html=True)
     
@@ -2003,10 +1856,10 @@ def main():
         st.session_state.results_manager = ResultsManager()
     if 'interpolation_result' not in st.session_state:
         st.session_state.interpolation_result = None
-    if 'defect_comparison' not in st.session_state:
-        st.session_state.defect_comparison = {}
     if 'defect_db' not in st.session_state:
         st.session_state.defect_db = DefectComparisonDatabase()
+    if 'diffusion_T' not in st.session_state:
+        st.session_state.diffusion_T = 650.0
     
     # Sidebar
     with st.sidebar:
@@ -2029,7 +1882,6 @@ def main():
             if st.button("🧹 Clear All", use_container_width=True):
                 st.session_state.solutions = []
                 st.session_state.interpolation_result = None
-                st.session_state.defect_comparison = {}
                 st.session_state.defect_db.clear_data()
                 st.success("All data cleared")
         
@@ -2045,6 +1897,7 @@ def main():
             step=50.0,
             help="Sintering temperature for diffusion calculation"
         )
+        st.session_state.diffusion_T = diffusion_T
         
         # Atomic volume
         atomic_volume = st.number_input(
@@ -2057,37 +1910,6 @@ def main():
         # Update physics constants
         PHYSICS_CONSTANTS['Omega'] = atomic_volume
         
-        # Diffusion mode
-        diffusion_mode = st.selectbox(
-            "Diffusion Model",
-            ["physics_corrected", "temperature_reduction", "activation_energy"],
-            index=0,
-            help="physics_corrected: Both tensile and compressive affect diffusion"
-        )
-        
-        # Visualization type
-        visualization_type = st.selectbox(
-            "Visualization Type",
-            ["Stress Heatmaps", "Diffusion Heatmaps", "3D Diffusion Doughnut", 
-             "3D Diffusion Surface", "Comprehensive Analysis", "Oriented Views"],
-            index=0,
-            help="Select visualization type"
-        )
-        
-        # Colormap selection
-        colormap_category = st.selectbox(
-            "Colormap Category",
-            list(COLORMAP_OPTIONS.keys()),
-            index=4,
-            help="Select colormap category"
-        )
-        
-        colormap_name = st.selectbox(
-            "Select Colormap",
-            COLORMAP_OPTIONS[colormap_category],
-            index=0
-        )
-        
         # Target parameters
         st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
         
@@ -2098,7 +1920,7 @@ def main():
             max_value=360.0,
             value=54.7,
             step=0.1,
-            help="Set custom polar angle for interpolation"
+            help="Set custom polar angle for interpolation (default: 54.7°)"
         )
         
         # Defect type
@@ -2154,30 +1976,41 @@ def main():
                 help="Temperature for attention scaling"
             )
         
+        # Visualization parameters
+        st.markdown('<h2 class="section-header">🎨 Visualization</h2>', unsafe_allow_html=True)
+        
+        colormap_category = st.selectbox(
+            "Colormap Category",
+            list(COLORMAP_OPTIONS.keys()),
+            index=4,
+            help="Select colormap category for publication-quality figures"
+        )
+        
+        colormap_name = st.selectbox(
+            "Select Colormap",
+            COLORMAP_OPTIONS[colormap_category],
+            index=0
+        )
+        
         # Add to comparison database button
         st.markdown("---")
         if st.button("📊 Add to Defect Comparison", use_container_width=True, type="secondary"):
             if st.session_state.interpolation_result:
-                # Extract angular stress data
                 result = st.session_state.interpolation_result
                 
-                # For demonstration, create synthetic angular distribution
-                # In real application, extract from actual simulation
+                # Generate synthetic angular stress data for this defect
                 angles = np.linspace(0, 360, 36, endpoint=False)
                 
                 # Create stress distribution based on defect type
                 if defect_type == "Twin":
-                    # Twin has strong tensile peaks near habit plane
                     base_stress = 0.5
                     peak_multiplier = 3.0
                     habit_angle = 54.7
                     stresses = base_stress + peak_multiplier * np.exp(-((angles - habit_angle) / 30)**2)
                     stresses += 0.5 * np.exp(-((angles - habit_angle + 180) / 30)**2)
                 elif defect_type == "ISF":
-                    # ISF has moderate stress
                     stresses = 1.0 + 0.8 * np.sin(np.radians(2 * angles))
                 elif defect_type == "ESF":
-                    # ESF has complex stress pattern
                     stresses = 0.8 + 0.6 * np.sin(np.radians(angles)) + 0.4 * np.sin(np.radians(3 * angles))
                 else:  # No Defect
                     stresses = np.ones_like(angles) * 0.1
@@ -2189,10 +2022,11 @@ def main():
                 st.session_state.defect_db.add_defect_data(
                     defect_type,
                     angles,
-                    {'sigma_hydro': stresses}
+                    {'sigma_hydro': stresses},
+                    custom_theta
                 )
                 
-                st.success(f"Added {defect_type} to comparison database")
+                st.success(f"Added {defect_type} at θ={custom_theta:.1f}° to comparison database")
             else:
                 st.warning("Please perform interpolation first")
         
@@ -2207,6 +2041,10 @@ def main():
             if not st.session_state.solutions:
                 st.error("Please load solutions first!")
             else:
+                # Update transformer parameters
+                st.session_state.transformer_interpolator.spatial_sigma = spatial_sigma
+                st.session_state.transformer_interpolator.temperature = attention_temp
+                
                 # Prepare target parameters
                 target_params = {
                     'defect_type': defect_type,
@@ -2237,44 +2075,52 @@ def main():
     if not st.session_state.solutions:
         st.warning("⚠️ Please load solutions first using the button in the sidebar.")
         
+        # Directory information
+        with st.expander("📁 Directory Information", expanded=True):
+            st.info(f"**Solutions Directory:** {SOLUTIONS_DIR}")
+            st.write("""
+            **Expected file formats:** .pkl, .pickle, .pt, .pth
+            
+            **Expected data structure:**
+            - Each file should contain a dictionary with:
+              - 'params': Dictionary of simulation parameters
+              - 'history': List of simulation frames
+              - Each frame should contain 'stresses' dictionary with stress fields
+            """)
+        
         # Quick guide
         st.markdown("""
         ## 🚀 Quick Start Guide
         
-        1. **Load Solutions**: Click the "Load Solutions" button in the sidebar
-        2. **Set Parameters**: Configure target angle and defect type
-        3. **Perform Interpolation**: Click "Perform Transformer Interpolation"
-        4. **Add to Comparison**: Add multiple defects to comparison database
-        5. **Analyze Diffusion**: Use the Diffusion Analysis tab for 3D visualization
+        1. **Prepare Data**: Place your simulation files in the `numerical_solutions` directory
+        2. **Load Solutions**: Click the "Load Solutions" button in the sidebar
+        3. **Set Parameters**: Configure target angle and defect type
+        4. **Perform Interpolation**: Click "Perform Transformer Interpolation"
+        5. **Add to Comparison**: Add multiple defects to comparison database
+        6. **Analyze Diffusion**: Use the Diffusion Analysis tab for 3D visualization
         
-        ## 🔬 Diffusion Enhancement Physics
+        ## 🔬 Key Features
         
-        ### Vacancy-Mediated Diffusion
-        - **Tensile Stress (σ_hydro > 0)**: Opens atomic volume, enhances vacancy formation
-          - Enhancement factor: D/D_bulk = exp(Ωσ/kT)
-          - Can increase diffusion by 10-100x at sintering temperatures
-          
-        - **Compressive Stress (σ_hydro ≤ 0)**: Closes atomic volume, inhibits vacancy formation
-          - Suppression factor: D/D_bulk = exp(Ωσ/kT) < 1
-          - Can decrease diffusion by 10-100x
-          
-        - **Habit Plane (54.7°)**: Maximum tensile stress concentration
-          - Peak diffusion enhancement occurs here
-          
-        ### Key Parameters
-        - Ω = Atomic volume (1.56×10⁻²⁹ m³ for Ag)
-        - k_B = Boltzmann constant (1.38×10⁻²³ J/K)
-        - T = Temperature (650K for Ag sintering)
+        ### Corrected Diffusion Physics
+        - **Tensile stress**: D/D_bulk = exp(Ωσ/kT) > 1 → Enhancement
+        - **Compressive stress**: D/D_bulk = exp(Ωσ/kT) < 1 → Suppression
+        - **Habit plane (54.7°)**: Maximum tensile stress → Maximum diffusion enhancement
+        
+        ### Enhanced Visualization
+        - 3D interactive diffusion surfaces
+        - Proper defect orientation handling
+        - Rotated heatmaps showing actual defect orientation
+        - Comprehensive diffusion analysis dashboards
         """)
     else:
-        # Enhanced tabs with all visualizations
+        # Enhanced tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 Results",
-            "🎯 Stress Visualization",
+            "🎯 Oriented Visualization",
             "🌊 Diffusion Analysis",
-            "🔄 Oriented Views",
-            "📈 3D Diffusion",
-            "🔍 Weights Analysis",
+            "📈 Comparison",
+            "🔍 Weights",
+            "🎯 Parameters",
             "📤 Export"
         ])
         
@@ -2352,9 +2198,13 @@ def main():
                 )
                 
                 # Log scale for enhancement
-                im = ax.imshow(diffusion_field, cmap='hot', norm=LogNorm(),
+                im = ax.imshow(diffusion_field, cmap='RdBu', norm=LogNorm(vmin=0.1, vmax=10),
                               aspect='equal', interpolation='bilinear', origin='lower')
-                plt.colorbar(im, ax=ax, shrink=0.8)
+                cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+                cbar.set_label("D/D_bulk")
+                cbar.ax.set_yticks([0.1, 0.2, 0.5, 1, 2, 5, 10])
+                cbar.ax.set_yticklabels(['0.1x', '0.2x', '0.5x', '1x', '2x', '5x', '10x'])
+                
                 ax.set_title(f'Diffusion Enhancement\nT={diffusion_T}K', fontsize=12)
                 ax.set_xlabel('X')
                 ax.set_ylabel('Y')
@@ -2370,102 +2220,88 @@ def main():
                 st.info("👈 Configure parameters and click 'Perform Transformer Interpolation' to generate results")
         
         with tab2:
-            st.markdown('<h2 class="section-header">🎯 Stress Field Visualization</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">🎯 Oriented Stress Visualization</h2>', unsafe_allow_html=True)
             
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
+                fields = result['fields']
+                target_angle = result['target_angle']
+                defect_type = result['target_params']['defect_type']
                 
                 # Component selection
                 stress_component = st.selectbox(
                     "Select Stress Component",
                     ["von_mises", "sigma_hydro", "sigma_mag"],
                     index=0,
-                    key="stress_component"
+                    key="viz_component_tab2"
                 )
                 
+                # Component names for display
                 component_names = {
                     'von_mises': 'Von Mises Stress',
                     'sigma_hydro': 'Hydrostatic Stress',
                     'sigma_mag': 'Stress Magnitude'
                 }
                 
-                # Create visualization based on selected type
-                if visualization_type == "Stress Heatmaps":
-                    # Original heatmap
-                    fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
-                        result['fields'][stress_component],
-                        title=f"{component_names[stress_component]}",
-                        cmap_name=colormap_name,
-                        colorbar_label=f"{component_names[stress_component]} (GPa)",
-                        target_angle=result['target_angle'],
-                        defect_type=result['target_params']['defect_type']
-                    )
-                    st.pyplot(fig)
-                    plt.close(fig)
-                    
-                    # Interactive heatmap
-                    fig_interactive = st.session_state.heatmap_visualizer.create_interactive_heatmap(
-                        result['fields'][stress_component],
-                        title=f"{component_names[stress_component]}",
-                        cmap_name=colormap_name,
-                        target_angle=result['target_angle'],
-                        defect_type=result['target_params']['defect_type']
-                    )
-                    st.plotly_chart(fig_interactive, use_container_width=True)
+                col1, col2 = st.columns(2)
                 
-                elif visualization_type == "Oriented Views":
-                    # Oriented heatmap
-                    fig_oriented = st.session_state.heatmap_visualizer.create_oriented_stress_heatmap(
-                        result['fields'][stress_component],
-                        result['target_angle'],
+                with col1:
+                    # Original heatmap
+                    st.markdown("#### 🔄 Original Orientation")
+                    fig_original = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                        fields[stress_component],
+                        title=f"{component_names[stress_component]}",
+                        cmap_name=colormap_name,
+                        target_angle=target_angle,
+                        defect_type=defect_type
+                    )
+                    st.pyplot(fig_original)
+                    plt.close(fig_original)
+                
+                with col2:
+                    # Rotated heatmap
+                    st.markdown("#### 🎯 Rotated to Defect Orientation")
+                    fig_rotated = st.session_state.heatmap_visualizer.create_oriented_stress_heatmap(
+                        fields[stress_component],
+                        target_angle,
+                        defect_type,
                         title=f"{component_names[stress_component]}",
                         cmap_name=colormap_name
                     )
-                    st.pyplot(fig_oriented)
-                    plt.close(fig_oriented)
+                    st.pyplot(fig_rotated)
+                    plt.close(fig_rotated)
                 
-                # Angular orientation plot
-                with st.expander("🧭 Angular Orientation", expanded=False):
-                    fig_angular = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
-                        result['target_angle'],
-                        result['target_params']['defect_type']
+                # Interactive 3D visualization
+                st.markdown("#### 🎪 3D Oriented Surface")
+                fig_3d = st.session_state.heatmap_visualizer.create_interactive_oriented_3d(
+                    fields[stress_component],
+                    target_angle,
+                    defect_type,
+                    cmap_name=colormap_name
+                )
+                st.plotly_chart(fig_3d, use_container_width=True)
+                
+                # Diffusion enhancement heatmap
+                if stress_component == 'sigma_hydro':
+                    st.markdown("#### 🌊 Diffusion Enhancement Heatmap")
+                    fig_diffusion = st.session_state.heatmap_visualizer.create_diffusion_enhancement_heatmap(
+                        fields['sigma_hydro'],
+                        diffusion_T,
+                        target_angle,
+                        defect_type,
+                        cmap_name='RdBu_r'
                     )
-                    st.pyplot(fig_angular)
-                    plt.close(fig_angular)
-                
-                # Statistics
-                with st.expander("📊 Statistics", expanded=False):
-                    stats_mapping = {
-                        'von_mises': 'von_mises',
-                        'sigma_hydro': 'sigma_hydro',
-                        'sigma_mag': 'sigma_mag'
-                    }
+                    st.pyplot(fig_diffusion)
+                    plt.close(fig_diffusion)
                     
-                    if stress_component in stats_mapping:
-                        stats = result['statistics'][stats_mapping[stress_component]]
-                        
-                        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                        with col_s1:
-                            st.metric("Maximum", f"{stats['max']:.3f} GPa")
-                        with col_s2:
-                            if 'min' in stats:
-                                st.metric("Minimum", f"{stats['min']:.3f} GPa")
-                            elif 'max_compression' in stats:
-                                st.metric("Max Compression", f"{stats['max_compression']:.3f} GPa")
-                        with col_s3:
-                            st.metric("Mean", f"{stats['mean']:.3f} GPa")
-                        with col_s4:
-                            st.metric("Std Dev", f"{stats['std']:.3f} GPa")
-                        
-                        # Histogram
-                        fig_hist, ax_hist = plt.subplots(figsize=(10, 4))
-                        ax_hist.hist(result['fields'][stress_component].flatten(), bins=50, alpha=0.7, edgecolor='black')
-                        ax_hist.set_xlabel(f'{component_names[stress_component]} (GPa)', fontsize=14)
-                        ax_hist.set_ylabel('Frequency', fontsize=14)
-                        ax_hist.set_title(f'Distribution of {component_names[stress_component]}', fontsize=16, fontweight='bold')
-                        ax_hist.grid(True, alpha=0.3)
-                        st.pyplot(fig_hist)
-                        plt.close(fig_hist)
+                    st.markdown("""
+                    <div class="success-box">
+                    🔬 <strong>Interpretation:</strong><br>
+                    - <span style='color:red'>Red regions</span>: Tensile stress → Diffusion ENHANCEMENT (D/D_bulk > 1)<br>
+                    - <span style='color:blue'>Blue regions</span>: Compressive stress → Diffusion SUPPRESSION (D/D_bulk < 1)<br>
+                    - The defect plane (green arrow) shows orientation relative to stress concentration
+                    </div>
+                    """, unsafe_allow_html=True)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
         
@@ -2475,305 +2311,175 @@ def main():
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
                 
+                # Comprehensive diffusion analysis
+                st.markdown("#### 📊 Comprehensive Diffusion Dashboard")
+                fig_comprehensive = st.session_state.heatmap_visualizer.create_comprehensive_diffusion_analysis(
+                    result,
+                    diffusion_T
+                )
+                
+                if fig_comprehensive:
+                    st.plotly_chart(fig_comprehensive, use_container_width=True)
+                else:
+                    st.error("Failed to create comprehensive analysis")
+                
+                # Physics explanation
                 st.markdown("""
                 <div class="physics-note">
                 <strong>Physics of Vacancy-Mediated Diffusion:</strong><br>
-                - <strong>Tensile Stress (σ > 0)</strong>: D/D_bulk = exp(Ωσ/kT) > 1 → <span style="color:green">ENHANCEMENT</span><br>
-                - <strong>Compressive Stress (σ < 0)</strong>: D/D_bulk = exp(Ωσ/kT) < 1 → <span style="color:red">SUPPRESSION</span><br>
-                - <strong>Zero Stress (σ = 0)</strong>: D/D_bulk = 1 → No change<br>
-                - <strong>Habit Plane (54.7°)</strong>: Maximum tensile stress → Maximum enhancement
+                
+                The diffusion coefficient under hydrostatic stress σ is:<br>
+                <code>D(σ) = D₀ exp(-(Q - Ωσ)/kT)</code><br>
+                
+                Relative to stress-free bulk:<br>
+                <code>D(σ)/D_bulk = exp(Ωσ/kT)</code><br>
+                
+                Where:<br>
+                - Ω = Atomic volume (1.56×10⁻²⁹ m³ for Ag)<br>
+                - k = Boltzmann constant (1.38×10⁻²³ J/K)<br>
+                - T = Temperature (K)<br>
+                - σ = Hydrostatic stress (Pa, positive for tensile)<br>
+                
+                **At T=650K:**<br>
+                - 1 GPa tensile → D/D_bulk ≈ 2.7x enhancement<br>
+                - 1 GPa compressive → D/D_bulk ≈ 0.37x suppression<br>
+                - 2 GPa tensile → D/D_bulk ≈ 7.4x enhancement<br>
+                - 2 GPa compressive → D/D_bulk ≈ 0.14x suppression
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Select stress component for diffusion analysis
-                stress_component = st.selectbox(
-                    "Select Stress Component for Diffusion",
-                    ["sigma_hydro", "von_mises", "sigma_mag"],
-                    index=0,
-                    key="diffusion_component"
-                )
-                
-                if visualization_type == "Diffusion Heatmaps":
-                    # Diffusion enhancement heatmap
-                    fig_diffusion = st.session_state.heatmap_visualizer.create_diffusion_enhancement_heatmap(
-                        result['fields'][stress_component],
-                        T=diffusion_T,
-                        title=f"Diffusion Enhancement from {component_names.get(stress_component, stress_component)}",
-                        cmap_name='RdBu',
-                        width=800,
-                        height=700
-                    )
-                    st.plotly_chart(fig_diffusion, use_container_width=True)
-                
-                elif visualization_type == "Oriented Views":
-                    # Oriented diffusion heatmap
-                    fig_oriented_diff = st.session_state.heatmap_visualizer.create_oriented_diffusion_heatmap(
-                        result['fields'][stress_component],
-                        result['target_angle'],
-                        T=diffusion_T,
-                        title=f"Oriented Diffusion Enhancement",
-                        cmap_name='RdBu',
-                        width=800,
-                        height=700
-                    )
-                    st.plotly_chart(fig_oriented_diff, use_container_width=True)
-                
-                elif visualization_type == "Comprehensive Analysis":
-                    # Comprehensive analysis
-                    fig_comprehensive = st.session_state.heatmap_visualizer.create_comprehensive_diffusion_analysis(
-                        result['fields'][stress_component],
-                        result['target_angle'],
-                        T=diffusion_T,
-                        defect_type=result['target_params']['defect_type'],
-                        width=1200,
-                        height=900
-                    )
-                    st.plotly_chart(fig_comprehensive, use_container_width=True)
-                
-                # Diffusion statistics
-                with st.expander("📊 Diffusion Statistics", expanded=True):
-                    # Calculate overall statistics
-                    stress_field = result['fields'][stress_component]
+                # Detailed statistics
+                with st.expander("📈 Detailed Diffusion Statistics", expanded=False):
+                    hydro_field = result['fields']['sigma_hydro']
                     diffusion_field = st.session_state.heatmap_visualizer.compute_diffusion_enhancement_factor(
-                        stress_field, diffusion_T, 'physics_corrected'
+                        hydro_field, diffusion_T, 'physics_corrected'
                     )
                     
-                    col_d1, col_d2, col_d3, col_d4 = st.columns(4)
-                    with col_d1:
-                        enhancement_mask = diffusion_field > 1
-                        enhancement_area = np.sum(enhancement_mask) / diffusion_field.size * 100
-                        st.metric("Enhancement Area", f"{enhancement_area:.1f}%")
+                    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                    with col_s1:
+                        st.metric("Maximum Enhancement", f"{np.max(diffusion_field):.2f}x")
+                    with col_s2:
+                        st.metric("Minimum Enhancement", f"{np.min(diffusion_field):.2f}x")
+                    with col_s3:
+                        st.metric("Mean Enhancement", f"{np.mean(diffusion_field):.2f}x")
+                    with col_s4:
+                        st.metric("Enhancement > 2x", f"{np.mean(diffusion_field > 2)*100:.1f}%")
                     
-                    with col_d2:
-                        suppression_mask = diffusion_field < 1
-                        suppression_area = np.sum(suppression_mask) / diffusion_field.size * 100
-                        st.metric("Suppression Area", f"{suppression_area:.1f}%")
-                    
-                    with col_d3:
-                        max_enhancement = np.max(diffusion_field)
-                        st.metric("Max Enhancement", f"{max_enhancement:.1f}x")
-                    
-                    with col_d4:
-                        min_enhancement = np.min(diffusion_field)
-                        st.metric("Min Enhancement", f"{min_enhancement:.3f}x")
-                    
-                    # Physics insights
-                    st.markdown("""
-                    <div class="success-box">
-                    🔬 <strong>Key Insights:</strong><br>
-                    1. <strong>Habit plane orientation (54.7°)</strong> shows maximum tensile stress → maximum diffusion enhancement<br>
-                    2. <strong>Enhancement regions</strong> accelerate sintering and creep processes<br>
-                    3. <strong>Suppression regions</strong> improve creep resistance and thermal stability<br>
-                    4. <strong>Temperature dependence</strong>: Higher temperatures reduce enhancement magnitude
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # Histogram
+                    fig_hist, ax_hist = plt.subplots(figsize=(10, 5))
+                    ax_hist.hist(diffusion_field.flatten(), bins=50, alpha=0.7, edgecolor='black', log=True)
+                    ax_hist.axvline(x=1, color='red', linestyle='--', label='D/D_bulk = 1')
+                    ax_hist.set_xlabel('D/D_bulk Ratio', fontsize=14)
+                    ax_hist.set_ylabel('Frequency (log)', fontsize=14)
+                    ax_hist.set_title('Distribution of Diffusion Enhancement Factors', fontsize=16, fontweight='bold')
+                    ax_hist.grid(True, alpha=0.3)
+                    ax_hist.legend()
+                    st.pyplot(fig_hist)
+                    plt.close(fig_hist)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
         
         with tab4:
-            st.markdown('<h2 class="section-header">🔄 Oriented Visualization</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">📈 Defect Comparison Analysis</h2>', unsafe_allow_html=True)
             
-            if st.session_state.interpolation_result:
-                result = st.session_state.interpolation_result
-                
-                # Display defect orientation information
-                col_o1, col_o2, col_o3 = st.columns(3)
-                with col_o1:
-                    st.metric("Defect Orientation θ", f"{result['target_angle']:.1f}°")
-                with col_o2:
-                    habit_deviation = abs(result['target_angle'] - 54.7)
-                    st.metric("Deviation from Habit Plane", f"{habit_deviation:.1f}°")
-                with col_o3:
-                    st.metric("Defect Type", result['target_params']['defect_type'])
-                
-                # Select component for oriented view
-                component = st.selectbox(
-                    "Select Component",
-                    ["von_mises", "sigma_hydro", "sigma_mag"],
-                    index=0,
-                    key="oriented_component"
-                )
-                
-                # Create oriented heatmap
-                fig_oriented = st.session_state.heatmap_visualizer.create_oriented_stress_heatmap(
-                    result['fields'][component],
-                    result['target_angle'],
-                    title=f"{component_names.get(component, component)} - Oriented View",
-                    cmap_name=colormap_name,
-                    rotation_marker=True
-                )
-                
-                st.pyplot(fig_oriented)
-                plt.close(fig_oriented)
-                
-                # Create oriented diffusion heatmap
-                st.markdown("#### 🌀 Oriented Diffusion Enhancement")
-                
-                diffusion_field = st.session_state.heatmap_visualizer.compute_diffusion_enhancement_factor(
-                    result['fields']['sigma_hydro'], diffusion_T, 'physics_corrected'
-                )
-                
-                fig_oriented_diff = st.session_state.heatmap_visualizer.create_oriented_diffusion_heatmap(
-                    result['fields']['sigma_hydro'],
-                    result['target_angle'],
-                    T=diffusion_T,
-                    title="Oriented Diffusion Enhancement",
-                    cmap_name='RdBu',
-                    width=800,
-                    height=700
-                )
-                
-                st.plotly_chart(fig_oriented_diff, use_container_width=True)
-                
-                # Orientation physics explanation
-                st.markdown("""
-                <div class="physics-note">
-                <strong>Orientation Correction Explained:</strong><br>
-                
-                **Problem**: Raw stress fields are in simulation coordinates, not defect-oriented coordinates.<br>
-                **Solution**: We rotate the visualization by the defect angle θ so that:
-                - Defect appears horizontal in rotated view
-                - Stress concentration aligns with defect plane
-                - Habit plane appears at correct relative angle
-                
-                **Key Transformation**:
-                - Original coordinates: (x, y) in simulation grid
-                - Rotated coordinates: (x', y') = R(θ) × (x, y)
-                - This shows the actual stress pattern relative to defect orientation
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("No interpolation results available. Please perform interpolation first.")
-        
-        with tab5:
-            st.markdown('<h2 class="section-header">📈 3D Diffusion Visualization</h2>', unsafe_allow_html=True)
-            
-            # Check defect comparison data
             defect_data = st.session_state.defect_db.get_defect_comparison()
             
             if not defect_data:
                 st.warning("""
-                **No defect comparison data available.**
+                **No defect data in comparison database.**
                 
                 Please:
                 1. Perform interpolation for at least one defect type
                 2. Click "Add to Defect Comparison" in the sidebar
                 3. Repeat for multiple defect types
-                4. Return to this tab for 3D visualization
+                4. Return to this tab for comparison analysis
                 """)
-                
-                # Show example with synthetic data
-                if st.button("Load Example Data for 3D Visualization"):
-                    # Create example data
-                    angles = np.linspace(0, 360, 36, endpoint=False)
-                    
-                    # Twin defect
-                    twin_stresses = 0.5 + 3.0 * np.exp(-((angles - 54.7) / 30)**2)
-                    twin_stresses += 0.5 * np.exp(-((angles - 54.7 + 180) / 30)**2)
-                    twin_stresses += np.random.normal(0, 0.1, len(angles))
-                    
-                    # ISF defect
-                    isf_stresses = 1.0 + 0.8 * np.sin(np.radians(2 * angles))
-                    isf_stresses += np.random.normal(0, 0.1, len(angles))
-                    
-                    # ESF defect
-                    esf_stresses = 0.8 + 0.6 * np.sin(np.radians(angles)) + 0.4 * np.sin(np.radians(3 * angles))
-                    esf_stresses += np.random.normal(0, 0.1, len(angles))
-                    
-                    # Add to database
-                    st.session_state.defect_db.add_defect_data("Twin", angles, {'sigma_hydro': twin_stresses})
-                    st.session_state.defect_db.add_defect_data("ISF", angles, {'sigma_hydro': isf_stresses})
-                    st.session_state.defect_db.add_defect_data("ESF", angles, {'sigma_hydro': esf_stresses})
-                    
-                    st.success("Loaded example defect data. Refresh to see visualizations.")
             else:
                 # Show defect comparison stats
+                st.markdown("#### 📊 Defect Comparison Summary")
+                
                 stats = st.session_state.defect_db.compute_diffusion_statistics(diffusion_T)
                 
-                st.markdown("#### 📊 Defect Comparison Summary")
+                # Create metrics
                 cols = st.columns(len(defect_data))
                 for idx, (defect_type, stat) in enumerate(stats.items()):
                     with cols[idx]:
                         st.metric(
-                            defect_type,
+                            f"{defect_type} at θ={stat['target_angle']:.1f}°",
                             f"{stat['max_enhancement']:.1f}x",
                             f"Peak at {stat['peak_enhancement_angle']:.0f}°"
                         )
                 
-                # 3D Doughnut Plot
-                st.markdown("#### 🍩 3D Diffusion Doughnut Plot")
-                st.markdown("""
-                **Visualization Guide**:
-                - **Radial distance** = D/D_bulk ratio
-                - **Outside unit circle** = Enhancement (D/D_bulk > 1)
-                - **Inside unit circle** = Suppression (D/D_bulk < 1)
-                - **On unit circle** = No change (D/D_bulk = 1)
-                - **Height** = Hydrostatic stress magnitude
-                """)
-                
+                # 3D Diffusion Doughnut Plot
+                st.markdown("#### 🎪 3D Diffusion Doughnut Plot")
                 fig_doughnut = st.session_state.heatmap_visualizer.create_3d_diffusion_doughnut_plot(
                     defect_data,
                     T=diffusion_T,
                     width=1000,
                     height=700
                 )
-                
                 st.plotly_chart(fig_doughnut, use_container_width=True)
                 
-                # 3D Surface Plot
-                st.markdown("#### 🌊 3D Diffusion Surface Plot")
-                
-                fig_surface = st.session_state.heatmap_visualizer.create_3d_diffusion_surface_plot(
+                # 3D Diffusion Surface
+                st.markdown("#### 🏔️ 3D Diffusion Surface")
+                fig_surface = st.session_state.heatmap_visualizer.create_interactive_3d_diffusion_surface(
                     defect_data,
                     T=diffusion_T,
                     width=1000,
                     height=700
                 )
-                
                 st.plotly_chart(fig_surface, use_container_width=True)
                 
-                # Detailed statistics
-                with st.expander("📈 Detailed Statistics", expanded=False):
-                    stats_df = pd.DataFrame([
-                        {
-                            'Defect': defect_type,
-                            'Max D/D_bulk': f"{stat['max_enhancement']:.2f}",
-                            'Mean D/D_bulk': f"{stat['mean_enhancement']:.2f}",
+                # Comparison table
+                with st.expander("📋 Detailed Comparison Table", expanded=False):
+                    comparison_data = []
+                    for defect_type, stat in stats.items():
+                        comparison_data.append({
+                            'Defect Type': defect_type,
+                            'Target θ': f"{stat['target_angle']:.1f}°",
+                            'Max D/D_bulk': f"{stat['max_enhancement']:.2f}x",
+                            'Mean D/D_bulk': f"{stat['mean_enhancement']:.2f}x",
                             'Tensile Area %': f"{stat['tensile_fraction']*100:.1f}%",
                             'Max Tensile (GPa)': f"{stat['max_tensile_stress']:.3f}",
                             'Max Compressive (GPa)': f"{stat['max_compressive_stress']:.3f}",
-                            'Peak Angle (°)': f"{stat['peak_enhancement_angle']:.1f}"
-                        }
-                        for defect_type, stat in stats.items()
-                    ])
+                            'Peak Angle': f"{stat['peak_enhancement_angle']:.1f}°"
+                        })
                     
-                    st.dataframe(stats_df, use_container_width=True)
+                    df_comparison = pd.DataFrame(comparison_data)
+                    st.dataframe(df_comparison, use_container_width=True)
+                
+                # Physics insights
+                st.markdown("""
+                <div class="success-box">
+                🔬 <strong>Key Insights from Comparison:</strong><br>
+                
+                1. **Twin boundaries** typically show the strongest diffusion enhancement due to high tensile stress concentrations at the habit plane.<br>
+                
+                2. **ISF and ESF** defects show more uniform stress distributions with moderate enhancement.<br>
+                
+                3. **No Defect** (bulk) shows minimal enhancement (D/D_bulk ≈ 1).<br>
+                
+                4. **Habit plane orientation (54.7°)** maximizes tensile stress and thus diffusion enhancement in twin boundaries.<br>
+                
+                5. **Temperature dependence**: Higher temperatures reduce the enhancement effect (Ωσ/kT term decreases).
+                </div>
+                """, unsafe_allow_html=True)
         
-        with tab6:
+        with tab5:
             st.markdown('<h2 class="section-header">🔍 Weights Analysis</h2>', unsafe_allow_html=True)
             
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
                 weights = result['weights']
                 
-                # Enhanced weights visualization with theta labels
+                # Weights visualization
                 col_w1, col_w2 = st.columns(2)
                 
                 with col_w1:
-                    # Transformer weights with theta labels
+                    # Transformer weights
                     fig_trans, ax_trans = plt.subplots(figsize=(10, 5))
                     x_pos = np.arange(len(weights['transformer']))
                     bars = ax_trans.bar(x_pos, weights['transformer'], alpha=0.7, color='orange', edgecolor='black')
-                    
-                    # Add theta labels if available
-                    if 'source_theta_degrees' in result:
-                        source_thetas = result['source_theta_degrees']
-                        for i, (bar, theta) in enumerate(zip(bars, source_thetas)):
-                            height = bar.get_height()
-                            if height > 0.05:  # Only label significant bars
-                                ax_trans.text(bar.get_x() + bar.get_width()/2., height + 0.005,
-                                            f'θ={theta:.0f}°', ha='center', va='bottom', 
-                                            fontsize=9, fontweight='bold', rotation=90)
                     
                     ax_trans.set_xlabel('Source Index', fontsize=14)
                     ax_trans.set_ylabel('Weight', fontsize=14)
@@ -2783,18 +2489,9 @@ def main():
                     plt.close(fig_trans)
                 
                 with col_w2:
-                    # Positional weights with theta labels
+                    # Positional weights
                     fig_pos, ax_pos = plt.subplots(figsize=(10, 5))
                     bars = ax_pos.bar(x_pos, weights['positional'], alpha=0.7, color='green', edgecolor='black')
-                    
-                    # Add theta labels if available
-                    if 'source_theta_degrees' in result:
-                        for i, (bar, theta) in enumerate(zip(bars, source_thetas)):
-                            height = bar.get_height()
-                            if height > 0.05:  # Only label significant bars
-                                ax_pos.text(bar.get_x() + bar.get_width()/2., height + 0.005,
-                                          f'θ={theta:.0f}°', ha='center', va='bottom', 
-                                          fontsize=9, fontweight='bold', rotation=90)
                     
                     ax_pos.set_xlabel('Source Index', fontsize=14)
                     ax_pos.set_ylabel('Weight', fontsize=14)
@@ -2803,7 +2500,7 @@ def main():
                     st.pyplot(fig_pos)
                     plt.close(fig_pos)
                 
-                # Combined weights with enhanced visualization
+                # Combined weights
                 fig_comb, ax_comb = plt.subplots(figsize=(12, 6))
                 x = range(len(weights['combined']))
                 width = 0.25
@@ -2812,12 +2509,7 @@ def main():
                 ax_comb.bar(x, weights['positional'], width, label='Positional', alpha=0.7, color='green')
                 ax_comb.bar([i + width for i in x], weights['combined'], width, label='Combined', alpha=0.7, color='steelblue')
                 
-                # Add theta labels on x-axis if available
-                if 'source_theta_degrees' in result:
-                    ax_comb.set_xticks(x)
-                    ax_comb.set_xticklabels([f'{t:.0f}°' for t in source_thetas], rotation=45, fontsize=10)
-                
-                ax_comb.set_xlabel('Source Index (θ values shown below)', fontsize=14)
+                ax_comb.set_xlabel('Source Index', fontsize=14)
                 ax_comb.set_ylabel('Weight', fontsize=14)
                 ax_comb.set_title('Weight Comparison', fontsize=18, fontweight='bold')
                 ax_comb.legend(fontsize=12)
@@ -2845,7 +2537,7 @@ def main():
                         st.metric("Combined Weight Entropy",
                                  f"{entropy_comb:.3f}")
                     
-                    # Top contributors with enhanced information
+                    # Top contributors
                     st.markdown("##### 🏆 Top 5 Contributing Sources")
                     
                     combined_weights = np.array(weights['combined'])
@@ -2875,6 +2567,99 @@ def main():
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
         
+        with tab6:
+            st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
+            
+            if st.session_state.interpolation_result:
+                result = st.session_state.interpolation_result
+                target_params = result['target_params']
+                
+                # Create a comprehensive target parameters display
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("##### 🔧 Target Interpolation Parameters")
+                    
+                    param_data = []
+                    
+                    # Extract and format parameters
+                    for key, value in target_params.items():
+                        if key == 'theta':
+                            display_key = 'Polar Angle θ'
+                            display_value = f"{np.degrees(value):.1f}°"
+                            icon = "📐"
+                        elif key == 'eps0':
+                            display_key = 'Eigen Strain ε₀'
+                            display_value = f"{value:.3f}"
+                            icon = "⚡"
+                        elif key == 'kappa':
+                            display_key = 'Material Parameter κ'
+                            display_value = f"{value:.2f}"
+                            icon = "🧲"
+                        elif key == 'defect_type':
+                            display_key = 'Defect Type'
+                            display_value = value
+                            icon = "🔬"
+                        elif key == 'shape':
+                            display_key = 'Shape'
+                            display_value = value
+                            icon = "🟦"
+                        else:
+                            display_key = key.replace('_', ' ').title()
+                            display_value = str(value)
+                            icon = "⚙️"
+                        
+                        param_data.append({
+                            'icon': icon,
+                            'parameter': display_key,
+                            'value': display_value
+                        })
+                    
+                    # Display as metrics
+                    for param in param_data:
+                        st.metric(f"{param['icon']} {param['parameter']}", param['value'])
+                    
+                    # Additional metrics
+                    st.markdown("##### 📊 Interpolation Metrics")
+                    
+                    col_m1, col_m2 = st.columns(2)
+                    with col_m1:
+                        st.metric("Target Angle θ", f"{result['target_angle']:.1f}°")
+                        st.metric("Number of Sources", f"{result.get('num_sources', 0)}")
+                    
+                    with col_m2:
+                        habit_deviation = abs(result['target_angle'] - 54.7)
+                        st.metric("Deviation from Habit Plane", f"{habit_deviation:.1f}°")
+                        st.metric("Field Size", f"{result['shape'][0]}×{result['shape'][1]}")
+                
+                with col2:
+                    # Angular orientation visualization
+                    st.markdown("##### 🧭 Angular Orientation")
+                    fig_angular, ax_angular = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection='polar'))
+                    theta_rad = np.radians(result['target_angle'])
+                    ax_angular.arrow(theta_rad, 0.7, 0, 0.5, width=0.02, color='red', alpha=0.8)
+                    ax_angular.arrow(np.radians(54.7), 0.7, 0, 0.5, width=0.02, color='blue', alpha=0.5)
+                    ax_angular.set_title(f'Defect at θ={result["target_angle"]:.1f}°\nHabit Plane at 54.7°', fontsize=16)
+                    ax_angular.set_theta_zero_location('N')
+                    ax_angular.set_theta_direction(-1)
+                    ax_angular.set_ylim(0, 1.3)
+                    ax_angular.grid(True, alpha=0.3)
+                    st.pyplot(fig_angular)
+                    plt.close(fig_angular)
+                    
+                    # Habit plane information
+                    st.markdown("##### 🔬 Habit Plane Reference")
+                    st.info("""
+                    **Habit Plane Orientation:** 54.7°
+                    
+                    This is the preferential crystallographic orientation where defects 
+                    typically form in face-centered cubic (FCC) materials. The angular 
+                    deviation from this plane influences defect formation energy and 
+                    stress field characteristics.
+                    """)
+            else:
+                st.info("No interpolation results available. Please perform interpolation first.")
+        
         with tab7:
             st.markdown('<h2 class="section-header">📤 Export Results</h2>', unsafe_allow_html=True)
             
@@ -2890,7 +2675,6 @@ def main():
                     if st.button("💾 Export as JSON", use_container_width=True, key="export_json"):
                         visualization_params = {
                             'colormap': colormap_name,
-                            'visualization_type': visualization_type,
                             'diffusion_T': diffusion_T
                         }
                         export_data = st.session_state.results_manager.prepare_export_data(
@@ -2925,13 +2709,12 @@ def main():
                     # Export plot as PNG
                     if st.button("🖼️ Export Plot", use_container_width=True, key="export_plot"):
                         # Create a publication-ready figure to export
-                        fig_export = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                        fig_export = st.session_state.heatmap_visualizer.create_oriented_stress_heatmap(
                             result['fields']['von_mises'],
+                            result['target_angle'],
+                            result['target_params']['defect_type'],
                             title=f"Von Mises Stress at θ={result['target_angle']:.1f}°",
-                            cmap_name=colormap_name,
-                            show_stats=False,
-                            target_angle=result['target_angle'],
-                            defect_type=result['target_params']['defect_type']
+                            cmap_name=colormap_name
                         )
                         
                         buf = BytesIO()
@@ -2951,37 +2734,96 @@ def main():
                         )
                         plt.close(fig_export)
                 
-                # Export diffusion data
+                # Bulk export
                 st.markdown("---")
-                st.markdown("##### 🌊 Export Diffusion Analysis")
+                st.markdown("##### 📦 Bulk Export All Components")
                 
-                if st.button("📈 Export Diffusion Data", use_container_width=True):
-                    # Compute diffusion enhancement
-                    diffusion_field = st.session_state.heatmap_visualizer.compute_diffusion_enhancement_factor(
-                        result['fields']['sigma_hydro'], diffusion_T, 'physics_corrected'
-                    )
+                if st.button("🚀 Export All Components", use_container_width=True, type="secondary", key="export_all"):
+                    # Create zip file with all components
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        # Export each component as CSV
+                        for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                            component_data = result['fields'][component]
+                            df = pd.DataFrame(component_data)
+                            csv_str = df.to_csv(index=False)
+                            zip_file.writestr(f"{component}_theta_{result['target_angle']:.1f}.csv", csv_str)
+                        
+                        # Export diffusion enhancement
+                        hydro_field = result['fields']['sigma_hydro']
+                        diffusion_field = st.session_state.heatmap_visualizer.compute_diffusion_enhancement_factor(
+                            hydro_field, diffusion_T
+                        )
+                        df_diff = pd.DataFrame(diffusion_field)
+                        csv_diff = df_diff.to_csv(index=False)
+                        zip_file.writestr(f"diffusion_enhancement_theta_{result['target_angle']:.1f}_T{diffusion_T:.0f}K.csv", csv_diff)
+                        
+                        # Export metadata
+                        metadata = {
+                            'target_angle': result['target_angle'],
+                            'target_params': result['target_params'],
+                            'statistics': result['statistics'],
+                            'weights': result['weights'],
+                            'num_sources': result.get('num_sources', 0),
+                            'source_theta_degrees': result.get('source_theta_degrees', []),
+                            'shape': result['shape'],
+                            'exported_at': datetime.now().isoformat(),
+                            'diffusion_T': diffusion_T,
+                            'physics_constants': PHYSICS_CONSTANTS
+                        }
+                        json_str = json.dumps(metadata, indent=2)
+                        zip_file.writestr("metadata.json", json_str)
                     
-                    # Create DataFrame
-                    df_diffusion = pd.DataFrame({
-                        'x_position': np.repeat(range(result['fields']['sigma_hydro'].shape[1]), 
-                                              result['fields']['sigma_hydro'].shape[0]),
-                        'y_position': np.tile(range(result['fields']['sigma_hydro'].shape[0]),
-                                            result['fields']['sigma_hydro'].shape[1]),
-                        'hydrostatic_stress_gpa': result['fields']['sigma_hydro'].flatten(),
-                        'diffusion_enhancement': diffusion_field.flatten(),
-                        'log_diffusion': np.log10(diffusion_field).flatten()
-                    })
+                    zip_buffer.seek(0)
                     
-                    csv_diffusion = df_diffusion.to_csv(index=False)
-                    filename = f"diffusion_analysis_theta_{result['target_angle']:.1f}_T{diffusion_T:.0f}K.csv"
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    filename = f"stress_components_theta_{result['target_angle']:.1f}_{timestamp}.zip"
                     
                     st.download_button(
-                        label="📥 Download Diffusion CSV",
-                        data=csv_diffusion,
+                        label="📥 Download ZIP (Complete Dataset)",
+                        data=zip_buffer.getvalue(),
                         file_name=filename,
-                        mime="text/csv",
-                        use_container_width=True
+                        mime="application/zip",
+                        use_container_width=True,
+                        key="download_zip"
                     )
+                
+                # Export defect comparison data
+                defect_data = st.session_state.defect_db.get_defect_comparison()
+                if defect_data:
+                    st.markdown("---")
+                    st.markdown("##### 📊 Export Defect Comparison")
+                    
+                    if st.button("📈 Export Comparison Data", use_container_width=True):
+                        comparison_stats = st.session_state.defect_db.compute_diffusion_statistics(diffusion_T)
+                        
+                        # Create comparison dataframe
+                        comparison_rows = []
+                        for defect_type, stats in comparison_stats.items():
+                            comparison_rows.append({
+                                'Defect Type': defect_type,
+                                'Target Angle (°)': stats['target_angle'],
+                                'Max D/D_bulk': stats['max_enhancement'],
+                                'Mean D/D_bulk': stats['mean_enhancement'],
+                                'Tensile Area %': stats['tensile_fraction'] * 100,
+                                'Max Tensile (GPa)': stats['max_tensile_stress'],
+                                'Max Compressive (GPa)': stats['max_compressive_stress'],
+                                'Peak Angle (°)': stats['peak_enhancement_angle']
+                            })
+                        
+                        df_comparison = pd.DataFrame(comparison_rows)
+                        csv_comparison = df_comparison.to_csv(index=False)
+                        
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        filename = f"defect_comparison_T{diffusion_T:.0f}K_{timestamp}.csv"
+                        
+                        st.download_button(
+                            label="📥 Download Comparison CSV",
+                            data=csv_comparison,
+                            file_name=filename,
+                            mime="text/csv",
+                            use_container_width=True
+                        )
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
 
