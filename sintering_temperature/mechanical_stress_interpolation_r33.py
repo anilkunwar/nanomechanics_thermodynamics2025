@@ -18,6 +18,7 @@ from numba import jit, prange
 import time
 import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
+
 # =============================================
 # CONFIGURATION
 # =============================================
@@ -26,6 +27,7 @@ SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
+
 # =============================================
 # PHYSICS-BASED STRESS ANALYZER WITH EIGEN STRAIN INTEGRATION
 # =============================================
@@ -91,7 +93,6 @@ class PhysicsBasedStressAnalyzer:
             return {}
         
         results = {}
-        
         # Extract each stress component
         stress_components = ['von_mises', 'sigma_hydro', 'sigma_mag']
         for comp_name in stress_components:
@@ -156,8 +157,8 @@ class PhysicsBasedStressAnalyzer:
             
             # For isotropic material
             energy = (1/(2*E)) * (sigma_xx**2 + sigma_yy**2 + sigma_zz**2) \
-                   - (nu/E) * (sigma_xx*sigma_yy + sigma_yy*sigma_zz + sigma_zz*sigma_xx) \
-                   + (1/(2*G)) * (tau_xy**2 + tau_yz**2 + tau_zx**2)
+                     - (nu/E) * (sigma_xx*sigma_yy + sigma_yy*sigma_zz + sigma_zz*sigma_xx) \
+                     + (1/(2*G)) * (tau_xy**2 + tau_yz**2 + tau_zx**2)
             return energy
         return None
     
@@ -168,7 +169,7 @@ class PhysicsBasedStressAnalyzer:
         
         # Schmid factor calculation for twinning
         schmid_factor = self.crystal_orientations['schmid_factor_twinning'] * \
-                       np.cos(np.radians(angle_diff))
+                        np.cos(np.radians(angle_diff))
         
         results = {
             'orientation_deg': orientation_deg,
@@ -265,21 +266,17 @@ class EnhancedSinteringCalculator:
         """Compute sintering temperature using stress-modified Arrhenius equation"""
         sigma_abs = np.abs(sigma_h)
         Q_eff = self.Q_a - self.omega_eV_per_GPa * sigma_abs
-        
         # Ensure Q_eff is positive
         Q_eff = max(Q_eff, 0.1)
-        
         if D0 / D_crit > 0:
             T_sinter = Q_eff / (self.kB * np.log(D0 / D_crit))
         else:
             T_sinter = self.T0
-        
         return np.clip(T_sinter, self.T_min, self.T0)
     
     def compute_sintering_temperature_arrhenius_defect(self, sigma_h, defect_type='Twin', D_crit=1e-10):
         """Compute sintering temperature using defect-specific Arrhenius parameters"""
         sigma_abs = np.abs(sigma_h)
-        
         if defect_type in self.defect_diffusion_params:
             params = self.defect_diffusion_params[defect_type]
             Q_a = params['Q_a']
@@ -291,7 +288,6 @@ class EnhancedSinteringCalculator:
             omega_factor = 1.0
         
         Q_eff = Q_a - (self.omega_eV_per_GPa * omega_factor * sigma_abs)
-        
         # Ensure Q_eff is positive
         Q_eff = max(Q_eff, 0.1)
         
@@ -428,7 +424,7 @@ class EnhancedSinteringCalculator:
         return curves
     
     def create_comprehensive_sintering_plot(self, stresses, temperatures, defect_type='Twin',
-                                         title="Comprehensive Sintering Analysis"):
+                                          title="Comprehensive Sintering Analysis"):
         """Create detailed sintering temperature plot with multiple models"""
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         
@@ -440,7 +436,7 @@ class EnhancedSinteringCalculator:
         for defect in ['ISF', 'ESF', 'Twin', 'No Defect']:
             T_defect = [self.compute_sintering_temperature_arrhenius_defect(s, defect) for s in stresses]
             ax1.plot(stresses, T_defect, '--', linewidth=2, color=colors[defect],
-                     label=f'Arrhenius ({defect})', alpha=0.7)
+                    label=f'Arrhenius ({defect})', alpha=0.7)
         
         # System boundaries
         ax1.axvspan(0, 5, alpha=0.1, color='green', label='System 1 (Perfect)')
@@ -465,7 +461,6 @@ class EnhancedSinteringCalculator:
                     label=f'{defect} (ω-factor: {params["omega_factor"]})')
         
         ax2.axhline(self.Q_a, color='black', linestyle=':', linewidth=2, label=f'Q_a = {self.Q_a} eV')
-        
         ax2.set_xlabel('Absolute Hydrostatic Stress |σ_h| (GPa)', fontsize=11)
         ax2.set_ylabel('Activation Energy Reduction ΔQ (eV)', fontsize=11)
         ax2.set_title('Stress-Induced Activation Energy Reduction', fontsize=12, fontweight='bold')
@@ -493,7 +488,7 @@ class EnhancedSinteringCalculator:
         # 4. System classification distribution
         system_stresses = [2.5, 12.5, 27.5]  # Representative stresses for each system
         system_temperatures = [self.compute_sintering_temperature_exponential(s) for s in system_stresses]
-        system_labels = ['System 1\n(Perfect)', 'System 2\n(SF/Twin)', 'System 3\n(Plastic)']
+        system_labels = ['System 1 (Perfect)', 'System 2 (SF/Twin)', 'System 3 (Plastic)']
         system_colors = ['green', 'orange', 'red']
         
         bars = ax4.bar(system_labels, system_temperatures, color=system_colors, edgecolor='black', alpha=0.7)
@@ -505,7 +500,7 @@ class EnhancedSinteringCalculator:
         for bar, temp in zip(bars, system_temperatures):
             height = bar.get_height()
             ax4.text(bar.get_x() + bar.get_width()/2., height + 10,
-                    f'{temp:.0f} K\n({temp-273.15:.0f}°C)',
+                    f'{temp:.0f} K ({temp-273.15:.0f}°C)',
                     ha='center', va='bottom', fontsize=9)
         
         # Add Celsius scale on secondary axis
@@ -600,13 +595,13 @@ class EnhancedSolutionLoader:
         try:
             if isinstance(data, dict):
                 # Extract parameters
-                if 'params' in 
+                if 'params' in data:
                     standardized['params'] = data['params']
-                elif 'parameters' in 
+                elif 'parameters' in data:
                     standardized['params'] = data['parameters']
                 
                 # Extract history
-                if 'history' in 
+                if 'history' in data:
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
@@ -619,7 +614,7 @@ class EnhancedSolutionLoader:
                         standardized['history'] = history_list
                 
                 # Extract additional metadata
-                if 'metadata' in 
+                if 'metadata' in data:
                     standardized['metadata'].update(data['metadata'])
                 
                 # Perform physics analysis if we have history
@@ -637,20 +632,18 @@ class EnhancedSolutionLoader:
                                 )
                                 if region_results:
                                     physics_results[region] = region_results
-                            
                             standardized['physics_analysis'] = physics_results
                             standardized['metadata']['physics_processed'] = True
-                        
-                        # Add eigen strain based on defect type
-                        params = standardized['params']
-                        if 'defect_type' in params:
-                            defect_type = params['defect_type']
-                            eigen_strain = self.physics_analyzer.get_eigen_strain(defect_type)
-                            params['eigen_strain'] = eigen_strain
                             
-                            # Update eps0 if not set or different from eigen strain
-                            if 'eps0' not in params or abs(params['eps0'] - eigen_strain) > 0.1:
-                                params['eps0'] = eigen_strain
+                            # Add eigen strain based on defect type
+                            params = standardized['params']
+                            if 'defect_type' in params:
+                                defect_type = params['defect_type']
+                                eigen_strain = self.physics_analyzer.get_eigen_strain(defect_type)
+                                params['eigen_strain'] = eigen_strain
+                                # Update eps0 if not set or different from eigen strain
+                                if 'eps0' not in params or abs(params['eps0'] - eigen_strain) > 0.1:
+                                    params['eps0'] = eigen_strain
                 
                 # Convert tensors to numpy arrays
                 self._convert_tensors(standardized)
@@ -763,7 +756,7 @@ class EnhancedSolutionLoader:
 class PhysicsAwareInterpolator:
     """Physics-aware interpolator with combined attention and Gaussian regularization"""
     def __init__(self, sigma=0.3, attention_dim=32, num_heads=4,
-                 attention_blend=0.7, use_spatial=True):
+                attention_blend=0.7, use_spatial=True):
         self.sigma = sigma
         self.attention_dim = attention_dim
         self.num_heads = num_heads
@@ -781,7 +774,6 @@ class PhysicsAwareInterpolator:
             'Twin': [0, 0, 1, 0, self.physics_analyzer.get_eigen_strain('Twin')],
             'No Defect': [0, 0, 0, 1, self.physics_analyzer.get_eigen_strain('No Defect')]
         }
-        
         self.shape_map = {
             'Square': [1, 0, 0, 0],
             'Horizontal Fault': [0, 1, 0, 0],
@@ -793,19 +785,16 @@ class PhysicsAwareInterpolator:
         self.query_projection = nn.Linear(15, attention_dim)
         self.key_projection = nn.Linear(15, attention_dim)
         self.value_projection = nn.Linear(15, attention_dim)
-        
         self.multihead_attention = nn.MultiheadAttention(
             embed_dim=attention_dim,
             num_heads=num_heads,
             batch_first=True
         )
-        
         self.output_projection = nn.Linear(attention_dim, 15)
     
     def compute_parameter_vector(self, params, target_angle_deg=None):
         """Convert parameters to numerical vector with physics-aware encoding"""
         vector = []
-        
         if not isinstance(params, dict):
             return np.zeros(15, dtype=np.float32)
         
@@ -857,7 +846,6 @@ class PhysicsAwareInterpolator:
             # 1. Defect type compatibility
             src_defect = src_params.get('defect_type', 'Unknown')
             target_defect = target_params.get('defect_type', 'Unknown')
-            
             if src_defect == target_defect:
                 defect_weight = 1.0
             elif src_defect in ['ISF', 'ESF', 'Twin'] and target_defect in ['ISF', 'ESF', 'Twin']:
@@ -951,7 +939,7 @@ class PhysicsAwareInterpolator:
         return weights
     
     def interpolate_stress_components(self, sources, target_angle_deg, target_params,
-                                     region_type='bulk', use_physics_constraints=True):
+                                      region_type='bulk', use_physics_constraints=True):
         """Interpolate all stress components with combined regularization"""
         # Validate inputs
         if not sources:
@@ -987,7 +975,7 @@ class PhysicsAwareInterpolator:
             if region_type in physics_analysis:
                 region_data = physics_analysis[region_type]
                 for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                    if comp in region_
+                    if comp in region_data and 'max_abs' in region_data[comp]:
                         source_stresses[comp].append(region_data[comp]['max_abs'])
                     else:
                         source_stresses[comp].append(0.0)
@@ -1005,7 +993,7 @@ class PhysicsAwareInterpolator:
                                 eta, stresses, region_type
                             )
                             for comp in ['sigma_hydro', 'von_mises', 'sigma_mag']:
-                                if comp in region_
+                                if comp in region_data and 'max_abs' in region_data[comp]:
                                     source_stresses[comp].append(region_data[comp]['max_abs'])
                                 else:
                                     source_stresses[comp].append(0.0)
@@ -1026,7 +1014,6 @@ class PhysicsAwareInterpolator:
         
         # Compute weights using combined approach
         weights = np.zeros(len(valid_sources))
-        
         if self.use_spatial:
             # Compute spatial weights
             spatial_weights = self.compute_spatial_weights(source_vectors, target_vector)
@@ -1050,7 +1037,7 @@ class PhysicsAwareInterpolator:
             source_params = [src['params'] for src in valid_sources]
             physics_weights = self.compute_physics_weights(source_params, target_params, target_angle_deg)
             
-            if physics_weights is not None:
+            if physics_weights is not None and len(physics_weights) == len(combined_weights):
                 # Blend with combined weights (50% physics, 50% ML)
                 final_weights = 0.5 * combined_weights + 0.5 * physics_weights
             else:
@@ -1122,27 +1109,21 @@ class PhysicsAwareInterpolator:
             result = self.interpolate_stress_components(
                 sources, float(angle), target_params, region_type
             )
-            
             if result:
                 stresses = result['interpolated_stresses']
                 sintering = result['sintering_analysis']['temperature_predictions']
-                
                 results['stresses']['sigma_hydro'].append(stresses['sigma_hydro'])
                 results['stresses']['von_mises'].append(stresses['von_mises'])
                 results['stresses']['sigma_mag'].append(stresses['sigma_mag'])
-                
                 results['sintering_temps']['exponential'].append(sintering['exponential_model_k'])
                 results['sintering_temps']['arrhenius_defect'].append(sintering['arrhenius_defect_k'])
-                
                 results['weights_matrix'].append(result['weights']['final_weights'])
             else:
                 # Fill with zeros if interpolation fails
                 for comp in results['stresses'].keys():
                     results['stresses'][comp].append(0.0)
-                
                 for model in results['sintering_temps'].keys():
                     results['sintering_temps'][model].append(0.0)
-                
                 results['weights_matrix'].append([0.0] * len(sources) if sources else [])
         
         return results
@@ -1155,7 +1136,6 @@ class PhysicsAwareInterpolator:
         
         defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
         colors = {'ISF': '#FF6B6B', 'ESF': '#4ECDC4', 'Twin': '#45B7D1', 'No Defect': '#96CEB4'}
-        
         min_angle, max_angle = angle_range
         angles = np.linspace(min_angle, max_angle, n_points)
         
@@ -1178,7 +1158,6 @@ class PhysicsAwareInterpolator:
                     result = self.interpolate_stress_components(
                         sources, float(angle), target_params, region_type
                     )
-                    
                     if result:
                         stresses['sigma_hydro'].append(result['interpolated_stresses']['sigma_hydro'])
                         stresses['von_mises'].append(result['interpolated_stresses']['von_mises'])
@@ -1217,22 +1196,20 @@ class HabitPlaneVisualizer:
             'von_mises': 'rgb(255, 127, 14)',
             'sigma_mag': 'rgb(44, 160, 44)'
         }
-        
         self.defect_colors = {
             'ISF': 'rgb(255, 187, 120)',
             'ESF': 'rgb(255, 152, 150)',
             'Twin': 'rgb(152, 223, 138)',
             'No Defect': 'rgb(174, 199, 232)'
         }
-        
         self.system_colors = {
             'System 1 (Perfect Crystal)': 'rgb(46, 204, 113)',
             'System 2 (Stacking Faults/Twins)': 'rgb(241, 196, 15)',
             'System 3 (Plastic Deformation)': 'rgb(231, 76, 60)'
         }
-
+    
     def create_vicinity_sunburst(self, angles, stresses, stress_component='sigma_hydro',
-                                title="Habit Plane Vicinity Analysis", radius_scale=1.0):
+                               title="Habit Plane Vicinity Analysis", radius_scale=1.0):
         """Create sunburst chart focused on habit plane vicinity"""
         # Ensure angles are numpy arrays
         angles = np.array(angles)
@@ -1403,7 +1380,7 @@ class HabitPlaneVisualizer:
         )
         
         return fig
-
+    
     def create_stress_comparison_radar(
         self,
         comparison_data,
@@ -1428,71 +1405,74 @@ class HabitPlaneVisualizer:
         import numpy as np
         import plotly.graph_objects as go
         import matplotlib.pyplot as plt
-
+        
         fig = go.Figure()
-
-        if not comparison_
+        
+        if not comparison_data:
             fig.update_layout(
                 title=dict(text=f"{title} - No Data Available", font=dict(size=font_size_title, family="Arial Black", color='darkblue'), x=0.5),
                 annotations=[dict(text="No data available for the selected vicinity range", x=0.5, y=0.5, showarrow=False, font=dict(size=14))],
                 width=900, height=700
             )
             return fig
-
+        
         max_stress = 0
         color_cycle = itertools.cycle(['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#D4A5A5', '#88D8B0', '#FFB347', '#B388EB'])
-
+        
         # Resolve colormap
         if colormap == 'default':
             use_custom_colors = True
         else:
             use_custom_colors = False
-            if colormap in ['viridis', 'plasma', 'RdBu', 'hot']:
-                color_scale = plt.get_cmap(colormap)
-                n_traces = len(comparison_data)
-                color_list = [f'rgb{tuple(int(c*255) for c in color_scale(i/n_traces)[:3])}' for i in range(n_traces)]
-                color_iter = iter(color_list)
-            else:
-                color_iter = itertools.cycle(colormap) if isinstance(colormap, list) else color_cycle
-
+        
+        if colormap in ['viridis', 'plasma', 'RdBu', 'hot']:
+            color_scale = plt.get_cmap(colormap)
+            n_traces = len(comparison_data)
+            color_list = [f'rgb{tuple(int(c*255) for c in color_scale(i/n_traces)[:3])}' for i in range(n_traces)]
+            color_iter = iter(color_list)
+        else:
+            color_iter = itertools.cycle(colormap) if isinstance(colormap, list) else color_cycle
+        
         for idx, (entry_name, entry_data) in enumerate(comparison_data.items()):
             if not isinstance(entry_data, dict):
                 continue
-            if 'angles' not in entry_data or 'stresses' not in entry_
+            
+            if 'angles' not in entry_data or 'stresses' not in entry_data:
                 continue
-
+            
             try:
                 angles = np.array(entry_data['angles'])
                 stresses_dict = entry_data['stresses']
+                
                 if not stresses_dict:
                     continue
-
+                
                 # Assume first stress component if multiple
                 comp_key = list(stresses_dict.keys())[0]
                 stresses = np.array(stresses_dict[comp_key])
-
+                
                 if len(angles) == 0 or len(stresses) == 0 or len(angles) != len(stresses):
                     continue
-
+                
                 # Close loop
                 angles_closed = np.append(angles, angles[0])
                 stresses_closed = np.append(stresses, stresses[0])
-
+                
                 current_max = np.nanmax(stresses)
                 if not np.isnan(current_max):
                     max_stress = max(max_stress, current_max)
-
+                
                 # Determine color
                 if use_custom_colors:
                     color = entry_data.get('color', next(color_cycle))
                 else:
                     color = next(color_iter)
-
+                
                 # Custom label
                 display_name = entry_data.get('defect_type', entry_name)
                 if custom_component_labels and comp_key in custom_component_labels:
                     display_name += f" – {custom_component_labels[comp_key]}"
-
+                
                 fig.add_trace(go.Scatterpolar(
                     r=stresses_closed,
                     theta=angles_closed,
@@ -1507,7 +1487,7 @@ class HabitPlaneVisualizer:
             except Exception as e:
                 print(f"Error processing entry {entry_name}: {e}")
                 continue
-
+        
         if len(fig.data) == 0:
             fig.update_layout(
                 title=dict(text=f"{title} - No Valid Data", font=dict(size=font_size_title, family="Arial Black", color='darkblue'), x=0.5),
@@ -1515,7 +1495,7 @@ class HabitPlaneVisualizer:
                 width=900, height=700
             )
             return fig
-
+        
         # Habit plane line
         if max_stress > 0:
             fig.add_trace(go.Scatterpolar(
@@ -1527,11 +1507,11 @@ class HabitPlaneVisualizer:
                 hoverinfo='skip',
                 showlegend=show_labels
             ))
-
+        
         # Angular tick values
         angular_tickvals = list(range(0, 360, angular_tick_step))
         angular_ticktext = [f'{v}°' for v in angular_tickvals]
-
+        
         fig.update_layout(
             title=dict(text=title, font=dict(size=font_size_title, family="Arial Black", color='darkblue'), x=0.5),
             polar=dict(
@@ -1572,8 +1552,9 @@ class HabitPlaneVisualizer:
             width=900,
             height=700
         )
+        
         return fig
-
+    
     def create_defect_comparison_plot(self, defect_comparison, stress_component='sigma_hydro',
                                     title="Defect Type Comparison"):
         """Create comparison plot for different defect types"""
@@ -1714,7 +1695,7 @@ class HabitPlaneVisualizer:
         fig = go.Figure()
         
         # Check if sintering_data is empty
-        if not sintering_
+        if not sintering_data:
             fig.update_layout(
                 title=dict(
                     text=f"{title} - No Data Available",
@@ -1736,7 +1717,7 @@ class HabitPlaneVisualizer:
             return fig
         
         # Add sintering temperature trace
-        if 'angles' in sintering_data and 'sintering_temps' in sintering_
+        if 'angles' in sintering_data and 'sintering_temps' in sintering_data:
             try:
                 angles = np.array(sintering_data['angles'])
                 temps = sintering_data['sintering_temps'].get('arrhenius_defect', [])
@@ -1793,9 +1774,10 @@ class HabitPlaneVisualizer:
                 stresses_array = np.array(stresses)
                 
                 # Check if stresses array is not empty
-                if len(stresses_array) > 0 and 'angles' in sintering_
+                if len(stresses_array) > 0 and 'angles' in sintering_data:
                     angles = np.array(sintering_data['angles'])
                     if len(angles) > 0:
+                        angles_closed = np.append(angles, angles[0])
                         stresses_closed = np.append(stresses_array, stresses_array[0])
                         
                         # Scale stresses for visualization
@@ -1809,7 +1791,7 @@ class HabitPlaneVisualizer:
                             line=dict(color='rgb(31, 119, 180)', width=3, dash='dot'),
                             marker=dict(size=6, color='rgb(31, 119, 180)'),
                             name='Hydrostatic Stress (scaled)',
-                            hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{custom.4f} GPa<extra></extra>',
+                            hovertemplate='Orientation: %{theta:.2f}°<br>Stress: %{customdata:.4f} GPa<extra></extra>',
                             customdata=stresses_closed,
                             showlegend=True
                         ))
@@ -1830,12 +1812,12 @@ class HabitPlaneVisualizer:
         # Add reference temperature lines
         T0 = 623.0  # Reference temperature
         T_min = 367.0  # Minimum temperature
-        
-        if 'angles' in sintering_
+        if 'angles' in sintering_data:
             try:
                 angles = np.array(sintering_data['angles'])
                 if len(angles) > 0:
                     angles_closed = np.append(angles, angles[0])
+                    
                     fig.add_trace(go.Scatterpolar(
                         r=[T0] * len(angles_closed),
                         theta=angles_closed,
@@ -1845,6 +1827,7 @@ class HabitPlaneVisualizer:
                         hoverinfo='skip',
                         showlegend=True
                     ))
+                    
                     fig.add_trace(go.Scatterpolar(
                         r=[T_min] * len(angles_closed),
                         theta=angles_closed,
@@ -2025,7 +2008,6 @@ class HabitPlaneVisualizer:
                     data['stresses']['sigma_hydro'] is not None and
                     len(data['angles']) > 0 and
                     len(data['stresses']['sigma_hydro']) > 0):
-                    
                     try:
                         angles_array = np.array(data['angles'])
                         stresses_array = np.array(data['stresses']['sigma_hydro'])
@@ -2178,7 +2160,7 @@ class EnhancedResultsManager:
         self.sintering_calculator = EnhancedSinteringCalculator()
     
     def prepare_vicinity_analysis_report(self, vicinity_sweep, defect_comparison,
-                                       target_params, analysis_params):
+                                        target_params, analysis_params):
         """Prepare comprehensive vicinity analysis report"""
         report = {
             'metadata': {
@@ -2201,7 +2183,6 @@ class EnhancedResultsManager:
             'sintering_analysis': self._prepare_sintering_analysis(vicinity_sweep, target_params),
             'statistics': self._calculate_comprehensive_statistics(vicinity_sweep, defect_comparison)
         }
-        
         return report
     
     def _prepare_vicinity_sweep_data(self, vicinity_sweep):
@@ -2219,7 +2200,6 @@ class EnhancedResultsManager:
         # Add habit plane specific data
         angles = np.array(data['angles'])
         habit_angle = 54.7
-        
         if len(angles) > 0:
             habit_idx = np.argmin(np.abs(angles - habit_angle))
             if habit_idx < len(angles):
@@ -2306,7 +2286,6 @@ class EnhancedResultsManager:
             angles = vicinity_sweep['angles']
             sintering_temps = vicinity_sweep['sintering_temps']
             habit_angle = 54.7
-            
             if len(angles) > 0 and 'arrhenius_defect' in sintering_temps:
                 habit_idx = np.argmin(np.abs(np.array(angles) - habit_angle))
                 if habit_idx < len(sintering_temps['arrhenius_defect']):
@@ -2414,17 +2393,14 @@ class EnhancedResultsManager:
         if 'vicinity_sweep' in report:
             sweep_data = report['vicinity_sweep']
             rows = []
-            
-            if 'angles' in sweep_
+            if 'angles' in sweep_data:
                 angles = sweep_data['angles']
                 n_points = len(angles)
-                
                 for i in range(n_points):
                     row = {
                         'angle_deg': angles[i],
                         'angle_rad': np.radians(angles[i])
                     }
-                    
                     # Add stresses
                     for comp, stresses in sweep_data.get('stresses', {}).items():
                         if i < len(stresses):
@@ -2437,7 +2413,6 @@ class EnhancedResultsManager:
                             row[f'T_sinter_{model}_c'] = temps[i] - 273.15
                     
                     rows.append(row)
-                
                 df = pd.DataFrame(rows)
                 csv_data = df.to_csv(index=False)
                 zip_file.writestr(f'vicinity_sweep_data_{timestamp}.csv', csv_data)
@@ -2445,12 +2420,10 @@ class EnhancedResultsManager:
         # Defect comparison data
         if 'defect_comparison' in report:
             comparison_data = []
-            
             for key, data in report['defect_comparison'].items():
-                if 'angles' in data and 'stresses' in 
+                if 'angles' in data and 'stresses' in data:
                     angles = data['angles']
                     stresses = data['stresses']
-                    
                     for i in range(min(len(angles), len(stresses.get('sigma_hydro', [])))):
                         row = {
                             'defect_type': data.get('defect_type', 'Unknown'),
@@ -2458,14 +2431,12 @@ class EnhancedResultsManager:
                             'eigen_strain': data.get('eigen_strain', 0.0),
                             'angle_deg': angles[i]
                         }
-                        
                         for comp, comp_stresses in stresses.items():
                             if i < len(comp_stresses):
                                 row[f'{comp}_gpa'] = comp_stresses[i]
-                        
                         comparison_data.append(row)
             
-            if comparison_
+            if comparison_data:
                 df = pd.DataFrame(comparison_data)
                 csv_data = df.to_csv(index=False)
                 zip_file.writestr(f'defect_comparison_data_{timestamp}.csv', csv_data)
@@ -2578,7 +2549,6 @@ def plot_vicinity_sweep(data, output_file='vicinity_sweep.png'):
         for comp, values in stresses.items():
             if len(values) == len(angles):
                 ax.plot(angles, values, label=comp, linewidth=2)
-        
         ax.set_xlabel('Orientation (°)')
         ax.set_ylabel('Stress (GPa)')
         ax.set_title('Stress Components vs Orientation')
@@ -2593,7 +2563,6 @@ def plot_vicinity_sweep(data, output_file='vicinity_sweep.png'):
         for model, values in temps.items():
             if len(values) == len(angles):
                 ax.plot(angles, values, label=model, linewidth=2)
-        
         ax.set_xlabel('Orientation (°)')
         ax.set_ylabel('Temperature (K)')
         ax.set_title('Sintering Temperature vs Orientation')
@@ -2609,11 +2578,10 @@ def plot_vicinity_sweep(data, output_file='vicinity_sweep.png'):
             temps = sweep['sintering_temps']['arrhenius_defect']
             if len(stresses) == len(temps):
                 ax.scatter(stresses, temps, c=angles, cmap='viridis', s=50)
-    
-    ax.set_xlabel('Hydrostatic Stress (GPa)')
-    ax.set_ylabel('Sintering Temperature (K)')
-    ax.set_title('Stress vs Sintering Temperature')
-    ax.grid(True, alpha=0.3)
+                ax.set_xlabel('Hydrostatic Stress (GPa)')
+                ax.set_ylabel('Sintering Temperature (K)')
+                ax.set_title('Stress vs Sintering Temperature')
+                ax.grid(True, alpha=0.3)
     
     # Plot habit plane highlight
     ax = axes[1, 1]
@@ -2621,21 +2589,20 @@ def plot_vicinity_sweep(data, output_file='vicinity_sweep.png'):
     if angles:
         habit_idx = np.argmin(np.abs(np.array(angles) - habit_angle))
         ax.text(0.5, 0.5,
-               f'Habit Plane Analysis\\n'
-               f'Angle: {angles[habit_idx]:.1f}°\\n'
-               f'σ_hydro: {sweep["stresses"]["sigma_hydro"][habit_idx]:.3f} GPa\\n'
-               f'T_sinter: {sweep["sintering_temps"]["arrhenius_defect"][habit_idx]:.1f} K',
-               horizontalalignment='center',
-               verticalalignment='center',
-               transform=ax.transAxes,
-               fontsize=12,
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
+                f'Habit Plane Analysis\\n'
+                f'Angle: {angles[habit_idx]:.1f}°\\n'
+                f'σ_hydro: {sweep["stresses"]["sigma_hydro"][habit_idx]:.3f} GPa\\n'
+                f'T_sinter: {sweep["sintering_temps"]["arrhenius_defect"][habit_idx]:.1f} K',
+                horizontalalignment='center',
+                verticalalignment='center',
+                transform=ax.transAxes,
+                fontsize=12,
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     ax.axis('off')
+    
     plt.tight_layout()
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
-    
     print(f"Plot saved to {output_file}")
 
 def create_interactive_plot(data, output_file='interactive_plot.html'):
@@ -2690,7 +2657,7 @@ if __name__ == '__main__':
         create_interactive_plot(data)
         print("Data processing complete!")
     except Exception as e:
-        print(f"Error processing  {e}")
+        print(f"Error processing data: {e}")
 """
         return script
     
@@ -2708,7 +2675,7 @@ if __name__ == '__main__':
             },
             'sintering_models': {
                 'exponential': 'T_sinter(σ) = T₀ × exp(-β × |σ| / G)',
-                'arrhenius': 'D = D₀ × exp[-(Q_a - ωσ)/(k_B T)]'
+                'arrhenius': 'D = D₀ × exp[-(Q_a - Ωσ)/(k_BT)]'
             }
         }
         return config
@@ -2875,34 +2842,34 @@ def main():
     # Physics equations
     st.markdown("""
     <div class="latex-equation">
-    <strong>Physics of Stress-Modified Sintering:</strong><br>
-    <div style="margin: 10px 0;">
-    <strong>Arrhenius Equation with Stress:</strong> D = D₀ exp[-(Q_a - Ωσ)/(k_BT)]
-    </div>
-    <div style="margin: 10px 0;">
-    <strong>Sintering Temperature:</strong> T_sinter(σ) = (Q_a - Ω|σ|) / [k_B ln(D₀/D_crit)]
-    </div>
-    <div style="margin: 10px 0;">
-    <strong>Hydrostatic Stress:</strong> σ_h = (σ₁ + σ₂ + σ₃)/3
-    </div>
-    <div style="margin: 10px 0;">
-    <strong>Von Mises Stress:</strong> σ_vm = √[½((σ₁-σ₂)² + (σ₂-σ₃)² + (σ₃-σ₁)²)]
-    </div>
+        <strong>Physics of Stress-Modified Sintering:</strong><br>
+        <div style="margin: 10px 0;">
+            <strong>Arrhenius Equation with Stress:</strong> D = D₀ exp[-(Q_a - Ωσ)/(k_BT)]
+        </div>
+        <div style="margin: 10px 0;">
+            <strong>Sintering Temperature:</strong> T_sinter(σ) = (Q_a - Ω|σ|) / [k_B ln(D₀/D_crit)]
+        </div>
+        <div style="margin: 10px 0;">
+            <strong>Hydrostatic Stress:</strong> σ_h = (σ₁ + σ₂ + σ₃)/3
+        </div>
+        <div style="margin: 10px 0;">
+            <strong>Von Mises Stress:</strong> σ_vm = √[½((σ₁-σ₂)² + (σ₂-σ₃)² + (σ₃-σ₁)²)]
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
     # Habit plane information
     st.markdown("""
     <div class="habit-plane-highlight">
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-    <div>
-    <h3 style="margin: 0; color: white;">🎯 Ag FCC Twin Habit Plane: 54.7°</h3>
-    <p style="margin: 0.5rem 0 0 0; color: white; opacity: 0.9;">
-    • {111} crystal planes • Maximum stress concentration • Optimal for defect engineering
-    </p>
-    </div>
-    <div style="font-size: 2.5rem;">⚛️</div>
-    </div>
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <h3 style="margin: 0; color: white;">🎯 Ag FCC Twin Habit Plane: 54.7°</h3>
+                <p style="margin: 0.5rem 0 0 0; color: white; opacity: 0.9;">
+                    • {111} crystal planes • Maximum stress concentration • Optimal for defect engineering
+                </p>
+            </div>
+            <div style="font-size: 2.5rem;">⚛️</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2947,10 +2914,10 @@ def main():
             if st.button("🔄 Load Solutions", use_container_width=True):
                 with st.spinner("Loading solutions..."):
                     st.session_state.solutions = st.session_state.loader.load_all_solutions()
-                    if st.session_state.solutions:
-                        st.success(f"Loaded {len(st.session_state.solutions)} solutions")
-                    else:
-                        st.warning("No solutions found in directory")
+                if st.session_state.solutions:
+                    st.success(f"Loaded {len(st.session_state.solutions)} solutions")
+                else:
+                    st.warning("No solutions found in directory")
         with col_load2:
             if st.button("🧹 Clear Cache", use_container_width=True):
                 st.session_state.solutions = []
@@ -3101,9 +3068,9 @@ def main():
             st.write("""
             **Expected data structure:**
             - Each file should contain a dictionary with:
-              - 'params': Dictionary of simulation parameters
-              - 'history': List of simulation frames
-              - Each frame should contain 'eta' (phase field) and 'stresses' (stress fields)
+                - 'params': Dictionary of simulation parameters
+                - 'history': List of simulation frames
+                - Each frame should contain 'eta' (phase field) and 'stresses' (stress fields)
             """)
         
         # Quick start guide
@@ -3303,7 +3270,7 @@ def main():
                             st.metric(
                                 "System Classification",
                                 system_info[0].split('(')[0].strip(),
-                                system_info[1][1] - system_info[1][0]
+                                f"{system_info[1][0]}-{system_info[1][1]} K"
                             )
                         
                         # Create visualizations
@@ -3331,6 +3298,7 @@ def main():
                                 linewidth=3,
                                 label=comp.replace('_', ' ').title()
                             )
+                        
                         ax_line.axvline(habit_angle, color='green', linestyle='--', linewidth=2,
                                       label=f'Habit Plane ({habit_angle}°)')
                         ax_line.set_xlabel('Orientation (°)', fontsize=12)
@@ -3338,10 +3306,12 @@ def main():
                         ax_line.set_title('Stress Components in Habit Plane Vicinity', fontsize=14, fontweight='bold')
                         ax_line.legend(fontsize=11)
                         ax_line.grid(True, alpha=0.3)
+                        
                         col_viz1, col_viz2 = st.columns(2)
                         with col_viz1:
                             st.pyplot(fig_line)
                             plt.close(fig_line)
+                        
                         # Sintering temperature plot
                         with col_viz2:
                             fig_temp, ax_temp = plt.subplots(figsize=(10, 6))
@@ -3354,562 +3324,4 @@ def main():
                             )
                             ax_temp.plot(
                                 vicinity_sweep['angles'],
-                                vicinity_sweep['sintering_temps']['arrhenius_defect'],
-                                color='blue',
-                                linewidth=3,
-                                linestyle='--',
-                                label='Arrhenius Model (Defect)'
-                            )
-                            ax_temp.axvline(habit_angle, color='green', linestyle='--', linewidth=2
-ax_temp.axvline(habit_angle, color='green', linestyle='--', linewidth=2,
-                label=f'Habit Plane ({habit_angle}°)')
-ax_temp.set_xlabel('Orientation (°)', fontsize=12)
-ax_temp.set_ylabel('Sintering Temperature (K)', fontsize=12)
-ax_temp.set_title('Sintering Temperature Prediction in Habit Plane Vicinity', fontsize=14, fontweight='bold')
-ax_temp.legend(fontsize=11)
-ax_temp.grid(True, alpha=0.3)
-
-# Add Celsius scale on secondary axis
-ax_temp2 = ax_temp.twinx()
-celsius_ticks = ax_temp.get_yticks()
-ax_temp2.set_ylim(ax_temp.get_ylim())
-ax_temp2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
-ax_temp2.set_ylabel('Temperature (°C)', fontsize=12)
-
-st.pyplot(fig_temp)
-plt.close(fig_temp)
-
-# Export options
-st.markdown("#### 📤 Export Results")
-col_exp1, col_exp2, col_exp3 = st.columns(3)
-with col_exp1:
-    if st.button("💾 Export JSON", use_container_width=True):
-        # Prepare report
-        report = st.session_state.results_manager.prepare_vicinity_analysis_report(
-            vicinity_sweep,
-            {},
-            target_params,
-            analysis_params
-        )
-        json_str = json.dumps(report, indent=2, default=st.session_state.results_manager._json_serializer)
-        st.download_button(
-            label="📥 Download JSON",
-            data=json_str,
-            file_name=f"vicinity_analysis_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json",
-            use_container_width=True
-        )
-with col_exp2:
-    if st.button("📊 Export CSV", use_container_width=True):
-        # Create CSV data
-        rows = []
-        angles = vicinity_sweep['angles']
-        for i in range(len(angles)):
-            row = {
-                'angle_deg': angles[i],
-                'sigma_hydro_gpa': vicinity_sweep['stresses']['sigma_hydro'][i],
-                'von_mises_gpa': vicinity_sweep['stresses']['von_mises'][i],
-                'sigma_mag_gpa': vicinity_sweep['stresses']['sigma_mag'][i],
-                'T_sinter_exponential_k': vicinity_sweep['sintering_temps']['exponential'][i],
-                'T_sinter_arrhenius_k': vicinity_sweep['sintering_temps']['arrhenius_defect'][i]
-            }
-            rows.append(row)
-        df = pd.DataFrame(rows)
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"vicinity_data_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
-with col_exp3:
-    if st.button("📦 Export Complete Package", use_container_width=True):
-        report = st.session_state.results_manager.prepare_vicinity_analysis_report(
-            vicinity_sweep,
-            {},
-            target_params,
-            analysis_params
-        )
-        zip_buffer = st.session_state.results_manager.create_comprehensive_export(report)
-        st.download_button(
-            label="📥 Download ZIP",
-            data=zip_buffer.getvalue(),
-            file_name=f"vicinity_analysis_package_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
-else:
-    st.error("Failed to generate vicinity sweep. Please check your data and parameters.")
-else:
-    st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
-
-# Show example visualization when no analysis is performed
-if not st.session_state.get('generate_analysis', False) and not st.session_state.get('quick_analysis'):
-    st.markdown("#### 📊 Example Visualization")
-    # Create example data
-    example_angles = np.linspace(44.7, 64.7, 50)
-    example_stress = 20 * np.exp(-(example_angles - 54.7)**2 / (2*5**2)) + 5
-    example_temp = 623 * np.exp(-example_stress / 30) + 50 * np.sin(np.radians(example_angles))
-    
-    fig_example, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-    
-    # Stress plot
-    ax1.plot(example_angles, example_stress, 'b-', linewidth=3)
-    ax1.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
-    ax1.fill_between(example_angles, example_stress, alpha=0.2, color='blue')
-    ax1.set_xlabel('Orientation (°)', fontsize=12)
-    ax1.set_ylabel('Hydrostatic Stress (GPa)', fontsize=12)
-    ax1.set_title('Example: Stress Concentration at Habit Plane', fontsize=14, fontweight='bold')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    
-    # Temperature plot
-    ax2.plot(example_angles, example_temp, 'r-', linewidth=3)
-    ax2.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
-    ax2.fill_between(example_angles, example_temp, alpha=0.2, color='red')
-    ax2.set_xlabel('Orientation (°)', fontsize=12)
-    ax2.set_ylabel('Sintering Temperature (K)', fontsize=12)
-    ax2.set_title('Example: Temperature Reduction at Habit Plane', fontsize=14, fontweight='bold')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # Add Celsius on secondary axis
-    ax2_2 = ax2.twinx()
-    celsius_ticks = ax2.get_yticks()
-    ax2_2.set_ylim(ax2.get_ylim())
-    ax2_2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
-    ax2_2.set_ylabel('Temperature (°C)', fontsize=12)
-    
-    st.pyplot(fig_example)
-    plt.close(fig_example)
-
-with tab3:
-    st.markdown('<h2 class="physics-header">🔬 Defect Type Comparison</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.get('generate_analysis', False) or st.session_state.get('quick_analysis') == 'defect_compare':
-        with st.spinner("Comparing defect types..."):
-            # Compare all defect types
-            defect_comparison = st.session_state.interpolator.compare_defect_types(
-                st.session_state.solutions,
-                angle_range=(0, 360),
-                n_points=100,
-                region_type=region_type,
-                shapes=[shape]
-            )
-            
-            if defect_comparison:
-                st.success(f"✅ Generated comparison of {len(defect_comparison)} defect types")
-                # Store in session state
-                st.session_state.defect_comparison = defect_comparison
-                
-                # Display defect comparison
-                st.markdown("#### 📊 Defect Comparison Results")
-                
-                # Create tabs for different views
-                comp_tab1, comp_tab2, comp_tab3 = st.tabs(["Stress Comparison", "Sintering Comparison", "Radar View"])
-                
-                with comp_tab1:
-                    # Stress comparison plot
-                    fig_comp = st.session_state.visualizer.create_defect_comparison_plot(
-                        defect_comparison,
-                        stress_component='sigma_hydro',
-                        title="Hydrostatic Stress Comparison Across Defect Types"
-                    )
-                    if fig_comp:
-                        st.plotly_chart(fig_comp, use_container_width=True)
-                
-                with comp_tab2:
-                    # Sintering temperature comparison
-                    fig_sinter_comp, ax_sinter = plt.subplots(figsize=(12, 6))
-                    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
-                    for idx, (key, data) in enumerate(defect_comparison.items()):
-                        if idx < len(colors):
-                            ax_sinter.plot(
-                                data['angles'],
-                                data['sintering_temps'],
-                                color=colors[idx],
-                                linewidth=3,
-                                label=f"{data['defect_type']} (ε*={data['eigen_strain']})"
-                            )
-                    
-                    ax_sinter.axvline(54.7, color='green', linestyle='--', linewidth=2,
-                                    label='Habit Plane (54.7°)')
-                    ax_sinter.set_xlabel('Orientation (°)', fontsize=12)
-                    ax_sinter.set_ylabel('Sintering Temperature (K)', fontsize=12)
-                    ax_sinter.set_title('Sintering Temperature Comparison by Defect Type', fontsize=14, fontweight='bold')
-                    ax_sinter.legend(fontsize=10)
-                    ax_sinter.grid(True, alpha=0.3)
-                    
-                    # Add Celsius on secondary axis
-                    ax_sinter2 = ax_sinter.twinx()
-                    celsius_ticks = ax_sinter.get_yticks()
-                    ax_sinter2.set_ylim(ax_sinter.get_ylim())
-                    ax_sinter2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
-                    ax_sinter2.set_ylabel('Temperature (°C)', fontsize=12)
-                    
-                    st.pyplot(fig_sinter_comp)
-                    plt.close(fig_sinter_comp)
-                
-                with comp_tab3:
-                    # Radar comparison for habit plane vicinity
-                    habit_range = 30.0
-                    min_angle = 54.7 - habit_range
-                    max_angle = 54.7 + habit_range
-                    
-                    # Filter data for habit plane vicinity
-                    vicinity_comparison = {}
-                    for key, data in defect_comparison.items():
-                        angles = np.array(data['angles'])
-                        mask = (angles >= min_angle) & (angles <= max_angle)
-                        if np.any(mask):
-                            vicinity_comparison[key] = {
-                                'angles': angles[mask].tolist(),
-                                'stresses': {comp: np.array(vals)[mask].tolist() 
-                                           for comp, vals in data['stresses'].items()},
-                                'sintering_temps': np.array(data['sintering_temps'])[mask].tolist(),
-                                'defect_type': data['defect_type'],
-                                'color': data['color'],
-                                'eigen_strain': data['eigen_strain']
-                            }
-                    
-                    # Create radar comparison with customization
-                    if vicinity_comparison:
-                        st.markdown("##### ⚙️ Radar View Customization")
-                        col_r1, col_r2, col_r3 = st.columns(3)
-                        with col_r1:
-                            show_labels_radar = st.checkbox("Show Labels", value=True)
-                            radial_tick_color = st.color_picker("Radial Tick Color", "#000000")
-                            radial_tick_width = st.slider("Radial Tick Width", 1, 5, 2)
-                        with col_r2:
-                            angular_tick_color = st.color_picker("Angular Tick Color", "#000000")
-                            angular_tick_width = st.slider("Angular Tick Width", 1, 5, 2)
-                            angular_tick_step = st.select_slider("Angular Tick Step (°)", options=[15, 30, 45, 60, 90], value=45)
-                        with col_r3:
-                            colormap_choice = st.selectbox("Colormap", ["default", "viridis", "plasma", "RdBu", "hot"])
-                            font_size_title = st.slider("Title Font Size", 12, 32, 20)
-                            font_size_axis = st.slider("Axis Label Font Size", 10, 24, 14)
-                            font_size_tick = st.slider("Tick Font Size", 8, 20, 12)
-                        
-                        custom_label_input = st.text_input(
-                            "Custom Stress Component Label (e.g., 'Hydrostatic Stress')",
-                            value="Hydrostatic Stress"
-                        )
-                        custom_component_labels = {'sigma_hydro': custom_label_input} if custom_label_input.strip() else None
-                        
-                        fig_radar = st.session_state.visualizer.create_stress_comparison_radar(
-                            vicinity_comparison,
-                            title="Stress Components in Habit Plane Vicinity",
-                            show_labels=show_labels_radar,
-                            radial_tick_color=radial_tick_color,
-                            radial_tick_width=radial_tick_width,
-                            angular_tick_color=angular_tick_color,
-                            angular_tick_width=angular_tick_width,
-                            angular_tick_step=angular_tick_step,
-                            colormap=colormap_choice,
-                            custom_component_labels=custom_component_labels,
-                            font_size_title=font_size_title,
-                            font_size_axis=font_size_axis,
-                            font_size_tick=font_size_tick
-                        )
-                        if fig_radar:
-                            st.plotly_chart(fig_radar, use_container_width=True)
-            
-            # Summary statistics
-            st.markdown("#### 📈 Summary Statistics")
-            # Calculate statistics for each defect
-            summary_data = []
-            for key, data in defect_comparison.items():
-                if 'stresses' in data and 'sigma_hydro' in data['stresses']:
-                    stresses = data['stresses']['sigma_hydro']
-                    if stresses:
-                        summary_data.append({
-                            'Defect Type': data['defect_type'],
-                            'Eigen Strain': data['eigen_strain'],
-                            'Max Stress (GPa)': f"{max(stresses):.3f}",
-                            'Mean Stress (GPa)': f"{np.mean(stresses):.3f}",
-                            'Stress Range (GPa)': f"{max(stresses) - min(stresses):.3f}",
-                            'Min T_sinter (K)': f"{min(data['sintering_temps']):.1f}",
-                            'Max T_sinter (K)': f"{max(data['sintering_temps']):.1f}"
-                        })
-            
-            if summary_data:
-                df_summary = pd.DataFrame(summary_data)
-                st.dataframe(df_summary, use_container_width=True)
-            
-            # Export comparison data
-            st.markdown("#### 📤 Export Comparison Data")
-            col_exp1, col_exp2 = st.columns(2)
-            with col_exp1:
-                # JSON export
-                comparison_json = json.dumps(
-                    st.session_state.defect_comparison,
-                    indent=2,
-                    default=st.session_state.results_manager._json_serializer
-                )
-                st.download_button(
-                    label="💾 Export JSON",
-                    data=comparison_json,
-                    file_name=f"defect_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-            with col_exp2:
-                # CSV export
-                rows = []
-                for key, data in defect_comparison.items():
-                    angles = data['angles']
-                    for i in range(len(angles)):
-                        row = {
-                            'defect_type': data['defect_type'],
-                            'eigen_strain': data['eigen_strain'],
-                            'angle_deg': angles[i]
-                        }
-                        for comp, stresses in data['stresses'].items():
-                            if i < len(stresses):
-                                row[f'{comp}_gpa'] = stresses[i]
-                        if i < len(data['sintering_temps']):
-                            row['T_sinter_k'] = data['sintering_temps'][i]
-                        rows.append(row)
-                
-                if rows:
-                    df = pd.DataFrame(rows)
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📊 Export CSV",
-                        data=csv,
-                        file_name=f"defect_comparison_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-    else:
-        st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
-        
-        # Show defect comparison info
-        st.markdown("""
-        #### 🔬 Defect Comparison Analysis
-        This analysis compares different defect types (ISF, ESF, Twin, No Defect) across all orientations.
-        
-        **Key comparisons:**
-        1. **Stress distribution** - How each defect concentrates stress
-        2. **Sintering temperature** - Temperature reduction capability
-        3. **Habit plane effects** - Special behavior at 54.7°
-        
-        **Expected insights:**
-        - Twin boundaries show maximum stress concentration
-        - ISF/ESF have intermediate effects
-        - Perfect crystals have minimal stress
-        - Habit plane shows peak effects for twins
-        """)
-
-with tab4:
-    st.markdown('<h2 class="physics-header">📊 Comprehensive Dashboard</h2>', unsafe_allow_html=True)
-    
-    if st.session_state.get('generate_analysis', False) or st.session_state.get('quick_analysis') == 'dashboard':
-        with st.spinner("Generating comprehensive dashboard..."):
-            # Check if we have both vicinity sweep and defect comparison
-            if ('vicinity_sweep' not in st.session_state or 
-                'defect_comparison' not in st.session_state):
-                st.warning("Please run both Vicinity Analysis and Defect Comparison first.")
-                col_run1, col_run2 = st.columns(2)
-                with col_run1:
-                    if st.button("🏃 Run Vicinity Analysis", use_container_width=True):
-                        st.session_state.quick_analysis = "habit_plane"
-                        st.rerun()
-                with col_run2:
-                    if st.button("🏃 Run Defect Comparison", use_container_width=True):
-                        st.session_state.quick_analysis = "defect_compare"
-                        st.rerun()
-            else:
-                # Generate comprehensive dashboard
-                vicinity_sweep = st.session_state.vicinity_sweep
-                defect_comparison = st.session_state.defect_comparison
-                
-                # Create comprehensive visualization
-                fig_dashboard = st.session_state.visualizer.create_comprehensive_dashboard(
-                    vicinity_sweep,
-                    defect_comparison,
-                    title=f"Comprehensive Analysis - {st.session_state.current_target_params.get('defect_type', 'Unknown')}"
-                )
-                if fig_dashboard:
-                    st.plotly_chart(fig_dashboard, use_container_width=True)
-                
-                # Additional analysis
-                st.markdown("#### 📈 Advanced Analysis")
-                
-                # Create tabs for different analyses
-                adv_tab1, adv_tab2, adv_tab3 = st.tabs(["Physics Analysis", "Sintering Optimization", "Export Package"])
-                
-                with adv_tab1:
-                    # Physics-based analysis
-                    st.markdown("##### 🔬 Physics-Based Analysis")
-                    
-                    # Calculate stress intensity factors
-                    st.write("**Stress Intensity Factors (K):**")
-                    col_k1, col_k2, col_k3, col_k4 = st.columns(4)
-                    defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
-                    
-                    for i, defect in enumerate(defect_types):
-                        with [col_k1, col_k2, col_k3, col_k4][i]:
-                            # Find max stress for this defect
-                            max_stress = 0
-                            for key, data in defect_comparison.items():
-                                if data['defect_type'] == defect:
-                                    if 'sigma_hydro' in data['stresses']:
-                                        max_stress = max(data['stresses']['sigma_hydro'])
-                                        break
-                            
-                            # Calculate K
-                            K = st.session_state.physics_analyzer.compute_stress_intensity_factor(
-                                {'sigma_hydro': {'max_abs': max_stress}},
-                                st.session_state.physics_analyzer.get_eigen_strain(defect),
-                                defect
-                            )
-                            
-                            st.metric(
-                                f"K for {defect}",
-                                f"{K:.2f} MPa√m",
-                                "Stress Intensity"
-                            )
-                    
-                    # Crystal orientation analysis
-                    st.markdown("##### 🧊 Crystal Orientation Effects")
-                    orientation_effects = []
-                    for angle in [0, 30, 45, 54.7, 60, 90]:
-                        effect = st.session_state.physics_analyzer.analyze_crystal_orientation_effects(
-                            {},  # Empty stress data for basic analysis
-                            angle
-                        )
-                        orientation_effects.append(effect)
-                    
-                    if orientation_effects:
-                        df_orientation = pd.DataFrame(orientation_effects)
-                        st.dataframe(df_orientation, use_container_width=True)
-                
-                with adv_tab2:
-                    # Sintering optimization
-                    st.markdown("##### 🔥 Sintering Optimization Analysis")
-                    
-                    # Find optimal orientation for each defect
-                    optimal_data = []
-                    for key, data in defect_comparison.items():
-                        if 'angles' in data and 'sintering_temps' in data:
-                            temps = data['sintering_temps']
-                            angles = data['angles']
-                            
-                            # Find minimum sintering temperature
-                            min_temp_idx = np.argmin(temps)
-                            min_temp = temps[min_temp_idx]
-                            opt_angle = angles[min_temp_idx]
-                            
-                            optimal_data.append({
-                                'Defect Type': data['defect_type'],
-                                'Optimal Angle (°)': f"{opt_angle:.1f}",
-                                'Min T_sinter (K)': f"{min_temp:.1f}",
-                                'Min T_sinter (°C)': f"{min_temp-273.15:.1f}",
-                                'Temperature Reduction (K)': f"{623.0 - min_temp:.1f}",
-                                'Is Near Habit Plane': abs(opt_angle - 54.7) < 5.0
-                            })
-                    
-                    if optimal_data:
-                        df_optimal = pd.DataFrame(optimal_data)
-                        st.dataframe(df_optimal, use_container_width=True)
-                    
-                    # Recommendation
-                    st.markdown("##### 💡 Optimization Recommendation")
-                    if optimal_data:
-                        best_defect = min(optimal_data, key=lambda x: float(x['Min T_sinter (K)'].split()[0]))
-                        
-                        st.info(f"""
-                        **Recommended Configuration:**
-                        - **Defect Type:** {best_defect['Defect Type']}
-                        - **Optimal Orientation:** {best_defect['Optimal Angle (°)']}°
-                        - **Minimum Sintering Temperature:** {best_defect['Min T_sinter (K)']} K ({best_defect['Min T_sinter (°C)']}°C)
-                        - **Temperature Reduction:** {best_defect['Temperature Reduction (K)']} K from reference
-                        
-                        **Note:** {best_defect['Defect Type']} provides the lowest sintering temperature
-                        among all analyzed defect types at an optimal orientation.
-                        """)
-                
-                with adv_tab3:
-                    # Comprehensive export
-                    st.markdown("##### 📦 Comprehensive Export Package")
-                    st.write("""
-                    The comprehensive export package includes:
-                    1. Complete JSON report with all analysis data
-                    2. CSV files for all datasets
-                    3. README with analysis documentation
-                    4. Python script for data processing
-                    5. Configuration file
-                    """)
-                    
-                    # Prepare comprehensive report
-                    if st.button("🛠️ Prepare Comprehensive Report", use_container_width=True):
-                        with st.spinner("Preparing comprehensive report..."):
-                            report = st.session_state.results_manager.prepare_vicinity_analysis_report(
-                                vicinity_sweep,
-                                defect_comparison,
-                                st.session_state.current_target_params,
-                                st.session_state.current_analysis_params
-                            )
-                            
-                            zip_buffer = st.session_state.results_manager.create_comprehensive_export(report)
-                            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                            
-                            st.download_button(
-                                label="📥 Download Complete Package",
-                                data=zip_buffer.getvalue(),
-                                file_name=f"comprehensive_analysis_{timestamp}.zip",
-                                mime="application/zip",
-                                use_container_width=True
-                            )
-    else:
-        st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
-        
-        # Dashboard features
-        st.markdown("""
-        #### 📊 Comprehensive Dashboard Features
-        The comprehensive dashboard provides an integrated view of all analysis results:
-        
-        **1. Multi-Panel Visualization**
-        - Sunburst charts for polar stress visualization
-        - Line plots for detailed orientation dependence
-        - Radar charts for component comparison
-        - Defect comparison across all types
-        
-        **2. Advanced Analysis**
-        - Physics-based stress intensity calculations
-        - Crystal orientation effects
-        - Sintering temperature optimization
-        - System classification mapping
-        
-        **3. Comprehensive Export**
-        - Complete data package with all results
-        - Processing scripts for further analysis
-        - Documentation and configuration files
-        
-        **To generate the dashboard:**
-        1. Run both Vicinity Analysis and Defect Comparison
-        2. Click "Generate Dashboard" in the sidebar
-        3. Explore the comprehensive results
-        """)
-    
-    # Quick status check
-    st.markdown("#### 📊 Analysis Status")
-    col_status1, col_status2 = st.columns(2)
-    with col_status1:
-        if 'vicinity_sweep' in st.session_state:
-            st.success("✅ Vicinity analysis data available")
-        else:
-            st.warning("⚠️ Vicinity analysis not yet run")
-    with col_status2:
-        if 'defect_comparison' in st.session_state:
-            st.success("✅ Defect comparison data available")
-        else:
-            st.warning("⚠️ Defect comparison not yet run")
-
-# =============================================
-# RUN THE APPLICATION
-# =============================================
-if __name__ == "__main__":
-    main()
+                                vicinity_sweep['sintering_temps']['arrhenius_def
