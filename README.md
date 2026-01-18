@@ -224,6 +224,12 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa27-streamlit-red)](https:///mechanicalstress-interpolation-at-theta27.streamlit.app/) (Focus on radar chart)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa28-streamlit-red)](https:///mechanicalstress-interpolation-at-theta28.streamlit.app/) (Focus on radar chart)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa29-streamlit-red)](https:///mechanicalstress-interpolation-at-theta29.streamlit.app/) (Focus on radar chart)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa30-streamlit-red)](https:///mechanicalstress-interpolation-at-theta30.streamlit.app/) (Focus on radar chart)
+
 
 
 
