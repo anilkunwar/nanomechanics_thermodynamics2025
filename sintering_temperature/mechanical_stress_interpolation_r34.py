@@ -607,6 +607,7 @@ class HeatMapVisualizer:
             'physics_corrected': Full physics - both tensile and compressive affect diffusion
             'temperature_reduction': Shows equivalent temperature reduction
             'activation_energy': Shows effective activation energy change
+            'vacancy_concentration': Shows vacancy concentration ratio
         Returns:
         --------
         enhancement_ratio : array-like
@@ -1587,6 +1588,7 @@ def main():
         page_icon="🔬",
         initial_sidebar_state="expanded"
     )
+    
     # Custom CSS for styling
     st.markdown("""
     <style>
@@ -1659,8 +1661,10 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
+    
     # Main header
     st.markdown('<h1 class="main-header">🤖 Transformer Stress Field & Diffusion Analysis</h1>', unsafe_allow_html=True)
+    
     # Physics explanation
     st.markdown("""
     <div class="physics-note">
@@ -1672,6 +1676,7 @@ def main():
     Habit plane at 54.7° shows maximum tensile stress → maximum diffusion enhancement
     </div>
     """, unsafe_allow_html=True)
+    
     # Initialize session state
     if 'solutions' not in st.session_state:
         st.session_state.solutions = []
@@ -1689,9 +1694,11 @@ def main():
         st.session_state.defect_db = DefectComparisonDatabase()
     if 'diffusion_T' not in st.session_state:
         st.session_state.diffusion_T = 650.0
+        
     # Sidebar
     with st.sidebar:
         st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
+        
         # Data loading
         st.markdown("#### 📂 Data Management")
         col1, col2 = st.columns(2)
@@ -1709,6 +1716,7 @@ def main():
                 st.session_state.interpolation_result = None
                 st.session_state.defect_db.clear_data()
                 st.success("All data cleared")
+        
         # Diffusion physics parameters
         st.markdown('<h2 class="section-header">🌡️ Diffusion Parameters</h2>', unsafe_allow_html=True)
         # Temperature
@@ -1721,6 +1729,7 @@ def main():
             help="Sintering temperature for diffusion calculation"
         )
         st.session_state.diffusion_T = diffusion_T
+        
         # Atomic volume
         atomic_volume = st.number_input(
             "Atomic Volume (m³)",
@@ -1730,6 +1739,7 @@ def main():
         )
         # Update physics constants
         PHYSICS_CONSTANTS['Omega'] = atomic_volume
+        
         # Target parameters
         st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
         # Custom polar angle
@@ -1751,12 +1761,14 @@ def main():
         # Auto-set eigen strain based on defect type
         eigen_strains = {"ISF": 0.71, "ESF": 1.41, "Twin": 2.12, "No Defect": 0.0}
         eps0 = eigen_strains[defect_type]
+        
         # Shape
         shape = st.selectbox(
             "Shape",
             ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle"],
             index=0
         )
+        
         # Kappa parameter
         kappa = st.slider(
             "Kappa Parameter",
@@ -1766,6 +1778,7 @@ def main():
             step=0.1,
             help="Material parameter"
         )
+        
         # Transformer parameters
         st.markdown('<h2 class="section-header">🤖 Transformer Parameters</h2>', unsafe_allow_html=True)
         col_t1, col_t2 = st.columns(2)
@@ -1787,6 +1800,7 @@ def main():
                 step=0.1,
                 help="Temperature for attention scaling"
             )
+        
         # Visualization parameters
         st.markdown('<h2 class="section-header">🎨 Visualization</h2>', unsafe_allow_html=True)
         colormap_category = st.selectbox(
@@ -1800,6 +1814,7 @@ def main():
             COLORMAP_OPTIONS[colormap_category],
             index=0
         )
+        
         # Add to comparison database button
         st.markdown("---")
         if st.button("📊 Add to Defect Comparison", use_container_width=True, type="secondary"):
@@ -1832,10 +1847,12 @@ def main():
                 st.success(f"Added {defect_type} at θ={custom_theta:.1f}° to comparison database")
             else:
                 st.warning("Please perform interpolation first")
+        
         # Clear comparison button
         if st.button("🗑️ Clear Comparison", use_container_width=True):
             st.session_state.defect_db.clear_data()
             st.success("Comparison database cleared")
+        
         # Interpolation button
         st.markdown("---")
         if st.button("🚀 Perform Transformer Interpolation", type="primary", use_container_width=True):
@@ -1845,6 +1862,7 @@ def main():
                 # Update transformer parameters
                 st.session_state.transformer_interpolator.spatial_sigma = spatial_sigma
                 st.session_state.transformer_interpolator.temperature = attention_temp
+                
                 # Prepare target parameters
                 target_params = {
                     'defect_type': defect_type,
@@ -1853,6 +1871,7 @@ def main():
                     'theta': np.radians(custom_theta),
                     'shape': shape
                 }
+                
                 # Perform interpolation
                 with st.spinner("Performing transformer-based spatial interpolation..."):
                     try:
@@ -1868,40 +1887,46 @@ def main():
                             st.error("❌ Failed to interpolate stress fields.")
                     except Exception as e:
                         st.error(f"❌ Error during interpolation: {str(e)}")
+    
     # Main content
     if not st.session_state.solutions:
         st.warning("⚠️ Please load solutions first using the button in the sidebar.")
-    # Directory information
-    with st.expander("📁 Directory Information", expanded=True):
-        st.info(f"**Solutions Directory:** {SOLUTIONS_DIR}")
-        st.write("""
-        **Expected file formats:** .pkl, .pickle, .pt, .pth
-        **Expected data structure:**
-        - Each file should contain a dictionary with:
-        - 'params': Dictionary of simulation parameters
-        - 'history': List of simulation frames
-        - Each frame should contain 'stresses' dictionary with stress fields
+        
+        # Directory information
+        with st.expander("📁 Directory Information", expanded=True):
+            st.info(f"**Solutions Directory:** {SOLUTIONS_DIR}")
+            st.write("""
+            **Expected file formats:** .pkl, .pickle, .pt, .pth
+            **Expected data structure:**
+            - Each file should contain a dictionary with:
+            - 'params': Dictionary of simulation parameters
+            - 'history': List of simulation frames
+            - Each frame should contain 'stresses' dictionary with stress fields
+            """)
+        
+        # Quick guide
+        st.markdown("""
+        ## 🚀 Quick Start Guide
+        1. **Prepare Data**: Place your simulation files in the `numerical_solutions` directory
+        2. **Load Solutions**: Click the "Load Solutions" button in the sidebar
+        3. **Set Parameters**: Configure target angle and defect type
+        4. **Perform Interpolation**: Click "Perform Transformer Interpolation"
+        5. **Add to Comparison**: Add multiple defects to comparison database
+        6. **Analyze Diffusion**: Use the Diffusion Analysis tab for 3D visualization
+        
+        ## 🔬 Key Features
+        ### Corrected Diffusion Physics
+        - **Tensile stress**: D/D_bulk = exp(Ωσ/kT) > 1 → Enhancement
+        - **Compressive stress**: D/D_bulk = exp(Ωσ/kT) < 1 → Suppression
+        - **Habit plane (54.7°)**: Maximum tensile stress → Maximum diffusion enhancement
+        
+        ### Enhanced Visualization
+        - 3D interactive diffusion surfaces
+        - Proper defect orientation handling
+        - Rotated heatmaps showing actual defect orientation
+        - Comprehensive diffusion analysis dashboards
         """)
-    # Quick guide
-    st.markdown("""
-    ## 🚀 Quick Start Guide
-    1. **Prepare Data**: Place your simulation files in the `numerical_solutions` directory
-    2. **Load Solutions**: Click the "Load Solutions" button in the sidebar
-    3. **Set Parameters**: Configure target angle and defect type
-    4. **Perform Interpolation**: Click "Perform Transformer Interpolation"
-    5. **Add to Comparison**: Add multiple defects to comparison database
-    6. **Analyze Diffusion**: Use the Diffusion Analysis tab for 3D visualization
-    ## 🔬 Key Features
-    ### Corrected Diffusion Physics
-    - **Tensile stress**: D/D_bulk = exp(Ωσ/kT) > 1 → Enhancement
-    - **Compressive stress**: D/D_bulk = exp(Ωσ/kT) < 1 → Suppression
-    - **Habit plane (54.7°)**: Maximum tensile stress → Maximum diffusion enhancement
-    ### Enhanced Visualization
-    - 3D interactive diffusion surfaces
-    - Proper defect orientation handling
-    - Rotated heatmaps showing actual defect orientation
-    - Comprehensive diffusion analysis dashboards
-    """)
+    
     else:
         # Enhanced tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -1913,10 +1938,12 @@ def main():
             "🎯 Parameters",
             "📤 Export"
         ])
+        
         with tab1:
             st.markdown('<h2 class="section-header">📊 Interpolation Results</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
+                
                 # Display key metrics
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
@@ -1942,15 +1969,18 @@ def main():
                     mag_stats = result['statistics']['sigma_mag']
                     st.metric("Stress Magnitude Max", f"{mag_stats['max']:.3f} GPa",
                               f"Mean: {mag_stats['mean']:.3f} GPa")
+                
                 # Quick preview
                 st.markdown("#### 👀 Stress Field Preview")
                 # Create a quick preview figure
                 fig_preview, axes = plt.subplots(1, 4, figsize=(16, 4))
                 components = ['von_mises', 'sigma_hydro', 'sigma_mag']
                 titles = ['Von Mises', 'Hydrostatic', 'Magnitude']
+                
                 for idx, (comp, title) in enumerate(zip(components, titles)):
                     ax = axes[idx]
                     field = result['fields'][comp]
+                    
                     # Use diverging colormap for hydrostatic
                     if comp == 'sigma_hydro':
                         cmap = 'RdBu_r'
@@ -1959,6 +1989,7 @@ def main():
                     else:
                         cmap = 'viridis'
                         vmin, vmax = None, None
+                    
                     im = ax.imshow(field, cmap=cmap, vmin=vmin, vmax=vmax,
                                    aspect='equal', interpolation='bilinear', origin='lower')
                     plt.colorbar(im, ax=ax, shrink=0.8)
@@ -1966,6 +1997,7 @@ def main():
                     ax.set_xlabel('X')
                     ax.set_ylabel('Y')
                     ax.grid(True, alpha=0.2)
+                
                 # Add diffusion enhancement preview
                 ax = axes[3]
                 hydro_field = result['fields']['sigma_hydro']
@@ -1983,6 +2015,7 @@ def main():
                 ax.set_xlabel('X')
                 ax.set_ylabel('Y')
                 ax.grid(True, alpha=0.2)
+                
                 plt.suptitle(f"Stress Fields at θ={result['target_angle']:.1f}°, {result['target_params']['defect_type']}",
                              fontsize=14)
                 plt.tight_layout()
@@ -1990,6 +2023,7 @@ def main():
                 plt.close(fig_preview)
             else:
                 st.info("👈 Configure parameters and click 'Perform Transformer Interpolation' to generate results")
+        
         with tab2:
             st.markdown('<h2 class="section-header">🎯 Oriented Stress Visualization</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
@@ -1997,6 +2031,7 @@ def main():
                 fields = result['fields']
                 target_angle = result['target_angle']
                 defect_type = result['target_params']['defect_type']
+                
                 # Component selection
                 stress_component = st.selectbox(
                     "Select Stress Component",
@@ -2004,12 +2039,14 @@ def main():
                     index=0,
                     key="viz_component_tab2"
                 )
+                
                 # Component names for display
                 component_names = {
                     'von_mises': 'Von Mises Stress',
                     'sigma_hydro': 'Hydrostatic Stress',
                     'sigma_mag': 'Stress Magnitude'
                 }
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     # Original heatmap
@@ -2023,6 +2060,7 @@ def main():
                     )
                     st.pyplot(fig_original)
                     plt.close(fig_original)
+                
                 with col2:
                     # Rotated heatmap
                     st.markdown("#### 🎯 Rotated to Defect Orientation")
@@ -2035,6 +2073,7 @@ def main():
                     )
                     st.pyplot(fig_rotated)
                     plt.close(fig_rotated)
+                
                 # Interactive 3D visualization
                 st.markdown("#### 🎪 3D Oriented Surface")
                 fig_3d = st.session_state.heatmap_visualizer.create_interactive_oriented_3d(
@@ -2044,6 +2083,7 @@ def main():
                     cmap_name=colormap_name
                 )
                 st.plotly_chart(fig_3d, use_container_width=True)
+                
                 # Diffusion enhancement heatmap
                 if stress_component == 'sigma_hydro':
                     st.markdown("#### 🌊 Diffusion Enhancement Heatmap")
@@ -2066,10 +2106,12 @@ def main():
                     """, unsafe_allow_html=True)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
+        
         with tab3:
             st.markdown('<h2 class="section-header">🌊 Diffusion Enhancement Analysis</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
+                
                 # Comprehensive diffusion analysis
                 st.markdown("#### 📊 Comprehensive Diffusion Dashboard")
                 fig_comprehensive = st.session_state.heatmap_visualizer.create_comprehensive_diffusion_analysis(
@@ -2080,6 +2122,7 @@ def main():
                     st.plotly_chart(fig_comprehensive, use_container_width=True)
                 else:
                     st.error("Failed to create comprehensive analysis")
+                
                 # Physics explanation
                 st.markdown("""
                 <div class="physics-note">
@@ -2100,6 +2143,7 @@ def main():
                 - 2 GPa compressive → D/D_bulk ≈ 0.14x suppression
                 </div>
                 """, unsafe_allow_html=True)
+                
                 # Detailed statistics
                 with st.expander("📈 Detailed Diffusion Statistics", expanded=False):
                     hydro_field = result['fields']['sigma_hydro']
@@ -2115,6 +2159,7 @@ def main():
                         st.metric("Mean Enhancement", f"{np.mean(diffusion_field):.2f}x")
                     with col_s4:
                         st.metric("Enhancement > 2x", f"{np.mean(diffusion_field > 2)*100:.1f}%")
+                    
                     # Histogram
                     fig_hist, ax_hist = plt.subplots(figsize=(10, 5))
                     ax_hist.hist(diffusion_field.flatten(), bins=50, alpha=0.7, edgecolor='black', log=True)
@@ -2128,6 +2173,7 @@ def main():
                     plt.close(fig_hist)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
+        
         with tab4:
             st.markdown('<h2 class="section-header">📈 Defect Comparison Analysis</h2>', unsafe_allow_html=True)
             defect_data = st.session_state.defect_db.get_defect_comparison()
@@ -2144,6 +2190,7 @@ def main():
                 # Show defect comparison stats
                 st.markdown("#### 📊 Defect Comparison Summary")
                 stats = st.session_state.defect_db.compute_diffusion_statistics(diffusion_T)
+                
                 # Create metrics
                 cols = st.columns(len(defect_data))
                 for idx, (defect_type, stat) in enumerate(stats.items()):
@@ -2153,6 +2200,7 @@ def main():
                             f"{stat['max_enhancement']:.1f}x",
                             f"Peak at {stat['peak_enhancement_angle']:.0f}°"
                         )
+                
                 # 3D Diffusion Doughnut Plot
                 st.markdown("#### 🎪 3D Diffusion Doughnut Plot")
                 fig_doughnut = st.session_state.heatmap_visualizer.create_3d_diffusion_doughnut_plot(
@@ -2162,6 +2210,7 @@ def main():
                     height=700
                 )
                 st.plotly_chart(fig_doughnut, use_container_width=True)
+                
                 # 3D Diffusion Surface
                 st.markdown("#### 🏔️ 3D Diffusion Surface")
                 fig_surface = st.session_state.heatmap_visualizer.create_interactive_3d_diffusion_surface(
@@ -2171,6 +2220,7 @@ def main():
                     height=700
                 )
                 st.plotly_chart(fig_surface, use_container_width=True)
+                
                 # Comparison table
                 with st.expander("📋 Detailed Comparison Table", expanded=False):
                     comparison_data = []
@@ -2187,6 +2237,7 @@ def main():
                         })
                     df_comparison = pd.DataFrame(comparison_data)
                     st.dataframe(df_comparison, use_container_width=True)
+                
                 # Physics insights
                 st.markdown("""
                 <div class="success-box">
@@ -2198,11 +2249,13 @@ def main():
                 5. **Temperature dependence**: Higher temperatures reduce the enhancement effect (Ωσ/kT term decreases).
                 </div>
                 """, unsafe_allow_html=True)
+        
         with tab5:
             st.markdown('<h2 class="section-header">🔍 Weights Analysis</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
                 weights = result['weights']
+                
                 # Weights visualization
                 col_w1, col_w2 = st.columns(2)
                 with col_w1:
@@ -2216,6 +2269,7 @@ def main():
                     ax_trans.grid(True, alpha=0.3, axis='y')
                     st.pyplot(fig_trans)
                     plt.close(fig_trans)
+                
                 with col_w2:
                     # Positional weights
                     fig_pos, ax_pos = plt.subplots(figsize=(10, 5))
@@ -2226,6 +2280,7 @@ def main():
                     ax_pos.grid(True, alpha=0.3, axis='y')
                     st.pyplot(fig_pos)
                     plt.close(fig_pos)
+                
                 # Combined weights
                 fig_comb, ax_comb = plt.subplots(figsize=(12, 6))
                 x = range(len(weights['combined']))
@@ -2240,6 +2295,7 @@ def main():
                 ax_comb.grid(True, alpha=0.3)
                 st.pyplot(fig_comb)
                 plt.close(fig_comb)
+                
                 # Weight statistics
                 with st.expander("📊 Advanced Weight Statistics", expanded=True):
                     col_stat1, col_stat2, col_stat3 = st.columns(3)
@@ -2256,6 +2312,7 @@ def main():
                         entropy_comb = _calculate_entropy(weights['combined'])
                         st.metric("Combined Weight Entropy",
                                   f"{entropy_comb:.3f}")
+                    
                     # Top contributors
                     st.markdown("##### 🏆 Top 5 Contributing Sources")
                     combined_weights = np.array(weights['combined'])
@@ -2280,11 +2337,13 @@ def main():
                     st.dataframe(df_top, use_container_width=True)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
+        
         with tab6:
             st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
                 target_params = result['target_params']
+                
                 # Create a comprehensive target parameters display
                 col1, col2 = st.columns(2)
                 with col1:
@@ -2321,9 +2380,11 @@ def main():
                             'parameter': display_key,
                             'value': display_value
                         })
+                    
                     # Display as metrics
                     for param in param_data:
                         st.metric(f"{param['icon']} {param['parameter']}", param['value'])
+                    
                     # Additional metrics
                     st.markdown("##### 📊 Interpolation Metrics")
                     col_m1, col_m2 = st.columns(2)
@@ -2334,6 +2395,7 @@ def main():
                         habit_deviation = abs(result['target_angle'] - 54.7)
                         st.metric("Deviation from Habit Plane", f"{habit_deviation:.1f}°")
                         st.metric("Field Size", f"{result['shape'][0]}×{result['shape'][1]}")
+                
                 with col2:
                     # Angular orientation visualization
                     st.markdown("##### 🧭 Angular Orientation")
@@ -2348,6 +2410,7 @@ def main():
                     ax_angular.grid(True, alpha=0.3)
                     st.pyplot(fig_angular)
                     plt.close(fig_angular)
+                    
                     # Habit plane information
                     st.markdown("##### 🔬 Habit Plane Reference")
                     st.info("""
@@ -2359,10 +2422,12 @@ def main():
                     """)
             else:
                 st.info("No interpolation results available. Please perform interpolation first.")
+        
         with tab7:
             st.markdown('<h2 class="section-header">📤 Export Results</h2>', unsafe_allow_html=True)
             if st.session_state.interpolation_result:
                 result = st.session_state.interpolation_result
+                
                 # Export options
                 st.markdown("##### 💾 Export Formats")
                 col_e1, col_e2, col_e3 = st.columns(3)
@@ -2385,6 +2450,7 @@ def main():
                             use_container_width=True,
                             key="download_json"
                         )
+                
                 with col_e2:
                     # Export as CSV
                     if st.button("📊 Export as CSV", use_container_width=True, key="export_csv"):
@@ -2397,6 +2463,7 @@ def main():
                             use_container_width=True,
                             key="download_csv"
                         )
+                
                 with col_e3:
                     # Export plot as PNG
                     if st.button("🖼️ Export Plot", use_container_width=True, key="export_plot"):
@@ -2422,6 +2489,7 @@ def main():
                             key="download_png"
                         )
                         plt.close(fig_export)
+                
                 # Bulk export
                 st.markdown("---")
                 st.markdown("##### 📦 Bulk Export All Components")
@@ -2435,6 +2503,7 @@ def main():
                             df = pd.DataFrame(component_data)
                             csv_str = df.to_csv(index=False)
                             zip_file.writestr(f"{component}_theta_{result['target_angle']:.1f}.csv", csv_str)
+                        
                         # Export diffusion enhancement
                         hydro_field = result['fields']['sigma_hydro']
                         diffusion_field = st.session_state.heatmap_visualizer.compute_diffusion_enhancement_factor(
@@ -2443,6 +2512,7 @@ def main():
                         df_diff = pd.DataFrame(diffusion_field)
                         csv_diff = df_diff.to_csv(index=False)
                         zip_file.writestr(f"diffusion_enhancement_theta_{result['target_angle']:.1f}_T{diffusion_T:.0f}K.csv", csv_diff)
+                        
                         # Export metadata
                         metadata = {
                             'target_angle': result['target_angle'],
@@ -2458,6 +2528,7 @@ def main():
                         }
                         json_str = json.dumps(metadata, indent=2)
                         zip_file.writestr("metadata.json", json_str)
+                    
                     zip_buffer.seek(0)
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     filename = f"stress_components_theta_{result['target_angle']:.1f}_{timestamp}.zip"
@@ -2469,6 +2540,7 @@ def main():
                         use_container_width=True,
                         key="download_zip"
                     )
+                
                 # Export defect comparison data
                 defect_data = st.session_state.defect_db.get_defect_comparison()
                 if defect_data:
