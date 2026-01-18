@@ -3324,4 +3324,545 @@ def main():
                             )
                             ax_temp.plot(
                                 vicinity_sweep['angles'],
-                                vicinity_sweep['sintering_temps']['arrhenius_def
+                                vicinity_sweep['sintering_temps']['arrhenius_defect'],
+                                color='blue',
+                                linewidth=3,
+                                linestyle='--',
+                                label='Arrhenius Model (Defect)'
+                            )
+                            ax_temp.axvline(habit_angle, color='green', linestyle='--', linewidth=2,
+                                          label=f'Habit Plane ({habit_angle}°)')
+                            ax_temp.set_xlabel('Orientation (°)', fontsize=12)
+                            ax_temp.set_ylabel('Sintering Temperature (K)', fontsize=12)
+                            ax_temp.set_title('Sintering Temperature Prediction in Habit Plane Vicinity', fontsize=14, fontweight='bold')
+                            ax_temp.legend(fontsize=11)
+                            ax_temp.grid(True, alpha=0.3)
+                            
+                            # Add Celsius scale on secondary axis
+                            ax_temp2 = ax_temp.twinx()
+                            celsius_ticks = ax_temp.get_yticks()
+                            ax_temp2.set_ylim(ax_temp.get_ylim())
+                            ax_temp2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
+                            ax_temp2.set_ylabel('Temperature (°C)', fontsize=12)
+                            
+                            st.pyplot(fig_temp)
+                            plt.close(fig_temp)
+                        
+                        # Export options
+                        st.markdown("#### 📤 Export Results")
+                        col_exp1, col_exp2, col_exp3 = st.columns(3)
+                        with col_exp1:
+                            if st.button("💾 Export JSON", use_container_width=True):
+                                # Prepare report
+                                report = st.session_state.results_manager.prepare_vicinity_analysis_report(
+                                    vicinity_sweep,
+                                    {},
+                                    target_params,
+                                    analysis_params
+                                )
+                                json_str = json.dumps(report, indent=2, default=st.session_state.results_manager._json_serializer)
+                                st.download_button(
+                                    label="📥 Download JSON",
+                                    data=json_str,
+                                    file_name=f"vicinity_analysis_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                    mime="application/json",
+                                    use_container_width=True
+                                )
+                        with col_exp2:
+                            if st.button("📊 Export CSV", use_container_width=True):
+                                # Create CSV data
+                                rows = []
+                                angles = vicinity_sweep['angles']
+                                for i in range(len(angles)):
+                                    row = {
+                                        'angle_deg': angles[i],
+                                        'sigma_hydro_gpa': vicinity_sweep['stresses']['sigma_hydro'][i],
+                                        'von_mises_gpa': vicinity_sweep['stresses']['von_mises'][i],
+                                        'sigma_mag_gpa': vicinity_sweep['stresses']['sigma_mag'][i],
+                                        'T_sinter_exponential_k': vicinity_sweep['sintering_temps']['exponential'][i],
+                                        'T_sinter_arrhenius_k': vicinity_sweep['sintering_temps']['arrhenius_defect'][i]
+                                    }
+                                    rows.append(row)
+                                df = pd.DataFrame(rows)
+                                csv = df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download CSV",
+                                    data=csv,
+                                    file_name=f"vicinity_data_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                        with col_exp3:
+                            if st.button("📦 Export Complete Package", use_container_width=True):
+                                report = st.session_state.results_manager.prepare_vicinity_analysis_report(
+                                    vicinity_sweep,
+                                    {},
+                                    target_params,
+                                    analysis_params
+                                )
+                                zip_buffer = st.session_state.results_manager.create_comprehensive_export(report)
+                                st.download_button(
+                                    label="📥 Download ZIP",
+                                    data=zip_buffer.getvalue(),
+                                    file_name=f"vicinity_analysis_package_{defect_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                                    mime="application/zip",
+                                    use_container_width=True
+                                )
+                    else:
+                        st.error("Failed to generate vicinity sweep. Please check your data and parameters.")
+            else:
+                st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
+                
+                # Show example visualization when no analysis is performed
+                st.markdown("#### 📊 Example Visualization")
+                # Create example data
+                example_angles = np.linspace(44.7, 64.7, 50)
+                example_stress = 20 * np.exp(-(example_angles - 54.7)**2 / (2*5**2)) + 5
+                example_temp = 623 * np.exp(-example_stress / 30) + 50 * np.sin(np.radians(example_angles))
+                
+                fig_example, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+                
+                # Stress plot
+                ax1.plot(example_angles, example_stress, 'b-', linewidth=3)
+                ax1.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
+                ax1.fill_between(example_angles, example_stress, alpha=0.2, color='blue')
+                ax1.set_xlabel('Orientation (°)', fontsize=12)
+                ax1.set_ylabel('Hydrostatic Stress (GPa)', fontsize=12)
+                ax1.set_title('Example: Stress Concentration at Habit Plane', fontsize=14, fontweight='bold')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # Temperature plot
+                ax2.plot(example_angles, example_temp, 'r-', linewidth=3)
+                ax2.axvline(54.7, color='green', linestyle='--', linewidth=2, label='Habit Plane (54.7°)')
+                ax2.fill_between(example_angles, example_temp, alpha=0.2, color='red')
+                ax2.set_xlabel('Orientation (°)', fontsize=12)
+                ax2.set_ylabel('Sintering Temperature (K)', fontsize=12)
+                ax2.set_title('Example: Temperature Reduction at Habit Plane', fontsize=14, fontweight='bold')
+                ax2.legend()
+                ax2.grid(True, alpha=0.3)
+                
+                # Add Celsius on secondary axis
+                ax2_2 = ax2.twinx()
+                celsius_ticks = ax2.get_yticks()
+                ax2_2.set_ylim(ax2.get_ylim())
+                ax2_2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
+                ax2_2.set_ylabel('Temperature (°C)', fontsize=12)
+                
+                st.pyplot(fig_example)
+                plt.close(fig_example)
+        
+        with tab3:
+            st.markdown('<h2 class="physics-header">🔬 Defect Type Comparison</h2>', unsafe_allow_html=True)
+            
+            if st.session_state.get('generate_analysis', False) or st.session_state.get('quick_analysis') == 'defect_compare':
+                with st.spinner("Comparing defect types..."):
+                    # Compare all defect types
+                    defect_comparison = st.session_state.interpolator.compare_defect_types(
+                        st.session_state.solutions,
+                        angle_range=(0, 360),
+                        n_points=100,
+                        region_type=region_type,
+                        shapes=[shape]
+                    )
+                    
+                    if defect_comparison:
+                        st.success(f"✅ Generated comparison of {len(defect_comparison)} defect types")
+                        # Store in session state
+                        st.session_state.defect_comparison = defect_comparison
+                        
+                        # Display defect comparison
+                        st.markdown("#### 📊 Defect Comparison Results")
+                        # Create tabs for different views
+                        comp_tab1, comp_tab2, comp_tab3 = st.tabs(["Stress Comparison", "Sintering Comparison", "Radar View"])
+                        
+                        with comp_tab1:
+                            # Stress comparison plot
+                            fig_comp = st.session_state.visualizer.create_defect_comparison_plot(
+                                defect_comparison,
+                                stress_component='sigma_hydro',
+                                title="Hydrostatic Stress Comparison Across Defect Types"
+                            )
+                            if fig_comp:
+                                st.plotly_chart(fig_comp, use_container_width=True)
+                        
+                        with comp_tab2:
+                            # Sintering temperature comparison
+                            fig_sinter_comp, ax_sinter = plt.subplots(figsize=(12, 6))
+                            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']
+                            for idx, (key, data) in enumerate(defect_comparison.items()):
+                                if idx < len(colors):
+                                    ax_sinter.plot(
+                                        data['angles'],
+                                        data['sintering_temps'],
+                                        color=colors[idx],
+                                        linewidth=3,
+                                        label=f"{data['defect_type']} (ε*={data['eigen_strain']})"
+                                    )
+                            ax_sinter.axvline(54.7, color='green', linestyle='--', linewidth=2,
+                                            label='Habit Plane (54.7°)')
+                            ax_sinter.set_xlabel('Orientation (°)', fontsize=12)
+                            ax_sinter.set_ylabel('Sintering Temperature (K)', fontsize=12)
+                            ax_sinter.set_title('Sintering Temperature Comparison by Defect Type', fontsize=14, fontweight='bold')
+                            ax_sinter.legend(fontsize=10)
+                            ax_sinter.grid(True, alpha=0.3)
+                            
+                            # Add Celsius on secondary axis
+                            ax_sinter2 = ax_sinter.twinx()
+                            celsius_ticks = ax_sinter.get_yticks()
+                            ax_sinter2.set_ylim(ax_sinter.get_ylim())
+                            ax_sinter2.set_yticklabels([f'{t-273.15:.0f}°C' for t in celsius_ticks])
+                            ax_sinter2.set_ylabel('Temperature (°C)', fontsize=12)
+                            
+                            st.pyplot(fig_sinter_comp)
+                            plt.close(fig_sinter_comp)
+                        
+                        with comp_tab3:
+                            # Radar comparison for habit plane vicinity
+                            habit_range = 30.0
+                            min_angle = 54.7 - habit_range
+                            max_angle = 54.7 + habit_range
+                            
+                            # Filter data for habit plane vicinity
+                            vicinity_comparison = {}
+                            for key, data in defect_comparison.items():
+                                angles = np.array(data['angles'])
+                                mask = (angles >= min_angle) & (angles <= max_angle)
+                                if np.any(mask):
+                                    vicinity_comparison[key] = {
+                                        'angles': angles[mask].tolist(),
+                                        'stresses': {comp: np.array(vals)[mask].tolist()
+                                                    for comp, vals in data['stresses'].items()},
+                                        'sintering_temps': np.array(data['sintering_temps'])[mask].tolist(),
+                                        'defect_type': data['defect_type'],
+                                        'color': data['color'],
+                                        'eigen_strain': data['eigen_strain']
+                                    }
+                            
+                            # Create radar comparison with customization
+                            if vicinity_comparison:
+                                st.markdown("##### ⚙️ Radar View Customization")
+                                col_r1, col_r2, col_r3 = st.columns(3)
+                                with col_r1:
+                                    show_labels_radar = st.checkbox("Show Labels", value=True)
+                                    radial_tick_color = st.color_picker("Radial Tick Color", "#000000")
+                                    radial_tick_width = st.slider("Radial Tick Width", 1, 5, 2)
+                                with col_r2:
+                                    angular_tick_color = st.color_picker("Angular Tick Color", "#000000")
+                                    angular_tick_width = st.slider("Angular Tick Width", 1, 5, 2)
+                                    angular_tick_step = st.select_slider("Angular Tick Step (°)", options=[15, 30, 45, 60, 90], value=45)
+                                with col_r3:
+                                    colormap_choice = st.selectbox("Colormap", ["default", "viridis", "plasma", "RdBu", "hot"])
+                                    font_size_title = st.slider("Title Font Size", 12, 32, 20)
+                                    font_size_axis = st.slider("Axis Label Font Size", 10, 24, 14)
+                                    font_size_tick = st.slider("Tick Font Size", 8, 20, 12)
+                                    custom_label_input = st.text_input(
+                                        "Custom Stress Component Label (e.g., 'Hydrostatic Stress')",
+                                        value="Hydrostatic Stress"
+                                    )
+                                    custom_component_labels = {'sigma_hydro': custom_label_input} if custom_label_input.strip() else None
+                                
+                                fig_radar = st.session_state.visualizer.create_stress_comparison_radar(
+                                    vicinity_comparison,
+                                    title="Stress Components in Habit Plane Vicinity",
+                                    show_labels=show_labels_radar,
+                                    radial_tick_color=radial_tick_color,
+                                    radial_tick_width=radial_tick_width,
+                                    angular_tick_color=angular_tick_color,
+                                    angular_tick_width=angular_tick_width,
+                                    angular_tick_step=angular_tick_step,
+                                    colormap=colormap_choice,
+                                    custom_component_labels=custom_component_labels,
+                                    font_size_title=font_size_title,
+                                    font_size_axis=font_size_axis,
+                                    font_size_tick=font_size_tick
+                                )
+                                if fig_radar:
+                                    st.plotly_chart(fig_radar, use_container_width=True)
+                        
+                        # Summary statistics
+                        st.markdown("#### 📈 Summary Statistics")
+                        # Calculate statistics for each defect
+                        summary_data = []
+                        for key, data in defect_comparison.items():
+                            if 'stresses' in data and 'sigma_hydro' in data['stresses']:
+                                stresses = data['stresses']['sigma_hydro']
+                                if stresses:
+                                    summary_data.append({
+                                        'Defect Type': data['defect_type'],
+                                        'Eigen Strain': data['eigen_strain'],
+                                        'Max Stress (GPa)': f"{max(stresses):.3f}",
+                                        'Mean Stress (GPa)': f"{np.mean(stresses):.3f}",
+                                        'Stress Range (GPa)': f"{max(stresses) - min(stresses):.3f}",
+                                        'Min T_sinter (K)': f"{min(data['sintering_temps']):.1f}",
+                                        'Max T_sinter (K)': f"{max(data['sintering_temps']):.1f}"
+                                    })
+                        
+                        if summary_data:
+                            df_summary = pd.DataFrame(summary_data)
+                            st.dataframe(df_summary, use_container_width=True)
+                        
+                        # Export comparison data
+                        st.markdown("#### 📤 Export Comparison Data")
+                        col_exp1, col_exp2 = st.columns(2)
+                        with col_exp1:
+                            # JSON export
+                            comparison_json = json.dumps(
+                                st.session_state.defect_comparison,
+                                indent=2,
+                                default=st.session_state.results_manager._json_serializer
+                            )
+                            st.download_button(
+                                label="💾 Export JSON",
+                                data=comparison_json,
+                                file_name=f"defect_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                                mime="application/json",
+                                use_container_width=True
+                            )
+                        with col_exp2:
+                            # CSV export
+                            rows = []
+                            for key, data in defect_comparison.items():
+                                angles = data['angles']
+                                for i in range(len(angles)):
+                                    row = {
+                                        'defect_type': data['defect_type'],
+                                        'eigen_strain': data['eigen_strain'],
+                                        'angle_deg': angles[i]
+                                    }
+                                    for comp, stresses in data['stresses'].items():
+                                        if i < len(stresses):
+                                            row[f'{comp}_gpa'] = stresses[i]
+                                    if i < len(data['sintering_temps']):
+                                        row['T_sinter_k'] = data['sintering_temps'][i]
+                                    rows.append(row)
+                            
+                            if rows:
+                                df = pd.DataFrame(rows)
+                                csv = df.to_csv(index=False)
+                                st.download_button(
+                                    label="📊 Export CSV",
+                                    data=csv,
+                                    file_name=f"defect_comparison_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                    else:
+                        st.error("Failed to generate defect comparison. Please check your data and parameters.")
+            else:
+                st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
+                
+                # Show defect comparison info
+                st.markdown("""
+                #### 🔬 Defect Comparison Analysis
+                This analysis compares different defect types (ISF, ESF, Twin, No Defect) across all orientations.
+                **Key comparisons:**
+                1. **Stress distribution** - How each defect concentrates stress
+                2. **Sintering temperature** - Temperature reduction capability
+                3. **Habit plane effects** - Special behavior at 54.7°
+                
+                **Expected insights:**
+                - Twin boundaries show maximum stress concentration
+                - ISF/ESF have intermediate effects
+                - Perfect crystals have minimal stress
+                - Habit plane shows peak effects for twins
+                """)
+        
+        with tab4:
+            st.markdown('<h2 class="physics-header">📊 Comprehensive Dashboard</h2>', unsafe_allow_html=True)
+            
+            if st.session_state.get('generate_analysis', False) or st.session_state.get('quick_analysis') == 'dashboard':
+                with st.spinner("Generating comprehensive dashboard..."):
+                    # Check if we have both vicinity sweep and defect comparison
+                    if ('vicinity_sweep' not in st.session_state or
+                        'defect_comparison' not in st.session_state):
+                        st.warning("Please run both Vicinity Analysis and Defect Comparison first.")
+                        col_run1, col_run2 = st.columns(2)
+                        with col_run1:
+                            if st.button("🏃 Run Vicinity Analysis", use_container_width=True):
+                                st.session_state.quick_analysis = "habit_plane"
+                                st.rerun()
+                        with col_run2:
+                            if st.button("🏃 Run Defect Comparison", use_container_width=True):
+                                st.session_state.quick_analysis = "defect_compare"
+                                st.rerun()
+                    else:
+                        # Generate comprehensive dashboard
+                        vicinity_sweep = st.session_state.vicinity_sweep
+                        defect_comparison = st.session_state.defect_comparison
+                        
+                        # Create comprehensive visualization
+                        fig_dashboard = st.session_state.visualizer.create_comprehensive_dashboard(
+                            vicinity_sweep,
+                            defect_comparison,
+                            title=f"Comprehensive Analysis - {st.session_state.current_target_params.get('defect_type', 'Unknown')}"
+                        )
+                        if fig_dashboard:
+                            st.plotly_chart(fig_dashboard, use_container_width=True)
+                            
+                        # Additional analysis
+                        st.markdown("#### 📈 Advanced Analysis")
+                        # Create tabs for different analyses
+                        adv_tab1, adv_tab2, adv_tab3 = st.tabs(["Physics Analysis", "Sintering Optimization", "Export Package"])
+                        
+                        with adv_tab1:
+                            # Physics-based analysis
+                            st.markdown("##### 🔬 Physics-Based Analysis")
+                            # Calculate stress intensity factors
+                            st.write("**Stress Intensity Factors (K):**")
+                            col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+                            defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
+                            for i, defect in enumerate(defect_types):
+                                with [col_k1, col_k2, col_k3, col_k4][i]:
+                                    # Find max stress for this defect
+                                    max_stress = 0
+                                    for key, data in defect_comparison.items():
+                                        if data['defect_type'] == defect:
+                                            if 'sigma_hydro' in data['stresses']:
+                                                max_stress = max(data['stresses']['sigma_hydro'])
+                                            break
+                                    # Calculate K
+                                    K = st.session_state.physics_analyzer.compute_stress_intensity_factor(
+                                        {'sigma_hydro': {'max_abs': max_stress}},
+                                        st.session_state.physics_analyzer.get_eigen_strain(defect),
+                                        defect
+                                    )
+                                    st.metric(
+                                        f"K for {defect}",
+                                        f"{K:.2f} MPa√m",
+                                        "Stress Intensity"
+                                    )
+                            
+                            # Crystal orientation analysis
+                            st.markdown("##### 🧊 Crystal Orientation Effects")
+                            orientation_effects = []
+                            for angle in [0, 30, 45, 54.7, 60, 90]:
+                                effect = st.session_state.physics_analyzer.analyze_crystal_orientation_effects(
+                                    {},  # Empty stress data for basic analysis
+                                    angle
+                                )
+                                orientation_effects.append(effect)
+                            if orientation_effects:
+                                df_orientation = pd.DataFrame(orientation_effects)
+                                st.dataframe(df_orientation, use_container_width=True)
+                        
+                        with adv_tab2:
+                            # Sintering optimization
+                            st.markdown("##### 🔥 Sintering Optimization Analysis")
+                            # Find optimal orientation for each defect
+                            optimal_data = []
+                            for key, data in defect_comparison.items():
+                                if 'angles' in data and 'sintering_temps' in data:
+                                    temps = data['sintering_temps']
+                                    angles = data['angles']
+                                    # Find minimum sintering temperature
+                                    min_temp_idx = np.argmin(temps)
+                                    min_temp = temps[min_temp_idx]
+                                    opt_angle = angles[min_temp_idx]
+                                    optimal_data.append({
+                                        'Defect Type': data['defect_type'],
+                                        'Optimal Angle (°)': f"{opt_angle:.1f}",
+                                        'Min T_sinter (K)': f"{min_temp:.1f}",
+                                        'Min T_sinter (°C)': f"{min_temp-273.15:.1f}",
+                                        'Temperature Reduction (K)': f"{623.0 - min_temp:.1f}",
+                                        'Is Near Habit Plane': abs(opt_angle - 54.7) < 5.0
+                                    })
+                            
+                            if optimal_data:
+                                df_optimal = pd.DataFrame(optimal_data)
+                                st.dataframe(df_optimal, use_container_width=True)
+                            
+                            # Recommendation
+                            st.markdown("##### 💡 Optimization Recommendation")
+                            if optimal_data:
+                                best_defect = min(optimal_data, key=lambda x: float(x['Min T_sinter (K)'].split()[0]))
+                                st.info(f"""
+                                **Recommended Configuration:**
+                                - **Defect Type:** {best_defect['Defect Type']}
+                                - **Optimal Orientation:** {best_defect['Optimal Angle (°)']}°
+                                - **Minimum Sintering Temperature:** {best_defect['Min T_sinter (K)']} K ({best_defect['Min T_sinter (°C)']}°C)
+                                - **Temperature Reduction:** {best_defect['Temperature Reduction (K)']} K from reference
+                                
+                                **Note:** {best_defect['Defect Type']} provides the lowest sintering temperature among all analyzed defect types at an optimal orientation.
+                                """)
+                        
+                        with adv_tab3:
+                            # Comprehensive export
+                            st.markdown("##### 📦 Comprehensive Export Package")
+                            st.write("""
+                            The comprehensive export package includes:
+                            1. Complete JSON report with all analysis data
+                            2. CSV files for all datasets
+                            3. README with analysis documentation
+                            4. Python script for data processing
+                            5. Configuration file
+                            """)
+                            
+                            # Prepare comprehensive report
+                            if st.button("🛠️ Prepare Comprehensive Report", use_container_width=True):
+                                with st.spinner("Preparing comprehensive report..."):
+                                    report = st.session_state.results_manager.prepare_vicinity_analysis_report(
+                                        vicinity_sweep,
+                                        defect_comparison,
+                                        st.session_state.current_target_params,
+                                        st.session_state.current_analysis_params
+                                    )
+                                    zip_buffer = st.session_state.results_manager.create_comprehensive_export(report)
+                                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                                    st.download_button(
+                                        label="📥 Download Complete Package",
+                                        data=zip_buffer.getvalue(),
+                                        file_name=f"comprehensive_analysis_{timestamp}.zip",
+                                        mime="application/zip",
+                                        use_container_width=True
+                                    )
+            else:
+                st.info("👈 Configure analysis parameters in the sidebar and click 'Generate Analysis'")
+                
+                # Dashboard features
+                st.markdown("""
+                #### 📊 Comprehensive Dashboard Features
+                The comprehensive dashboard provides an integrated view of all analysis results:
+                
+                **1. Multi-Panel Visualization**
+                - Sunburst charts for polar stress visualization
+                - Line plots for detailed orientation dependence
+                - Radar charts for component comparison
+                - Defect comparison across all types
+                
+                **2. Advanced Analysis**
+                - Physics-based stress intensity calculations
+                - Crystal orientation effects
+                - Sintering temperature optimization
+                - System classification mapping
+                
+                **3. Comprehensive Export**
+                - Complete data package with all results
+                - Processing scripts for further analysis
+                - Documentation and configuration files
+                
+                **To generate the dashboard:**
+                1. Run both Vicinity Analysis and Defect Comparison
+                2. Click "Generate Dashboard" in the sidebar
+                3. Explore the comprehensive results
+                """)
+                
+                # Quick status check
+                st.markdown("#### 📊 Analysis Status")
+                col_status1, col_status2 = st.columns(2)
+                with col_status1:
+                    if 'vicinity_sweep' in st.session_state:
+                        st.success("✅ Vicinity analysis data available")
+                    else:
+                        st.warning("⚠️ Vicinity analysis not yet run")
+                with col_status2:
+                    if 'defect_comparison' in st.session_state:
+                        st.success("✅ Defect comparison data available")
+                    else:
+                        st.warning("⚠️ Defect comparison not yet run")
+
+# =============================================
+# RUN THE APPLICATION
+# =============================================
+if __name__ == "__main__":
+    main()
