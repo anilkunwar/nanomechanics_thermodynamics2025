@@ -230,7 +230,9 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa30-streamlit-red)](https:///mechanicalstress-interpolation-at-theta30.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa31-streamlit-red)](https:///mechanicalstress-interpolation-at-theta31.streamlit.app/) (Focus on radar chart and improvement on r29, The vacancy mediated diffusion is not correctly represented)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa31-streamlit-red)](https:///mechanicalstress-interpolation-at-theta31.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa32-streamlit-red)](https:///mechanicalstress-interpolation-at-theta32.streamlit.app/) (Focus on radar chart and improvement on r29, The vacancy mediated diffusion is not correctly represented)
 
 
 
