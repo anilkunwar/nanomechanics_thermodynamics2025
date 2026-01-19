@@ -3242,8 +3242,130 @@ def main():
                         'Parameter': 'Field Shape',
                         'Value': f"{result['shape'][0]} × {result['shape'][1]}"
                     })
+                    params_data.append({
+                        'Parameter': 'Orientation Weight',
+                        'Value': f"{orientation_weight:.1f}"
+                    })
+                    params_data.append({
+                        'Parameter': 'Spatial Sigma',
+                        'Value': f"{spatial_sigma:.2f}"
+                    })
+                    params_data.append({
+                        'Parameter': 'Attention Temperature',
+                        'Value': f"{attention_temp:.2f}"
+                    })
                     
                     df_params = pd.DataFrame(params_data)
-                    st.dataframe(df_params,
-                          
-               
+                    st.dataframe(df_params, use_container_width=True)
+                    
+                    # Export parameters as CSV
+                    csv_params = df_params.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Parameters CSV",
+                        data=csv_params,
+                        file_name=f"parameters_theta_{result['target_angle']:.1f}.csv",
+                        mime="text/csv",
+                        key="download_params"
+                    )
+                
+                # Export visualization settings
+                st.markdown("##### 🎨 Export Visualization Settings")
+                viz_settings = {
+                    'colormap': colormap_name,
+                    'colormap_category': colormap_category,
+                    'orientation_weight': orientation_weight,
+                    'spatial_sigma': spatial_sigma,
+                    'attention_temp': attention_temp,
+                    'd_model': d_model,
+                    'visualization_timestamp': datetime.now().isoformat()
+                }
+                viz_json = json.dumps(viz_settings, indent=2)
+                st.download_button(
+                    label="📥 Download Visualization Settings",
+                    data=viz_json,
+                    file_name=f"visualization_settings_theta_{result['target_angle']:.1f}.json",
+                    mime="application/json",
+                    key="download_viz_settings"
+                )
+            
+            # Export validation results if available
+            if st.session_state.validation_result:
+                with st.expander("🧪 Export Validation Results", expanded=False):
+                    st.markdown("##### 📋 Validation Results Export")
+                    
+                    validation_result = st.session_state.validation_result
+                    
+                    # Create validation summary table
+                    validation_summary = []
+                    for comp in validation_result['comparisons']:
+                        ref_angle = comp['reference_angle']
+                        ang_diff = comp['angular_difference']
+                        
+                        for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                            if component in comp['error_metrics']:
+                                metrics = comp['error_metrics'][component]
+                                validation_summary.append({
+                                    'Component': component.replace('_', ' ').title(),
+                                    'Reference Angle': f"{ref_angle:.1f}°",
+                                    'Angular Difference': f"{ang_diff:.1f}°",
+                                    'MAE (GPa)': f"{metrics['mae']:.4f}",
+                                    'RMSE (GPa)': f"{metrics['rmse']:.4f}",
+                                    'Max Error (GPa)': f"{metrics['max_error']:.4f}",
+                                    'Relative Error (%)': f"{metrics['rel_error']*100:.2f}"
+                                })
+                    
+                    if validation_summary:
+                        df_validation = pd.DataFrame(validation_summary)
+                        st.dataframe(df_validation, use_container_width=True)
+                        
+                        # Export validation as CSV
+                        csv_validation = df_validation.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download Validation CSV",
+                            data=csv_validation,
+                            file_name=f"validation_results_theta_{validation_result['orientation_analysis']['target_angle']:.1f}.csv",
+                            mime="text/csv",
+                            key="download_validation_csv"
+                        )
+                    
+                    # Export full validation data as JSON
+                    validation_json = json.dumps(validation_result, indent=2, default=lambda o: str(o))
+                    st.download_button(
+                        label="📥 Download Full Validation JSON",
+                        data=validation_json,
+                        file_name=f"full_validation_data_theta_{validation_result['orientation_analysis']['target_angle']:.1f}.json",
+                        mime="application/json",
+                        key="download_full_validation"
+                    )
+                    
+                    # Export validation plots
+                    if st.button("📊 Export Validation Plots", use_container_width=True, key="export_validation_plots"):
+                        # Create validation visualization
+                        validation_fig = st.session_state.validator.create_validation_visualization(
+                            validation_result,
+                            figsize=(18, 14)
+                        )
+                        
+                        # Save to buffer
+                        buf = BytesIO()
+                        validation_fig.savefig(buf, format="png", dpi=300, bbox_inches="tight")
+                        buf.seek(0)
+                        
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        filename = f"validation_plots_theta_{validation_result['orientation_analysis']['target_angle']:.1f}_{timestamp}.png"
+                        
+                        st.download_button(
+                            label="📥 Download Validation Plots (300 DPI)",
+                            data=buf,
+                            file_name=filename,
+                            mime="image/png",
+                            use_container_width=True,
+                            key="download_validation_plots"
+                        )
+                        plt.close(validation_fig)
+            else:
+                st.info("No interpolation results available. Please perform interpolation first.")
+
+# Run the application
+if __name__ == "__main__":
+    main()
