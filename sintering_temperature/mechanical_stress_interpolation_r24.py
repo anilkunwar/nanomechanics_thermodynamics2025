@@ -1996,7 +1996,7 @@ def main():
                     
                     ax_sources.set_xlabel('Source Index', fontsize=14)
                     ax_sources.set_ylabel('Weight', fontsize=14)
-                    ax_sources.set_title('Source Contributions with Angular Orientation', fontsize=16, fontweight='bold')
+                    #ax_sources.set_title('Source Contributions with Angular Orientation', fontsize=16, fontweight='bold')
                     ax_sources.grid(True, alpha=0.3, axis='y')
                     
                     # Highlight top 3 contributors
