@@ -953,15 +953,16 @@ class HeatMapVisualizer:
         
         # Get statistics for each component
         stats_data = []
-        for comp in components:
-            if comp in interpolated_fields:
-                field = interpolated_fields[comp]
-                stats_data.append({
-                    'component': comp,
-                    'max': np.max(field),
-                    'mean': np.mean(field),
-                    'std': np.std(field)
-                })
+        if 'statistics' in source_info:
+            for comp in components:
+                if comp in source_info['statistics']:
+                    stats = source_info['statistics'][comp]
+                    stats_data.append({
+                        'component': comp,
+                        'max': stats['max'],
+                        'mean': stats['mean'],
+                        'std': stats['std']
+                    })
         
         if stats_data:
             x = np.arange(len(components))
@@ -1135,7 +1136,7 @@ class HeatMapVisualizer:
         if show_habit_plane:
             habit_plane_rad = np.radians(54.7)
             ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, 
-                    color='blue', alpha=0.5, label='Habit Plane (54.7°)')
+                    color='blue', alpha=0.5, label='Habit Plane (54.7°')
         
         # Plot cardinal directions
         for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
@@ -1642,6 +1643,12 @@ def main():
         st.session_state.interpolation_result = None
     if 'selected_ground_truth' not in st.session_state:
         st.session_state.selected_ground_truth = None
+    if 'spatial_sigma' not in st.session_state:
+        st.session_state.spatial_sigma = 0.2
+    if 'locality_weight_factor' not in st.session_state:
+        st.session_state.locality_weight_factor = 0.7
+    if 'temperature' not in st.session_state:
+        st.session_state.temperature = 1.0
     
     # Sidebar
     with st.sidebar:
@@ -1668,780 +1675,851 @@ def main():
         # Debug button
         if st.button("🔍 Debug Feature Dimensions", use_container_width=True):
             if st.session_state.solutions:
-                source_params = [sol['params'] for sol in st.session_state.solutions[:1]]
-                shape = st.session_state.transformer_interpolator.debug_feature_dimensions(
-                    source_params, 54.7
+                source_params = [sol['params'] for sol in st.session_state.solutions]
+                target_angle = 54.7 if 'target_angle' not in st.session_state else st.session_state.target_angle
+                shape = source_params[0].get('shape', 'Square')
+                defect_type = source_params[0].get('defect_type', 'Twin')
+                target_params = {
+                    'theta': np.radians(target_angle),
+                    'shape': shape,
+                    'defect_type': defect_type
+                }
+                st.session_state.transformer_interpolator.debug_feature_dimensions(source_params, target_angle)
+            else:
+                st.warning("No solutions loaded. Please load solutions first.")
+        
+        # Spatial locality control
+        st.markdown("#### 📍 Spatial Locality Control")
+        with st.expander("Advanced Spatial Parameters", expanded=False):
+            st.session_state.spatial_sigma = st.slider(
+                "Spatial Decay Sigma (controls how quickly influence decreases with distance)",
+                min_value=0.05,
+                max_value=1.0,
+                value=0.2,
+                step=0.05,
+                help="Smaller values = sharper spatial locality, larger values = more global influence"
+            )
+            
+            st.session_state.locality_weight_factor = st.slider(
+                "Locality Weight Factor (0-1)",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.7,
+                step=0.1,
+                help="0.0 = Pure transformer attention, 1.0 = Pure spatial locality weights"
+            )
+            
+            st.session_state.temperature = st.slider(
+                "Attention Temperature",
+                min_value=0.1,
+                max_value=5.0,
+                value=1.0,
+                step=0.1,
+                help="Lower values make attention more peaked, higher values make it more uniform"
+            )
+            
+            if st.button("Apply Spatial Parameters", use_container_width=True):
+                st.session_state.transformer_interpolator.set_spatial_parameters(
+                    spatial_sigma=st.session_state.spatial_sigma,
+                    locality_weight_factor=st.session_state.locality_weight_factor
                 )
-                st.write(f"Feature dimensions: {shape}")
-                st.write(f"Number of solutions: {len(st.session_state.solutions)}")
+                st.success("Spatial parameters updated!")
         
-        # Show loaded solutions info
+        # Display loaded solutions
         if st.session_state.solutions:
-            with st.expander(f"📂 Loaded Solutions ({len(st.session_state.solutions)})"):
-                for i, sol in enumerate(st.session_state.solutions[:5]):
-                    params = sol.get('params', {})
-                    theta_deg = np.degrees(params.get('theta', 0))
-                    st.write(f"**Solution {i+1}:** {params.get('defect_type', 'Unknown')} at θ={theta_deg:.1f}°")
-                if len(st.session_state.solutions) > 5:
-                    st.write(f"... and {len(st.session_state.solutions) - 5} more")
-        
-        # Target parameters
-        st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
-        
-        # Custom polar angle with example of 54.7° and 23°
-        custom_theta = st.number_input(
-            "Custom Polar Angle θ (degrees)",
-            min_value=0.0,
-            max_value=360.0,
-            value=54.7,
-            step=0.1,
-            help="Set custom polar angle for interpolation (default: 54.7°). Try 23° for comparison."
-        )
-        
-        # Defect type
-        defect_type = st.selectbox(
-            "Defect Type",
-            ["ISF", "ESF", "Twin", "No Defect"],
-            index=2,
-            help="Select the defect type for interpolation"
-        )
-        
-        # Auto-set eigen strain based on defect type
-        eigen_strains = {"ISF": 0.71, "ESF": 1.41, "Twin": 2.12, "No Defect": 0.0}
-        eps0 = eigen_strains[defect_type]
-        
-        # Shape
-        shape = st.selectbox(
-            "Shape",
-            ["Square", "Horizontal Fault", "Vertical Fault", "Rectangle"],
-            index=0
-        )
-        
-        # Kappa parameter
-        kappa = st.slider(
-            "Kappa Parameter",
-            min_value=0.1,
-            max_value=2.0,
-            value=0.6,
-            step=0.1,
-            help="Material parameter"
-        )
-        
-        # Spatial locality controls
-        st.markdown('<h2 class="section-header">📍 Spatial Locality Controls</h2>', unsafe_allow_html=True)
-        
-        # Spatial locality weight factor
-        locality_weight_factor = st.slider(
-            "Spatial Locality Weight Factor",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.7,
-            step=0.1,
-            help="Control balance between transformer attention (left) and spatial locality (right). Higher values give more weight to spatial locality."
-        )
-        
-        # Spatial sigma for distance decay
-        spatial_sigma = st.slider(
-            "Spatial Sigma (Distance Decay)",
-            min_value=0.05,
-            max_value=1.0,
-            value=0.2,
-            step=0.05,
-            help="Controls how quickly weights decay with distance. Smaller values give higher weights to closer sources."
-        )
-        
-        # Update transformer model with new parameters
-        st.session_state.transformer_interpolator.set_spatial_parameters(
-            spatial_sigma=spatial_sigma,
-            locality_weight_factor=locality_weight_factor
-        )
-        
-        # Visualization parameters
-        st.markdown('<h2 class="section-header">📊 Visualization</h2>', unsafe_allow_html=True)
-        
-        colormap_category = st.selectbox(
-            "Colormap Category",
-            list(COLORMAP_OPTIONS.keys()),
-            index=4,  # Default to Publication Standard
-            help="Select colormap category for publication-quality figures"
-        )
-        
-        colormap_name = st.selectbox(
-            "Select Colormap",
-            COLORMAP_OPTIONS[colormap_category],
-            index=0
-        )
-        
-        # Stress component selection
-        stress_component = st.selectbox(
-            "Stress Component for Analysis",
-            ["von_mises", "sigma_hydro", "sigma_mag"],
-            index=0,
-            help="Select which stress component to display in the dashboard"
-        )
-        
-        # Ground truth selection for comparison
-        st.markdown("#### 🔍 Ground Truth Selection")
-        if st.session_state.solutions and st.session_state.interpolation_result:
-            source_angles = []
-            source_defects = []
-            for sol in st.session_state.solutions:
+            st.markdown("#### 📋 Loaded Solutions")
+            for i, sol in enumerate(st.session_state.solutions):
                 params = sol.get('params', {})
                 theta_deg = np.degrees(params.get('theta', 0))
-                defect = params.get('defect_type', 'Unknown')
-                source_angles.append(f"{theta_deg:.1f}° ({defect})")
-            
-            selected_ground_truth = st.selectbox(
-                "Select Ground Truth Source",
-                options=range(len(source_angles)),
-                format_func=lambda x: f"Source {x+1}: {source_angles[x]}",
-                index=min(0, len(source_angles)-1),
-                help="Select a source file to compare with the interpolated result"
-            )
-            st.session_state.selected_ground_truth = selected_ground_truth
+                filename = sol.get('metadata', {}).get('filename', f'Solution {i+1}')
+                st.markdown(f"**{filename}**<br>θ = {theta_deg:.1f}°, Defect: {params.get('defect_type', 'Unknown')}", 
+                           unsafe_allow_html=True)
         
-        # Interpolation button
-        st.markdown("---")
-        if st.button("⚡ Perform Transformer Interpolation", type="primary", use_container_width=True):
-            if not st.session_state.solutions:
-                st.error("Please load solutions first!")
-            else:
-                # Prepare target parameters
-                target_params = {
-                    'defect_type': defect_type,
-                    'eps0': eps0,
-                    'kappa': kappa,
-                    'theta': np.radians(custom_theta),
-                    'shape': shape
-                }
-                
-                # Perform interpolation
-                with st.spinner("Performing transformer-based spatial interpolation with locality weighting..."):
-                    try:
-                        result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
-                            st.session_state.solutions,
-                            custom_theta,
-                            target_params
-                        )
-                        if result:
-                            st.session_state.interpolation_result = result
-                            st.success(f"✅ Successfully interpolated stress fields at θ={custom_theta:.1f}° using {result['num_sources']} sources")
-                            st.info(f"💡 Spatial weight factor: {locality_weight_factor:.1f} (higher = more spatial locality influence)")
-                        else:
-                            st.error("❌ Failed to interpolate stress fields. Check data compatibility.")
-                    except Exception as e:
-                        st.error(f"❌ Error during interpolation: {str(e)}")
-                        import traceback
-                        st.error(f"Traceback: {traceback.format_exc()}")
-    
-    # Main content - Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📊 Results & Comparison",
-        "🔬 Visualization Gallery", 
-        "🎯 Target Parameters",
-        "⚖️ Weights Analysis", 
-        "📤 Export"
-    ])
-    
-    with tab1:
-        st.markdown('<h2 class="section-header">📊 Results & Comparison Dashboard</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.interpolation_result:
-            result = st.session_state.interpolation_result
-            
-            # Display key metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                vm_stats = result['statistics']['von_mises']
-                st.metric("Von Mises Max", f"{vm_stats['max']:.3f} GPa",
-                         f"Mean: {vm_stats['mean']:.3f} GPa")
-            with col2:
-                hydro_stats = result['statistics']['sigma_hydro']
-                st.metric("Hydrostatic Range",
-                         f"{hydro_stats['max_tension']:.3f}/{hydro_stats['max_compression']:.3f} GPa",
-                         f"Mean: {hydro_stats['mean']:.3f} GPa")
-            with col3:
-                mag_stats = result['statistics']['sigma_mag']
-                st.metric("Stress Magnitude Max", f"{mag_stats['max']:.3f} GPa",
-                         f"Mean: {mag_stats['mean']:.3f} GPa")
-            with col4:
-                st.metric("Field Shape", f"{result['shape'][0]}×{result['shape'][1]}",
-                         f"θ={result['target_angle']:.1f}° | Sources: {result.get('num_sources', 0)}")
-            
-            # Spatial locality information
-            with st.expander("📍 Spatial Locality Weight Analysis", expanded=True):
-                col_s1, col_s2, col_s3 = st.columns(3)
-                entropy = result['weights']['entropy']
-                
-                with col_s1:
-                    st.metric("Spatial Locality Weight Factor", 
-                             f"{locality_weight_factor:.1f}",
-                             "Higher = more spatial locality influence")
-                
-                with col_s2:
-                    st.metric("Combined Weight Entropy", 
-                             f"{entropy['combined']:.3f}",
-                             "Lower = more focused on specific sources")
-                
-                with col_s3:
-                    spatial_influence = (1 - locality_weight_factor) * 100
-                    transformer_influence = locality_weight_factor * 100
-                    st.metric("Weight Distribution", 
-                             f"{transformer_influence:.0f}%/{spatial_influence:.0f}%",
-                             "Transformer/Spatial")
-                
-                # Top contributing sources
-                combined_weights = np.array(result['weights']['combined'])
-                top_indices = np.argsort(combined_weights)[-3:][::-1]
-                
-                st.markdown("##### 🔝 Top 3 Contributing Sources")
-                cols = st.columns(3)
-                for i, idx in enumerate(top_indices):
-                    with cols[i]:
-                        source_theta = result['source_theta_degrees'][idx]
-                        angular_diff = abs(source_theta - result['target_angle'])
-                        weight_percent = combined_weights[idx] * 100
-                        
-                        st.markdown(f"""
-                        <div style="background-color: #f0f9ff; padding: 15px; border-radius: 10px; border: 2px solid #3b82f6;">
-                            <h4 style="margin: 0 0 10px 0; color: #1e3a8a;">Source #{idx+1}</h4>
-                            <p style="margin: 5px 0; font-weight: bold;">θ = {source_theta:.1f}°</p>
-                            <p style="margin: 5px 0;">Δθ = {angular_diff:.1f}° from target</p>
-                            <p style="margin: 5px 0; color: #ef4444; font-weight: bold;">Weight: {weight_percent:.1f}%</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-            
-            # Comprehensive comparison dashboard
-            st.markdown("#### 🔬 Comprehensive Comparison Dashboard")
-            
-            # Prepare source info for the dashboard
-            source_info = {
-                'theta_degrees': result['source_theta_degrees'],
-                'distances': result['source_distances'],
-                'weights': result['weights'],
-                'statistics': result['statistics']
-            }
-            
-            # Create dashboard figure
-            fig_dashboard = st.session_state.heatmap_visualizer.create_comparison_dashboard(
-                result['fields'],
-                result['source_fields'],
-                source_info,
-                result['target_angle'],
-                defect_type,
-                component=stress_component,
-                cmap_name=colormap_name,
-                ground_truth_index=st.session_state.selected_ground_truth
-            )
-            
-            st.pyplot(fig_dashboard, use_container_width=True)
-            plt.close(fig_dashboard)
-            
-            # Additional insights about the interpolation
-            with st.expander("💡 Interpolation Insights", expanded=False):
-                st.markdown(f"""
-                **Interpolation Analysis for θ = {result['target_angle']:.1f}°:**
-                
-                - **Spatial Weighting:** The model used a spatial locality weight factor of {locality_weight_factor:.1f}, 
-                  giving {'more' if locality_weight_factor > 0.5 else 'less'} emphasis to transformer attention weights.
-                
-                - **Closest Sources:** The top contributing sources have angular distances of 
-                  {', '.join([f'{d:.1f}°' for d in sorted(result['source_distances'])[:3]])} from the target angle.
-                
-                - **Weight Distribution:** The entropy of the combined weights is {entropy['combined']:.3f}, indicating 
-                  {'focused' if entropy['combined'] < 0.5 else 'distributed'} attention across sources.
-                
-                - **Ground Truth Comparison:** When comparing to the selected ground truth source (θ = {result['source_theta_degrees'][st.session_state.selected_ground_truth]:.1f}°), 
-                  the spatial correlation coefficient is {1.0 - entropy['combined']:.3f}, indicating 
-                  {'excellent' if (1.0 - entropy['combined']) > 0.8 else 'good' if (1.0 - entropy['combined']) > 0.6 else 'moderate'} similarity.
-                """)
-        else:
-            st.info("💡 Configure parameters and click 'Perform Transformer Interpolation' to generate results. Try comparing θ=54.7° with θ=23° to see the effect of spatial locality weighting.")
-    
-    with tab2:
-        st.markdown('<h2 class="section-header">🔬 Visualization Gallery</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.interpolation_result:
-            result = st.session_state.interpolation_result
-            
-            viz_type = st.selectbox(
-                "Visualization Type",
-                ["2D Heatmap", "Interactive Heatmap", "3D Surface", "Interactive 3D Surface"],
-                index=0
-            )
-            
-            if viz_type == "2D Heatmap":
-                fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
-                    result['fields'][stress_component],
-                    title=f"{stress_component.replace('_', ' ').title()}",
-                    cmap_name=colormap_name,
-                    colorbar_label=f"{stress_component.replace('_', ' ').title()} (GPa)",
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type']
-                )
-                st.pyplot(fig)
-                plt.close(fig)
-                
-            elif viz_type == "Interactive Heatmap":
-                fig = st.session_state.heatmap_visualizer.create_interactive_heatmap(
-                    result['fields'][stress_component],
-                    title=f"{stress_component.replace('_', ' ').title()}",
-                    cmap_name=colormap_name,
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type']
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-            elif viz_type == "3D Surface":
-                fig = st.session_state.heatmap_visualizer.create_3d_surface_plot(
-                    result['fields'][stress_component],
-                    title=f"3D {stress_component.replace('_', ' ').title()}",
-                    cmap_name=colormap_name,
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type']
-                )
-                st.pyplot(fig)
-                plt.close(fig)
-                
-            elif viz_type == "Interactive 3D Surface":
-                fig = st.session_state.heatmap_visualizer.create_interactive_3d_surface(
-                    result['fields'][stress_component],
-                    title=f"3D {stress_component.replace('_', ' ').title()}",
-                    cmap_name=colormap_name,
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type']
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Component comparison
-            st.markdown("#### 📈 Component Comparison")
-            comparison_fields = {
-                'Von Mises': result['fields']['von_mises'],
-                'Hydrostatic': result['fields']['sigma_hydro'],
-                'Magnitude': result['fields']['sigma_mag']
-            }
-            fig_comparison = st.session_state.heatmap_visualizer.create_comparison_heatmaps(
-                comparison_fields,
-                cmap_name=colormap_name,
-                target_angle=result['target_angle'],
-                defect_type=result['target_params']['defect_type']
-            )
-            st.pyplot(fig_comparison)
-            plt.close(fig_comparison)
-            
-        else:
-            st.info("No interpolation results available. Please perform interpolation first.")
-        
-        # Angular orientation
-        st.markdown("#### 🧭 Angular Orientation")
-        col_a1, col_a2 = st.columns(2)
-        with col_a1:
-            fig_angular = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
-                custom_theta if st.session_state.interpolation_result else 54.7,
-                defect_type
-            )
-            st.pyplot(fig_angular)
-            plt.close(fig_angular)
-        
-        with col_a2:
-            st.markdown("""
-            **Angular Orientation Analysis:**
-            
-            - The red arrow shows the target defect orientation at θ = {:.1f}°
-            - The blue arrow shows the habit plane orientation at 54.7°
-            - The angular difference (Δθ) influences stress field characteristics
-            - When Δθ is small, stress fields are more similar to habit plane configurations
-            """.format(custom_theta))
-    
-    with tab3:
-        st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.interpolation_result:
-            result = st.session_state.interpolation_result
-            target_params = result['target_params']
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("##### 📋 Target Parameter Summary")
-                param_table = """
-                | Parameter | Value |
-                |-----------|-------|
-                | Polar Angle (θ) | {:.1f}° |
-                | Defect Type | {} |
-                | Eigen Strain (ε₀) | {:.3f} |
-                | Kappa Parameter (κ) | {:.2f} |
-                | Shape | {} |
-                | Habit Plane Deviation | {:.1f}° |
-                """.format(
-                    result['target_angle'],
-                    target_params['defect_type'],
-                    target_params['eps0'],
-                    target_params['kappa'],
-                    target_params['shape'],
-                    abs(result['target_angle'] - 54.7)
-                )
-                st.markdown(param_table)
-            
-            with col2:
-                st.markdown("##### 🎛️ Parameter Influence")
-                st.markdown("""
-                **Parameter Effects on Stress Fields:**
-                
-                - **Polar Angle (θ):** Controls defect orientation relative to crystal axes
-                - **Eigen Strain (ε₀):** Higher values increase overall stress magnitude
-                - **Kappa (κ):** Controls stress gradient steepness
-                - **Defect Type:** Determines stress field symmetry and distribution
-                - **Shape:** Affects geometric stress concentration patterns
-                
-                **Spatial Locality Settings:**
-                - **Weight Factor:** {:.1f} (Transformer/Spatial balance)
-                - **Spatial Sigma:** {:.2f} (Distance decay rate)
-                """.format(locality_weight_factor, spatial_sigma))
-            
-            # Source parameter comparison
-            st.markdown("##### 🔍 Source Parameter Comparison")
-            if 'source_fields' in result and result['source_fields']:
-                source_data = []
-                for i, source in enumerate(result['source_fields']):
-                    params = source['source_params']
-                    theta_deg = np.degrees(params['theta'])
-                    vm_max = np.max(source['von_mises'])
-                    hydro_max = np.max(np.abs(source['sigma_hydro']))
-                    weight = result['weights']['combined'][i]
-                    
-                    source_data.append({
-                        'Source': f"#{i+1}",
-                        'θ (degrees)': f"{theta_deg:.1f}",
-                        'Defect Type': params['defect_type'],
-                        'Von Mises Max (GPa)': f"{vm_max:.3f}",
-                        'Hydrostatic Max (GPa)': f"{hydro_max:.3f}",
-                        'Weight (%)': f"{weight*100:.1f}"
-                    })
-                
-                df_sources = pd.DataFrame(source_data)
-                st.dataframe(df_sources.style.background_gradient(subset=['Weight (%)'], cmap='Blues'))
-        else:
-            st.info("No interpolation results available. Please perform interpolation first.")
-    
-    with tab4:
-        st.markdown('<h2 class="section-header">⚖️ Weights Analysis</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.interpolation_result:
-            result = st.session_state.interpolation_result
-            weights = result['weights']
-            
-            # Create comprehensive weights visualization
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("##### 📊 Weight Distribution")
-                fig_weights, ax = plt.subplots(figsize=(10, 6))
-                
-                x = np.arange(len(weights['combined']))
-                width = 0.25
-                
-                bars1 = ax.bar(x - width, weights['transformer'], width, label='Transformer Attention', alpha=0.8, color='blue')
-                bars2 = ax.bar(x, weights['positional'], width, label='Spatial Locality', alpha=0.8, color='green')
-                bars3 = ax.bar(x + width, weights['combined'], width, label='Combined Weights', alpha=0.8, color='red')
-                
-                # Add source theta labels
-                theta_labels = [f"{theta:.0f}°" for theta in result['source_theta_degrees']]
-                ax.set_xticks(x)
-                ax.set_xticklabels(theta_labels, rotation=45, ha='right')
-                
-                ax.set_xlabel('Source Angle (θ)', fontsize=14)
-                ax.set_ylabel('Weight', fontsize=14)
-                ax.set_title('Weight Distribution Analysis', fontsize=16, fontweight='bold')
-                ax.legend(fontsize=12)
-                ax.grid(True, alpha=0.3)
-                
-                plt.tight_layout()
-                st.pyplot(fig_weights)
-                plt.close(fig_weights)
-            
-            with col2:
-                st.markdown("##### 📈 Weight Statistics")
-                
-                entropy_trans = weights['entropy']['transformer']
-                entropy_spatial = weights['entropy']['spatial']
-                entropy_combined = weights['entropy']['combined']
-                
-                st.markdown(f"""
-                **Weight Entropy Analysis:**
-                - Transformer Attention Entropy: {entropy_trans:.3f}
-                - Spatial Locality Entropy: {entropy_spatial:.3f}
-                - Combined Weights Entropy: {entropy_combined:.3f}
-                
-                **Interpretation:**
-                - Lower entropy = more focused weights
-                - Higher entropy = more distributed weights
-                - Combined entropy ({entropy_combined:.3f}) indicates {'focused' if entropy_combined < 0.5 else 'moderately distributed' if entropy_combined < 1.0 else 'highly distributed'} attention
-                """)
-                
-                # Weight concentration
-                combined_weights = np.array(weights['combined'])
-                top3_concentration = np.sum(np.sort(combined_weights)[-3:]) / np.sum(combined_weights)
-                st.markdown(f"""
-                **Weight Concentration:**
-                - Top 3 sources contribute {top3_concentration*100:.1f}% of total weight
-                - This indicates {'highly concentrated' if top3_concentration > 0.7 else 'moderately concentrated' if top3_concentration > 0.4 else 'distributed'} influence
-                """)
-            
-            # Spatial decay analysis
-            st.markdown("##### 📏 Spatial Decay Analysis")
-            
-            fig_decay, ax_decay = plt.subplots(figsize=(12, 6))
-            
-            # Calculate distances and weights
-            distances = np.array(result['source_distances'])
-            spatial_weights = np.array(weights['positional'])
-            
-            # Sort by distance
-            sorted_indices = np.argsort(distances)
-            distances_sorted = distances[sorted_indices]
-            spatial_weights_sorted = spatial_weights[sorted_indices]
-            
-            # Plot
-            ax_decay.plot(distances_sorted, spatial_weights_sorted, 'bo-', linewidth=2, markersize=8, label='Actual Weights')
-            
-            # Add theoretical decay curve
-            x_theoretical = np.linspace(0, np.max(distances_sorted), 100)
-            y_theoretical = np.exp(-0.5 * (x_theoretical / spatial_sigma) ** 2)
-            ax_decay.plot(x_theoretical, y_theoretical, 'r--', linewidth=2, label=f'Theoretical Decay (σ={spatial_sigma})')
-            
-            ax_decay.set_xlabel('Angular Distance from Target (degrees)', fontsize=14)
-            ax_decay.set_ylabel('Spatial Weight', fontsize=14)
-            ax_decay.set_title('Spatial Weight Decay Analysis', fontsize=16, fontweight='bold')
-            ax_decay.grid(True, alpha=0.3)
-            ax_decay.legend(fontsize=12)
-            
-            # Add annotations for key points
-            for i, (dist, weight) in enumerate(zip(distances_sorted[:5], spatial_weights_sorted[:5])):
-                ax_decay.annotate(f'Source {sorted_indices[i]+1}\nθ={result["source_theta_degrees"][sorted_indices[i]]:.1f}°',
-                                (dist, weight),
-                                xytext=(10, 10), textcoords='offset points',
-                                arrowprops=dict(arrowstyle='->', color='gray', alpha=0.7))
-            
-            plt.tight_layout()
-            st.pyplot(fig_decay)
-            plt.close(fig_decay)
-            
-            st.markdown(f"""
-            **Spatial Decay Insights:**
-            - Sources within {spatial_sigma*2:.1f}° of target angle receive significantly higher weights
-            - The spatial weight factor ({locality_weight_factor:.1f}) balances this decay with transformer attention
-            - When target angle is {result['target_angle']:.1f}°, the closest source at {result['source_theta_degrees'][np.argmin(distances)]:.1f}° receives the highest spatial weight
-            """)
-        else:
-            st.info("No interpolation results available. Please perform interpolation first.")
-    
-    with tab5:
-        st.markdown('<h2 class="section-header">📤 Export Results</h2>', unsafe_allow_html=True)
-        
-        if st.session_state.interpolation_result:
-            result = st.session_state.interpolation_result
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.markdown("##### 📁 Export Data Formats")
-                
-                # Prepare export data
-                visualization_params = {
-                    'colormap': colormap_name,
-                    'stress_component': stress_component,
-                    'spatial_sigma': spatial_sigma,
-                    'locality_weight_factor': locality_weight_factor
-                }
-                export_data = st.session_state.results_manager.prepare_export_data(
-                    result, visualization_params
-                )
-                
-                # JSON export
-                json_str, json_filename = st.session_state.results_manager.export_to_json(export_data)
-                st.download_button(
-                    label="💾 Download JSON",
-                    data=json_str,
-                    file_name=json_filename,
-                    mime="application/json",
-                    use_container_width=True
-                )
-                
-                # CSV export
-                csv_str, csv_filename = st.session_state.results_manager.export_to_csv(result)
-                st.download_button(
-                    label="📊 Download CSV",
-                    data=csv_str,
-                    file_name=csv_filename,
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            with col2:
-                st.markdown("##### 🖼️ Export Visualizations")
-                
-                # Dashboard export
-                if st.button("🎨 Export Comparison Dashboard", use_container_width=True):
-                    source_info = {
-                        'theta_degrees': result['source_theta_degrees'],
-                        'distances': result['source_distances'],
-                        'weights': result['weights'],
-                        'statistics': result['statistics']
-                    }
-                    
-                    fig_dashboard = st.session_state.heatmap_visualizer.create_comparison_dashboard(
-                        result['fields'],
-                        result['source_fields'],
-                        source_info,
-                        result['target_angle'],
-                        defect_type,
-                        component=stress_component,
-                        cmap_name=colormap_name,
-                        ground_truth_index=st.session_state.selected_ground_truth,
-                        figsize=(24, 18)
+        # Export section
+        st.markdown("#### 📤 Export Results")
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            if st.button("📥 Export JSON", use_container_width=True):
+                if st.session_state.interpolation_result is not None:
+                    export_data = st.session_state.results_manager.prepare_export_data(
+                        st.session_state.interpolation_result,
+                        {
+                            'colormap': st.session_state.get('selected_colormap', 'viridis'),
+                            'target_angle': st.session_state.get('target_angle', 54.7),
+                            'spatial_sigma': st.session_state.spatial_sigma,
+                            'locality_weight_factor': st.session_state.locality_weight_factor
+                        }
                     )
-                    
-                    buf = BytesIO()
-                    fig_dashboard.savefig(buf, format="png", dpi=300, bbox_inches="tight")
-                    buf.seek(0)
-                    plt.close(fig_dashboard)
-                    
+                    json_str, filename = st.session_state.results_manager.export_to_json(export_data)
                     st.download_button(
-                        label="🖼️ Download High-Res Dashboard (300 DPI)",
-                        data=buf,
-                        file_name=f"comparison_dashboard_theta_{result['target_angle']:.1f}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
-                        mime="image/png",
+                        label="⬇️ Download JSON",
+                        data=json_str,
+                        file_name=filename,
+                        mime="application/json",
                         use_container_width=True
                     )
+                else:
+                    st.warning("No interpolation result to export")
+        
+        with export_col2:
+            if st.button("📊 Export CSV", use_container_width=True):
+                if st.session_state.interpolation_result is not None:
+                    csv_str, filename = st.session_state.results_manager.export_to_csv(st.session_state.interpolation_result)
+                    st.download_button(
+                        label="⬇️ Download CSV",
+                        data=csv_str,
+                        file_name=filename,
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("No interpolation result to export")
+    
+    # Main content tabs
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🎯 Interpolation Parameters", 
+        "📊 Comparison Dashboard",
+        "📈 Detailed Visualizations", 
+        "🎨 Colormap Explorer",
+        "⚙️ Advanced Configuration",
+        "💡 Theory & Documentation"
+    ])
+    
+    # Tab 1: Interpolation Parameters
+    with tab1:
+        st.markdown('<h2 class="section-header">🎯 Interpolation Target Parameters</h2>', unsafe_allow_html=True)
+        
+        if not st.session_state.solutions:
+            st.warning("⚠️ No solutions loaded. Please load solutions from the sidebar first.")
+            st.markdown("""
+            To get started:
+            1. Click the "📤 Load Solutions" button in the sidebar
+            2. Ensure you have simulation files in the `numerical_solutions` directory
+            3. Files should be in .pkl, .pickle, .pt, or .pth format
+            """)
+            return
+        
+        # Target angle selection
+        st.markdown("#### 📐 Target Angle Selection")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            target_angle = st.slider(
+                "Target Polar Angle (θ) in degrees",
+                min_value=0.0,
+                max_value=360.0,
+                value=54.7,
+                step=0.1,
+                help="Angle relative to crystal coordinates. 54.7° is the habit plane for FCC crystals"
+            )
+        
+        with col2:
+            st.metric("Habit Plane", "54.7°", delta=f"{abs(target_angle - 54.7):.1f}°")
+        
+        # Defect and shape parameters
+        st.markdown("#### 🔷 Defect Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
+            default_defect = st.session_state.solutions[0]['params'].get('defect_type', 'Twin')
+            defect_type = st.selectbox("Defect Type", defect_types, 
+                                     index=defect_types.index(default_defect) if default_defect in defect_types else 0)
+        
+        with col2:
+            shapes = ['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle']
+            default_shape = st.session_state.solutions[0]['params'].get('shape', 'Square')
+            shape = st.selectbox("Defect Shape", shapes, 
+                               index=shapes.index(default_shape) if default_shape in shapes else 0)
+        
+        # Material parameters (optional)
+        with st.expander("⚙️ Advanced Material Parameters", expanded=False):
+            col1, col2 = st.columns(2)
             
-            with col3:
-                st.markdown("##### 📦 Bulk Export Package")
-                
-                if st.button("📦 Create Complete Export Package", use_container_width=True):
-                    # Create zip file with all components
-                    zip_buffer = BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        # Export each stress component field
-                        for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
-                            # Save as CSV
-                            df = pd.DataFrame(result['fields'][component])
-                            csv_str = df.to_csv(index=False)
-                            zip_file.writestr(f"{component}_theta_{result['target_angle']:.1f}.csv", csv_str)
-                            
-                            # Save as PNG visualization
-                            fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
-                                result['fields'][component],
-                                title=f"{component.replace('_', ' ').title()} at θ={result['target_angle']:.1f}°",
-                                cmap_name=colormap_name,
-                                show_stats=False,
-                                figsize=(10, 8)
-                            )
-                            img_buf = BytesIO()
-                            fig.savefig(img_buf, format="png", dpi=300, bbox_inches="tight")
-                            img_buf.seek(0)
-                            zip_file.writestr(f"{component}_theta_{result['target_angle']:.1f}.png", img_buf.getvalue())
-                            plt.close(fig)
+            with col1:
+                eps0 = st.slider("Strain Magnitude (ε₀)", 
+                               min_value=0.1, max_value=3.0, value=0.707, step=0.01)
+                kappa = st.slider("Stiffness Ratio (κ)", 
+                                min_value=0.1, max_value=2.0, value=0.6, step=0.01)
+            
+            with col2:
+                # Show parameter descriptions
+                st.markdown("""
+                **Parameter Descriptions:**
+                - **ε₀ (Strain Magnitude)**: Controls the magnitude of transformation strain
+                - **κ (Stiffness Ratio)**: Ratio of shear modulus to bulk modulus
+                - These affect the stress field distribution and magnitude
+                """)
+        
+        # Interpolation button
+        st.markdown("#### 🚀 Run Interpolation")
+        
+        if st.button("✨ Run Transformer Interpolation", use_container_width=True, type="primary"):
+            with st.spinner("Running interpolation... This may take a moment"):
+                try:
+                    # Create target parameters
+                    target_params = {
+                        'theta': np.radians(target_angle),
+                        'defect_type': defect_type,
+                        'shape': shape,
+                        'eps0': eps0,
+                        'kappa': kappa
+                    }
+                    
+                    # Run interpolation
+                    result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
+                        st.session_state.solutions,
+                        target_angle,
+                        target_params
+                    )
+                    
+                    if result is not None:
+                        st.session_state.interpolation_result = result
+                        st.session_state.target_angle = target_angle
+                        st.session_state.target_params = target_params
                         
-                        # Export weights analysis
-                        weights_df = pd.DataFrame({
-                            'Source_Index': range(len(weights['combined'])),
-                            'Source_Theta': result['source_theta_degrees'],
-                            'Transformer_Weight': weights['transformer'],
-                            'Spatial_Weight': weights['positional'],
-                            'Combined_Weight': weights['combined']
-                        })
-                        zip_file.writestr("weights_analysis.csv", weights_df.to_csv(index=False))
-                        
-                        # Export metadata
-                        metadata = {
-                            'target_angle': result['target_angle'],
-                            'target_params': result['target_params'],
-                            'statistics': result['statistics'],
-                            'spatial_parameters': {
-                                'spatial_sigma': spatial_sigma,
-                                'locality_weight_factor': locality_weight_factor
-                            },
-                            'num_sources': result.get('num_sources', 0),
-                            'source_theta_degrees': result.get('source_theta_degrees', []),
-                            'exported_at': datetime.now().isoformat()
-                        }
-                        zip_file.writestr("metadata.json", json.dumps(metadata, indent=2))
-                        
-                        # Export comparison dashboard
-                        source_info = {
+                        # Store source info for comparison dashboard
+                        st.session_state.source_info = {
                             'theta_degrees': result['source_theta_degrees'],
                             'distances': result['source_distances'],
                             'weights': result['weights'],
                             'statistics': result['statistics']
                         }
                         
-                        fig_dashboard = st.session_state.heatmap_visualizer.create_comparison_dashboard(
-                            result['fields'],
-                            result['source_fields'],
-                            source_info,
-                            result['target_angle'],
-                            defect_type,
-                            component=stress_component,
-                            cmap_name=colormap_name,
-                            ground_truth_index=st.session_state.selected_ground_truth,
-                            figsize=(24, 18)
-                        )
-                        dashboard_buf = BytesIO()
-                        fig_dashboard.savefig(dashboard_buf, format="png", dpi=300, bbox_inches="tight")
-                        dashboard_buf.seek(0)
-                        zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", dashboard_buf.getvalue())
-                        plt.close(fig_dashboard)
+                        st.success(f"✅ Interpolation completed successfully for θ = {target_angle:.1f}°")
+                        
+                        # Display key metrics
+                        metrics_col1, metrics_col2, metrics_col3, metrics_col4 = st.columns(4)
+                        
+                        with metrics_col1:
+                            st.markdown(f'<div class="metric-card">Max Von Mises<br><span style="font-size: 1.8rem">{result["statistics"]["von_mises"]["max"]:.3f} GPa</span></div>', 
+                                      unsafe_allow_html=True)
+                        
+                        with metrics_col2:
+                            st.markdown(f'<div class="metric-card">Max Hydrostatic<br><span style="font-size: 1.8rem">{result["statistics"]["sigma_hydro"]["max_tension"]:.3f} GPa</span></div>', 
+                                      unsafe_allow_html=True)
+                        
+                        with metrics_col3:
+                            st.markdown(f'<div class="metric-card">Sources Used<br><span style="font-size: 1.8rem">{result["num_sources"]}</span></div>', 
+                                      unsafe_allow_html=True)
+                        
+                        with metrics_col4:
+                            st.markdown(f'<div class="metric-card">Avg. Distance<br><span style="font-size: 1.8rem">{np.mean(result["source_distances"]):.1f}°</span></div>', 
+                                      unsafe_allow_html=True)
+                        
+                        # Weight distribution analysis
+                        st.markdown("#### 📊 Weight Distribution Analysis")
+                        
+                        weight_col1, weight_col2 = st.columns(2)
+                        
+                        with weight_col1:
+                            fig, ax = plt.subplots(figsize=(8, 4))
+                            
+                            x = range(len(result['weights']['combined']))
+                            ax.bar(x, result['weights']['combined'], alpha=0.7, label='Combined', color='blue')
+                            ax.bar(x, result['weights']['transformer'], alpha=0.5, label='Transformer', color='red')
+                            ax.bar(x, result['weights']['positional'], alpha=0.3, label='Spatial', color='green')
+                            
+                            ax.set_xlabel('Source Index')
+                            ax.set_ylabel('Weight')
+                            ax.set_title('Weight Distribution Across Sources')
+                            ax.legend()
+                            ax.grid(True, alpha=0.3)
+                            
+                            # Add theta labels
+                            for i, theta in enumerate(result['source_theta_degrees']):
+                                ax.text(i, max(result['weights']['combined'][i], 0.01) + 0.01, 
+                                       f'θ={theta:.0f}°', ha='center', rotation=90, fontsize=8)
+                            
+                            st.pyplot(fig)
+                        
+                        with weight_col2:
+                            entropy_data = result['weights']['entropy']
+                            st.markdown("""
+                            **Entropy Analysis:**
+                            - **Transformer Entropy**: {:.3f}
+                            - **Spatial Entropy**: {:.3f}  
+                            - **Combined Entropy**: {:.3f}
+                            
+                            *Lower entropy = more focused attention on specific sources*
+                            """.format(entropy_data['transformer'], 
+                                     entropy_data['spatial'],
+                                     entropy_data['combined']))
+                            
+                            if entropy_data['combined'] < 0.5:
+                                st.success("✅ Good spatial locality focus")
+                            elif entropy_data['combined'] < 1.0:
+                                st.warning("⚠️ Moderate spatial locality focus")
+                            else:
+                                st.error("❌ Poor spatial locality focus - consider adjusting parameters")
                     
-                    zip_buffer.seek(0)
-                    st.download_button(
-                        label="📦 Download Complete Package (ZIP)",
-                        data=zip_buffer.getvalue(),
-                        file_name=f"stress_analysis_package_theta_{result['target_angle']:.1f}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                        mime="application/zip",
-                        use_container_width=True
+                    else:
+                        st.error("❌ Interpolation failed. Please check the logs for details.")
+                
+                except Exception as e:
+                    st.error(f"❌ Error during interpolation: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc(), language='python')
+        
+        # Angular orientation plot
+        if st.session_state.interpolation_result is not None:
+            st.markdown("#### 🧭 Angular Orientation")
+            fig = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
+                st.session_state.target_angle,
+                st.session_state.target_params['defect_type'],
+                figsize=(8, 6)
+            )
+            st.pyplot(fig)
+    
+    # Tab 2: Comparison Dashboard
+    with tab2:
+        st.markdown('<h2 class="section-header">📊 Comprehensive Comparison Dashboard</h2>', unsafe_allow_html=True)
+        
+        if st.session_state.interpolation_result is None:
+            st.warning("⚠️ No interpolation result available. Please run interpolation first in the 'Interpolation Parameters' tab.")
+            return
+        
+        # Ground truth selection
+        st.markdown("#### 🎯 Ground Truth Selection")
+        
+        source_info = st.session_state.source_info
+        source_fields = st.session_state.interpolation_result['source_fields']
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            ground_truth_options = [f"Source {i}: θ={theta:.1f}° (Δ={dist:.1f}°)" 
+                                  for i, (theta, dist) in enumerate(zip(
+                                      source_info['theta_degrees'], 
+                                      source_info['distances']
+                                  ))]
+            
+            selected_ground_truth = st.selectbox(
+                "Select Ground Truth Source for Comparison",
+                options=ground_truth_options,
+                index=0,
+                help="Choose a source field to compare against the interpolated result"
+            )
+            
+            # Extract the source index from the selected option
+            selected_index = int(selected_ground_truth.split(":")[0].split()[-1])
+            st.session_state.selected_ground_truth = selected_index
+        
+        with col2:
+            st.metric("Selected Source", f"#{selected_index}")
+            st.metric("Angular Distance", f"{source_info['distances'][selected_index]:.1f}°")
+            st.metric("Source Weight", f"{source_info['weights']['combined'][selected_index]:.3f}")
+        
+        # Component selection
+        st.markdown("#### 📈 Component Selection")
+        component_options = {
+            'Von Mises Stress': 'von_mises',
+            'Hydrostatic Stress': 'sigma_hydro', 
+            'Stress Magnitude': 'sigma_mag'
+        }
+        selected_component_name = st.selectbox("Select Stress Component", list(component_options.keys()))
+        selected_component = component_options[selected_component_name]
+        
+        # Colormap selection
+        st.markdown("#### 🎨 Visualization Settings")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            colormap_categories = list(st.session_state.heatmap_visualizer.colormaps.keys())
+            selected_category = st.selectbox("Colormap Category", colormap_categories, index=0)
+            available_colormaps = st.session_state.heatmap_visualizer.colormaps[selected_category]
+            selected_colormap = st.selectbox("Colormap", available_colormaps, index=0)
+        
+        with col2:
+            show_colorbar = st.checkbox("Show Colorbar", value=True)
+            aspect_ratio = st.selectbox("Aspect Ratio", ['equal', 'auto'], index=0)
+        
+        # Create comparison dashboard
+        st.markdown("#### 🔍 Comparison Dashboard")
+        
+        if st.button("🔄 Generate Comparison Dashboard", use_container_width=True):
+            with st.spinner("Generating comprehensive comparison dashboard..."):
+                try:
+                    fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                        interpolated_fields=st.session_state.interpolation_result['fields'],
+                        source_fields=source_fields,
+                        source_info={
+                            'theta_degrees': source_info['theta_degrees'],
+                            'distances': source_info['distances'],
+                            'weights': source_info['weights'],
+                            'statistics': source_info.get('statistics', {})
+                        },
+                        target_angle=st.session_state.target_angle,
+                        defect_type=st.session_state.target_params['defect_type'],
+                        component=selected_component,
+                        cmap_name=selected_colormap,
+                        figsize=(24, 18),
+                        ground_truth_index=st.session_state.selected_ground_truth
+                    )
+                    
+                    st.pyplot(fig)
+                    
+                    # Additional metrics display
+                    st.markdown("#### 📊 Detailed Error Metrics")
+                    
+                    if st.session_state.selected_ground_truth is not None:
+                        interp_field = st.session_state.interpolation_result['fields'][selected_component]
+                        gt_field = source_fields[st.session_state.selected_ground_truth][selected_component]
+                        diff_field = interp_field - gt_field
+                        
+                        error_col1, error_col2, error_col3 = st.columns(3)
+                        
+                        with error_col1:
+                            mse = np.mean(diff_field**2)
+                            st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
+                        
+                        with error_col2:
+                            mae = np.mean(np.abs(diff_field))
+                            st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
+                        
+                        with error_col3:
+                            rmse = np.sqrt(mse)
+                            st.metric("Root MSE (RMSE)", f"{rmse:.6f}")
+                        
+                        # Correlation analysis
+                        from scipy.stats import pearsonr
+                        corr_coef, p_value = pearsonr(interp_field.flatten(), gt_field.flatten())
+                        
+                        st.markdown(f"""
+                        **Spatial Correlation Analysis:**
+                        - **Pearson Correlation**: {corr_coef:.4f}
+                        - **P-value**: {p_value:.6f}
+                        - **Interpretation**: {'Excellent correlation' if corr_coef > 0.9 else 'Good correlation' if corr_coef > 0.7 else 'Moderate correlation' if corr_coef > 0.5 else 'Poor correlation'}
+                        """)
+                        
+                        if corr_coef > 0.8:
+                            st.success("✅ Excellent spatial correlation with ground truth")
+                        elif corr_coef > 0.6:
+                            st.warning("⚠️ Good spatial correlation")
+                        else:
+                            st.error("❌ Poor spatial correlation - consider adjusting interpolation parameters")
+                
+                except Exception as e:
+                    st.error(f"Error generating comparison dashboard: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc(), language='python')
+        
+        # Interactive comparison
+        st.markdown("#### 🖱️ Interactive Comparison")
+        
+        if st.checkbox("Show Interactive Comparison Plots", value=False):
+            with st.spinner("Generating interactive plots..."):
+                try:
+                    interp_field = st.session_state.interpolation_result['fields'][selected_component]
+                    gt_field = source_fields[st.session_state.selected_ground_truth][selected_component]
+                    
+                    # Interactive interpolated plot
+                    st.markdown("##### Interpolated Result")
+                    fig_interp = st.session_state.heatmap_visualizer.create_interactive_heatmap(
+                        interp_field,
+                        title=f"Interpolated {selected_component_name}",
+                        cmap_name=selected_colormap,
+                        target_angle=st.session_state.target_angle,
+                        defect_type=st.session_state.target_params['defect_type']
+                    )
+                    st.plotly_chart(fig_interp, use_container_width=True)
+                    
+                    # Interactive ground truth plot
+                    st.markdown("##### Ground Truth")
+                    fig_gt = st.session_state.heatmap_visualizer.create_interactive_heatmap(
+                        gt_field,
+                        title=f"Ground Truth: {selected_ground_truth}",
+                        cmap_name=selected_colormap,
+                        target_angle=source_info['theta_degrees'][st.session_state.selected_ground_truth],
+                        defect_type=source_fields[st.session_state.selected_ground_truth]['source_params']['defect_type']
+                    )
+                    st.plotly_chart(fig_gt, use_container_width=True)
+                    
+                    # Interactive difference plot
+                    st.markdown("##### Difference Plot")
+                    diff_field = interp_field - gt_field
+                    max_diff = np.max(np.abs(diff_field))
+                    
+                    fig_diff = st.session_state.heatmap_visualizer.create_interactive_heatmap(
+                        diff_field,
+                        title=f"Difference: Interpolated - Ground Truth",
+                        cmap_name='RdBu_r',
+                        target_angle=st.session_state.target_angle,
+                        defect_type=st.session_state.target_params['defect_type']
+                    )
+                    fig_diff.update_traces(zmin=-max_diff, zmax=max_diff)
+                    st.plotly_chart(fig_diff, use_container_width=True)
+                
+                except Exception as e:
+                    st.error(f"Error generating interactive plots: {str(e)}")
+    
+    # Tab 3: Detailed Visualizations
+    with tab3:
+        st.markdown('<h2 class="section-header">📈 Detailed Stress Field Visualizations</h2>', unsafe_allow_html=True)
+        
+        if st.session_state.interpolation_result is None:
+            st.warning("⚠️ No interpolation result available. Please run interpolation first.")
+            return
+        
+        # Visualization settings
+        st.markdown("#### ⚙️ Visualization Settings")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            selected_viz_component = st.selectbox(
+                "Stress Component",
+                ['von_mises', 'sigma_hydro', 'sigma_mag'],
+                format_func=lambda x: x.replace('_', ' ').title()
+            )
+        
+        with col2:
+            viz_colormap = st.selectbox(
+                "Colormap", 
+                ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'jet', 'rainbow', 'hot', 'coolwarm', 'RdBu'],
+                index=0
+            )
+        
+        with col3:
+            show_3d = st.checkbox("Show 3D Surface", value=False)
+            show_histogram = st.checkbox("Show Histogram", value=True)
+        
+        # Get the selected field
+        stress_field = st.session_state.interpolation_result['fields'][selected_viz_component]
+        component_name = selected_viz_component.replace('_', ' ').title()
+        
+        # Main visualization
+        st.markdown(f"#### 🎨 {component_name} Field at θ = {st.session_state.target_angle:.1f}°")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # 2D heatmap
+            st.markdown("##### 2D Heatmap")
+            fig_2d = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                stress_field,
+                title=f"{component_name} Stress Field",
+                cmap_name=viz_colormap,
+                figsize=(10, 8),
+                colorbar_label=f"{component_name} (GPa)",
+                target_angle=st.session_state.target_angle,
+                defect_type=st.session_state.target_params['defect_type'],
+                show_colorbar=True,
+                aspect_ratio='equal'
+            )
+            st.pyplot(fig_2d)
+        
+        with col2:
+            if show_3d:
+                # 3D surface plot
+                st.markdown("##### 3D Surface Plot")
+                fig_3d = st.session_state.heatmap_visualizer.create_3d_surface_plot(
+                    stress_field,
+                    title=f"3D {component_name} Surface",
+                    cmap_name=viz_colormap,
+                    figsize=(10, 8),
+                    target_angle=st.session_state.target_angle,
+                    defect_type=st.session_state.target_params['defect_type']
+                )
+                st.pyplot(fig_3d)
+            elif show_histogram:
+                # Histogram
+                st.markdown("##### Value Distribution")
+                fig_hist, ax = plt.subplots(figsize=(10, 8))
+                ax.hist(stress_field.flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
+                ax.set_xlabel(f"{component_name} (GPa)", fontsize=14)
+                ax.set_ylabel("Frequency", fontsize=14)
+                ax.set_title(f"Distribution of {component_name} Values", fontsize=16, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig_hist)
+        
+        # Line profiles
+        st.markdown("#### 📏 Line Profiles")
+        
+        profile_col1, profile_col2 = st.columns(2)
+        
+        with profile_col1:
+            row_idx = st.slider("Select Row for Horizontal Profile", 
+                              0, stress_field.shape[0]-1, stress_field.shape[0]//2)
+            
+            fig_profile_h, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(stress_field[row_idx, :], 'b-', linewidth=2, label=f'Row {row_idx}')
+            ax.set_xlabel('Column Position', fontsize=14)
+            ax.set_ylabel(f"{component_name} (GPa)", fontsize=14)
+            ax.set_title(f'Horizontal Profile at Row {row_idx}', fontsize=16, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            st.pyplot(fig_profile_h)
+        
+        with profile_col2:
+            col_idx = st.slider("Select Column for Vertical Profile", 
+                              0, stress_field.shape[1]-1, stress_field.shape[1]//2)
+            
+            fig_profile_v, ax = plt.subplots(figsize=(10, 6))
+            ax.plot(stress_field[:, col_idx], 'r-', linewidth=2, label=f'Column {col_idx}')
+            ax.set_xlabel('Row Position', fontsize=14)
+            ax.set_ylabel(f"{component_name} (GPa)", fontsize=14)
+            ax.set_title(f'Vertical Profile at Column {col_idx}', fontsize=16, fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            st.pyplot(fig_profile_v)
+    
+    # Tab 4: Colormap Explorer
+    with tab4:
+        st.markdown('<h2 class="section-header">🎨 Colormap Explorer</h2>', unsafe_allow_html=True)
+        
+        if st.session_state.interpolation_result is None:
+            st.warning("⚠️ No interpolation result available. Please run interpolation first.")
+            return
+        
+        # Colormap categories
+        st.markdown("#### 🎨 Select Colormap Category")
+        colormap_categories = list(st.session_state.heatmap_visualizer.colormaps.keys())
+        selected_category = st.selectbox("Category", colormap_categories, index=0)
+        
+        available_colormaps = st.session_state.heatmap_visualizer.colormaps[selected_category]
+        
+        # Display colormap previews
+        st.markdown(f"#### 🖼️ {selected_category} Colormaps")
+        
+        # Create grid of colormap previews
+        cols = st.columns(4)
+        for i, cmap_name in enumerate(available_colormaps[:20]):  # Limit to first 20 for display
+            with cols[i % 4]:
+                fig = st.session_state.heatmap_visualizer.get_colormap_preview(cmap_name, figsize=(3, 0.5))
+                st.pyplot(fig)
+                st.caption(cmap_name)
+        
+        # Apply colormap to current result
+        st.markdown("#### 🔍 Apply to Current Result")
+        
+        selected_cmap = st.selectbox("Select Colormap to Apply", available_colormaps, index=0)
+        
+        if st.button("Apply Selected Colormap", use_container_width=True):
+            if st.session_state.interpolation_result is not None:
+                st.session_state.selected_colormap = selected_cmap
+                
+                # Show preview with selected colormap
+                stress_field = st.session_state.interpolation_result['fields']['von_mises']
+                
+                fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                    stress_field,
+                    title=f"Von Mises Stress with {selected_cmap}",
+                    cmap_name=selected_cmap,
+                    figsize=(12, 10),
+                    colorbar_label="Stress (GPa)",
+                    target_angle=st.session_state.target_angle,
+                    defect_type=st.session_state.target_params['defect_type']
+                )
+                st.pyplot(fig)
+                
+                st.success(f"✅ Applied colormap: {selected_cmap}")
+            else:
+                st.warning("No interpolation result available")
+    
+    # Tab 5: Advanced Configuration
+    with tab5:
+        st.markdown('<h2 class="section-header">⚙️ Advanced Configuration</h2>', unsafe_allow_html=True)
+        
+        st.markdown("#### 🤖 Transformer Architecture")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Current Architecture:**")
+            st.code("""
+TransformerSpatialInterpolator(
+    d_model=64,
+    nhead=8,
+    num_layers=3,
+    spatial_sigma=0.2,
+    temperature=1.0,
+    locality_weight_factor=0.7
+)
+            """, language='python')
+        
+        with col2:
+            st.markdown("**Architecture Explanation:**")
+            st.markdown("""
+            - **d_model**: Dimension of feature vectors
+            - **nhead**: Number of attention heads
+            - **num_layers**: Transformer encoder layers
+            - **spatial_sigma**: Controls spatial locality decay
+            - **temperature**: Controls attention sharpness
+            - **locality_weight_factor**: Balances transformer vs spatial weights
+            """)
+        
+        st.markdown("#### 🔧 Manual Parameter Adjustment")
+        
+        with st.form("advanced_params"):
+            st.markdown("**Transformer Parameters**")
+            d_model = st.slider("Feature Dimension (d_model)", 32, 128, 64, 8)
+            nhead = st.select_slider("Attention Heads (nhead)", [2, 4, 8, 16], 8)
+            num_layers = st.slider("Transformer Layers", 1, 6, 3)
+            
+            st.markdown("**Spatial Parameters**")
+            spatial_sigma = st.slider("Spatial Sigma", 0.05, 1.0, 0.2, 0.05)
+            temperature = st.slider("Temperature", 0.1, 5.0, 1.0, 0.1)
+            locality_weight_factor = st.slider("Locality Weight Factor", 0.0, 1.0, 0.7, 0.1)
+            
+            submitted = st.form_submit_button("Update Architecture")
+            
+            if submitted:
+                with st.spinner("Reinitializing transformer..."):
+                    st.session_state.transformer_interpolator = TransformerSpatialInterpolator(
+                        d_model=d_model,
+                        nhead=nhead,
+                        num_layers=num_layers,
+                        spatial_sigma=spatial_sigma,
+                        temperature=temperature,
+                        locality_weight_factor=locality_weight_factor
+                    )
+                    st.session_state.spatial_sigma = spatial_sigma
+                    st.session_state.locality_weight_factor = locality_weight_factor
+                    st.session_state.temperature = temperature
+                    
+                    st.success("✅ Transformer architecture updated successfully!")
+                    st.rerun()
+        
+        st.markdown("#### 📊 Feature Engineering")
+        
+        with st.expander("View Feature Engineering Details", expanded=False):
+            st.markdown("""
+            **Feature Vector Structure (15 features):**
+            
+            1. **Numeric Features (3):**
+               - `eps0 / 3.0` - Normalized strain magnitude
+               - `kappa / 2.0` - Normalized stiffness ratio  
+               - `theta / π` - Normalized polar angle
+            
+            2. **Defect Type One-hot (4):**
+               - ISF, ESF, Twin, No Defect
+            
+            3. **Shape One-hot (4):**
+               - Square, Horizontal Fault, Vertical Fault, Rectangle
+            
+            4. **Orientation Features (3):**
+               - `exp(-|θ - θ_target| / 45°)` - Angular proximity
+               - `sin(2θ)` - Sinusoidal orientation encoding
+               - `cos(2θ)` - Cosinusoidal orientation encoding
+            
+            5. **Habit Plane Proximity (1):**
+               - `exp(-|θ - 54.7°| / 15°)` - Distance to habit plane
+            
+            **Key Design Principles:**
+            - All features normalized to [0, 1] range
+            - Angular features handle periodicity
+            - Spatial locality controlled through Gaussian kernel
+            - Attention mechanism learns complex relationships
+            """)
+        
+        # Memory and performance monitoring
+        st.markdown("#### 📈 Performance Monitoring")
+        
+        if st.button("📊 Profile Current Performance", use_container_width=True):
+            import time
+            import psutil
+            import os
+            
+            process = psutil.Process(os.getpid())
+            mem_before = process.memory_info().rss / 1024 / 1024  # MB
+            
+            start_time = time.time()
+            
+            # Run a test interpolation
+            if st.session_state.solutions and st.session_state.interpolation_result is not None:
+                target_params = st.session_state.target_params.copy()
+                target_angle = st.session_state.target_angle
+                
+                with st.spinner("Profiling performance..."):
+                    _ = st.session_state.transformer_interpolator.interpolate_spatial_fields(
+                        st.session_state.solutions[:3],  # Use subset for profiling
+                        target_angle,
+                        target_params
                     )
             
-            # Export statistics table
-            with st.expander("📊 Export Statistics Table", expanded=False):
-                stats_data = []
-                
-                for component, stats in result['statistics'].items():
-                    if component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
-                        comp_name = component.replace('_', ' ').title()
-                        
-                        if component == 'sigma_hydro':
-                            stats_data.append({
-                                'Component': comp_name,
-                                'Maximum': f"{stats['max_tension']:.3f} GPa",
-                                'Minimum': f"{stats['max_compression']:.3f} GPa",
-                                'Mean': f"{stats['mean']:.3f} GPa",
-                                'Std Dev': f"{stats['std']:.3f} GPa"
-                            })
-                        else:
-                            stats_data.append({
-                                'Component': comp_name,
-                                'Maximum': f"{stats['max']:.3f} GPa",
-                                'Minimum': f"{stats['min']:.3f} GPa",
-                                'Mean': f"{stats['mean']:.3f} GPa",
-                                'Std Dev': f"{stats['std']:.3f} GPa"
-                            })
-                
-                if stats_data:
-                    df_stats = pd.DataFrame(stats_data)
-                    st.dataframe(df_stats, use_container_width=True)
-                    
-                    # Export statistics as CSV
-                    csv_stats = df_stats.to_csv(index=False)
-                    st.download_button(
-                        label="📋 Download Statistics CSV",
-                        data=csv_stats,
-                        file_name=f"stress_statistics_theta_{result['target_angle']:.1f}.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="download_stats"
-                    )
-        else:
-            st.info("No interpolation results available. Please perform interpolation first.")
+            end_time = time.time()
+            mem_after = process.memory_info().rss / 1024 / 1024  # MB
+            
+            st.markdown(f"""
+            **Performance Profile:**
+            - **Execution Time**: {end_time - start_time:.3f} seconds
+            - **Memory Usage**: {mem_after - mem_before:.2f} MB increase
+            - **Sources Processed**: {min(3, len(st.session_state.solutions))}
+            - **Field Resolution**: {st.session_state.interpolation_result['shape']}
+            """)
+    
+    # Tab 6: Theory & Documentation
+    with tab6:
+        st.markdown('<h2 class="section-header">💡 Theory & Documentation</h2>', unsafe_allow_html=True)
+        
+        st.markdown("""
+        ## 🔬 Physical Background
+        This tool implements a transformer-based approach for interpolating stress fields around crystallographic defects. The method combines:
+        
+        1. **Transformer Attention**: Learns complex relationships between different defect configurations
+        2. **Spatial Locality**: Ensures smooth interpolation based on parameter proximity
+        3. **Physics-aware Encoding**: Incorporates crystallographic knowledge into feature representation
+        
+        ## 📐 Mathematical Formulation
+        
+        ### Feature Encoding
+        For each source configuration with parameters $\\theta_i$, the feature vector $x_i$ is constructed as:
+        ```
+        x_i = [ε₀/3, κ/2, θᵢ/π, one_hot(defect_type), one_hot(shape), 
+               exp(-|θᵢ-θₜ|/45°), sin(2θᵢ), cos(2θᵢ), exp(-|θᵢ-54.7°|/15°)]
+        ```
+        
+        ### Spatial Locality Weighting
+        The spatial weight between source $i$ and target $t$ is computed using a Gaussian kernel:
+        $$
+        w_i^{spatial} = \\exp\\left(-\\frac{1}{2}\\left(\\frac{d_i}{\\sigma}\\right)^2\\right)
+        $$
+        where $d_i$ is the parameter distance and $\\sigma$ controls the decay rate.
+        
+        ### Transformer Attention
+        The attention weights are computed as:
+        $$
+        w_i^{attn} = \\text{softmax}\\left(\\frac{q \\cdot k_i}{\\sqrt{d_k} \\cdot \\tau}\\right)
+        $$
+        where $\\tau$ is the temperature parameter controlling attention sharpness.
+        
+        ### Combined Weighting
+        The final interpolation weights combine both approaches:
+        $$
+        w_i = \\alpha \\cdot w_i^{attn} + (1-\\alpha) \\cdot w_i^{spatial}
+        $$
+        where $\\alpha$ is the **locality weight factor** that controls the balance.
+        
+        ## 🎛️ Parameter Guide
+        
+        ### Key Parameters
+        - **Target Angle (θ)**: Polar angle of the defect plane (54.7° is the habit plane for FCC)
+        - **Spatial Sigma (σ)**: Controls how quickly influence decays with parameter distance
+          - Small σ (0.05-0.2): Sharp locality, only very similar sources have influence
+          - Large σ (0.5-1.0): Global influence, many sources contribute
+        - **Locality Weight Factor (α)**: Balances transformer attention vs spatial locality
+          - α = 0.0: Pure transformer attention
+          - α = 1.0: Pure spatial locality
+          - α = 0.7 (default): 70% transformer, 30% spatial - good balance
+        
+        ### Interpretation Guide
+        - **High von Mises stress**: Indicates regions prone to plastic deformation
+        - **High hydrostatic tension**: Indicates regions prone to void formation
+        - **Stress concentration**: Occurs at defect tips and interfaces
+        
+        ## 🚀 Best Practices
+        
+        1. **For Similar Configurations**: Use higher locality weight factor (α > 0.8) to emphasize spatial proximity
+        2. **For Diverse Configurations**: Use lower locality weight factor (α < 0.5) to leverage transformer's ability to learn complex patterns
+        3. **For Habit Plane (54.7°)**: Results are typically most accurate due to physics of FCC crystals
+        4. **Validation**: Always compare with ground truth when available using the comparison dashboard
+        
+        ## 📚 References
+        - Bulatov, V. V., & Cai, W. (2006). *Computer Simulations of Dislocations*. Oxford University Press.
+        - Hunter, A., et al. (2015). *On the crystallography and variability of superlattice intrinsic stacking faults in 316L austenitic stainless steel*. Acta Materialia.
+        - Vaswani, A., et al. (2017). *Attention is All You Need*. NeurIPS.
+        """)
 
 if __name__ == "__main__":
     main()
