@@ -1243,7 +1243,6 @@ class EnhancedHeatMapVisualizer:
             fig = go.Figure()
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
-    #
     
     def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info, 
                                    target_angle, defect_type, component='von_mises',
