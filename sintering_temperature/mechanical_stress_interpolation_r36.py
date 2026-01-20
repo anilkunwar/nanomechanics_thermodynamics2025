@@ -2525,74 +2525,74 @@ def main():
                    
                     st.success(f"Generated {plot_count} visualization(s) for download.")
     else:
-    # No results yet - show instructions
-    st.markdown("""
-    <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
-        <h2>🚀 Ready to Begin!</h2>
-        <p style="font-size: 1.2rem; margin-bottom: 30px;">
-            Follow these steps to start interpolating stress fields:
-        </p>
-        <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
-            <li>Load simulation files from the sidebar</li>
-            <li>Configure target parameters (angle, defect type, etc.)</li>
-            <li>Adjust transformer and spatial locality parameters</li>
-            <li>Click "Perform Transformer Interpolation"</li>
-            <li>Explore results in the tabs above</li>
-        </ol>
-        <p style="margin-top: 30px; font-size: 1.1rem;">
-            <strong>New Feature:</strong> Use the adjustable spatial locality weight factor to control
-            how much the interpolation resembles spatially nearby sources vs. transformer-learned patterns.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-   
-    # Quick start guide
-    st.markdown("### 📚 Quick Start Guide")
-   
-    col_guide1, col_guide2, col_guide3 = st.columns(3)
-   
-    with col_guide1:
+        # No results yet - show instructions
         st.markdown("""
-        #### 📂 Data Preparation
-        1. Place simulation files in `numerical_solutions/` directory
-        2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
-        3. Files should contain 'params' and 'history' keys
-        4. Stress fields should be in 'stresses' dictionary
-        """)
-   
-    with col_guide2:
-        st.markdown("""
-        #### 🎯 Key Parameters
-        - **Polar Angle (θ):** Target orientation angle (54.7° is habit plane)
-        - **Defect Type:** ISF, ESF, Twin, or No Defect
-        - **Spatial Weight Factor:** Balance between transformer and spatial weights (0-1)
-        - **Kappa:** Material stiffness parameter
-        """)
-   
-    with col_guide3:
-        st.markdown("""
-        #### 🔍 Comparison Features
-        - Select any source as ground truth
-        - Visualize differences with error metrics
-        - Analyze weight contributions
-        - Export results for publication
-        """)
-   
-    # Physics explanation
-    with st.expander("🧬 Physics Background: Habit Plane at 54.7°", expanded=True):
-        st.markdown("""
-        **Why 54.7° is important for martensitic transformations:**
+        <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
+            <h2>🚀 Ready to Begin!</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 30px;">
+                Follow these steps to start interpolating stress fields:
+            </p>
+            <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
+                <li>Load simulation files from the sidebar</li>
+                <li>Configure target parameters (angle, defect type, etc.)</li>
+                <li>Adjust transformer and spatial locality parameters</li>
+                <li>Click "Perform Transformer Interpolation"</li>
+                <li>Explore results in the tabs above</li>
+            </ol>
+            <p style="margin-top: 30px; font-size: 1.1rem;">
+                <strong>New Feature:</strong> Use the adjustable spatial locality weight factor to control
+                how much the interpolation resembles spatially nearby sources vs. transformer-learned patterns.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
        
-        1. **Crystallographic Significance:** The 54.7° angle corresponds to the angle between {111} planes in face-centered cubic (FCC) crystals
-        2. **Transformation Habit Plane:** In martensitic transformations, the habit plane often lies near this angle due to minimal strain energy
-        3. **Stress Concentration:** Defects oriented near the habit plane experience different stress distributions compared to other orientations
-        4. **Interpolation Relevance:** Solutions near 54.7° provide better interpolation quality due to physical similarity
+        # Quick start guide
+        st.markdown("### 📚 Quick Start Guide")
        
-        The transformer spatial interpolator leverages this physics knowledge through:
-        - **Habit plane proximity feature** in parameter encoding
-        - **Spatial locality regularization** that gives higher weights to physically similar sources
-        - **Angular distance metrics** that properly handle the circular nature of orientations
-        """)
+        col_guide1, col_guide2, col_guide3 = st.columns(3)
+       
+        with col_guide1:
+            st.markdown("""
+            #### 📂 Data Preparation
+            1. Place simulation files in `numerical_solutions/` directory
+            2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
+            3. Files should contain 'params' and 'history' keys
+            4. Stress fields should be in 'stresses' dictionary
+            """)
+       
+        with col_guide2:
+            st.markdown("""
+            #### 🎯 Key Parameters
+            - **Polar Angle (θ):** Target orientation angle (54.7° is habit plane)
+            - **Defect Type:** ISF, ESF, Twin, or No Defect
+            - **Spatial Weight Factor:** Balance between transformer and spatial weights (0-1)
+            - **Kappa:** Material stiffness parameter
+            """)
+       
+        with col_guide3:
+            st.markdown("""
+            #### 🔍 Comparison Features
+            - Select any source as ground truth
+            - Visualize differences with error metrics
+            - Analyze weight contributions
+            - Export results for publication
+            """)
+       
+        # Physics explanation
+        with st.expander("🧬 Physics Background: Habit Plane at 54.7°", expanded=True):
+            st.markdown("""
+            **Why 54.7° is important for martensitic transformations:**
+           
+            1. **Crystallographic Significance:** The 54.7° angle corresponds to the angle between {111} planes in face-centered cubic (FCC) crystals
+            2. **Transformation Habit Plane:** In martensitic transformations, the habit plane often lies near this angle due to minimal strain energy
+            3. **Stress Concentration:** Defects oriented near the habit plane experience different stress distributions compared to other orientations
+            4. **Interpolation Relevance:** Solutions near 54.7° provide better interpolation quality due to physical similarity
+           
+            The transformer spatial interpolator leverages this physics knowledge through:
+            - **Habit plane proximity feature** in parameter encoding
+            - **Spatial locality regularization** that gives higher weights to physically similar sources
+            - **Angular distance metrics** that properly handle the circular nature of orientations
+            """)
 
 # Footer
 st.divider()
