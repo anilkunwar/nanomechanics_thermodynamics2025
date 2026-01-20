@@ -124,7 +124,7 @@ class EnhancedSolutionLoader:
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
-    
+    #
     def _standardize_data(self, data, file_path):
         """Standardize simulation data with physics metadata"""
         standardized = {
@@ -140,13 +140,13 @@ class EnhancedSolutionLoader:
         try:
             if isinstance(data, dict):
                 # Extract parameters
-                if 'params' in 
+                if 'params' in data:
                     standardized['params'] = data['params']
-                elif 'parameters' in 
+                elif 'parameters' in data:
                     standardized['params'] = data['parameters']
                 
                 # Extract history
-                if 'history' in 
+                if 'history' in data:
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
@@ -159,7 +159,7 @@ class EnhancedSolutionLoader:
                         standardized['history'] = history_list
                 
                 # Extract additional metadata
-                if 'metadata' in 
+                if 'metadata' in data:
                     standardized['metadata'].update(data['metadata'])
                 
                 # Convert tensors to numpy arrays
@@ -169,6 +169,8 @@ class EnhancedSolutionLoader:
             standardized['metadata']['error'] = str(e)
         
         return standardized
+
+   
     
     def _convert_tensors(self, data):
         """Convert PyTorch tensors to numpy arrays recursively"""
