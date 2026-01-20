@@ -1213,7 +1213,7 @@ class HeatMapVisualizer:
                         'std': stats['std']
                     })
         
-        if stats_
+        if stats_data:
             x = np.arange(len(components))
             width = 0.25
             
