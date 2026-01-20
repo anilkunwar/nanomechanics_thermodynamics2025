@@ -20,7 +20,7 @@ import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
 from scipy.ndimage import zoom
-from scipy.stats import pearsonr
+import warnings
 warnings.filterwarnings('ignore')
 
 # =============================================
@@ -51,18 +51,18 @@ os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 # Enhanced colormap options with publication standards
 COLORMAP_OPTIONS = {
     'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
-                   'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
-                   'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
-                   'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
-                   'gist_ncar', 'hsv'],
+                  'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
+                  'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
+                  'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
+                  'gist_ncar', 'hsv'],
     'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
-                  'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+                 'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
     'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
-                    'Paired', 'Accent', 'Dark2'],
+                   'Paired', 'Accent', 'Dark2'],
     'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
-                             'turbo'],
+                            'turbo'],
     'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
-                             'coolwarm', 'bwr', 'seismic', 'BrBG']
+                            'coolwarm', 'bwr', 'seismic', 'BrBG']
 }
 
 # =============================================
@@ -74,7 +74,7 @@ class EnhancedSolutionLoader:
         self.solutions_dir = solutions_dir
         self._ensure_directory()
         self.cache = {}
-    
+        
     def _ensure_directory(self):
         """Create solutions directory if it doesn't exist"""
         if not os.path.exists(self.solutions_dir):
@@ -105,6 +105,7 @@ class EnhancedSolutionLoader:
                 file_info.append(info)
             except:
                 continue
+        
         return file_info
     
     def read_simulation_file(self, file_path, format_type='auto'):
@@ -124,6 +125,7 @@ class EnhancedSolutionLoader:
             # Standardize data structure
             standardized = self._standardize_data(data, file_path)
             return standardized
+            
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
@@ -167,6 +169,7 @@ class EnhancedSolutionLoader:
                 
                 # Convert tensors to numpy arrays
                 self._convert_tensors(standardized)
+                
         except Exception as e:
             st.error(f"Standardization error: {e}")
             standardized['metadata']['error'] = str(e)
@@ -229,7 +232,7 @@ class PositionalEncoding(nn.Module):
         position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
         
         # Compute divisor term
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
                             (-np.log(10000.0) / d_model))
         
         # Create positional encoding
@@ -240,22 +243,20 @@ class PositionalEncoding(nn.Module):
         return x + pe.unsqueeze(0)
 
 # =============================================
-# TRANSFORMER SPATIAL INTERPOLATOR WITH ENHANCED SPATIAL LOCALITY
+# ENHANCED TRANSFORMER SPATIAL INTERPOLATOR WITH HYDROSTATIC OPTIMIZATION
 # =============================================
-class TransformerSpatialInterpolator:
-    """Transformer-inspired stress interpolator with spatial locality regularization and adjustable weight factor"""
+class EnhancedTransformerSpatialInterpolator:
+    """Transformer-inspired stress interpolator with enhanced hydrostatic optimization options"""
     def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.2, temperature=1.0, 
-                 locality_weight_factor=0.7, hydro_interpolation_method='standard',
-                 max_angular_distance=None, hydro_feature_enhancement=False):
+                 locality_weight_factor=0.7, hydro_method="standard", hydro_params=None):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
         self.spatial_sigma = spatial_sigma
         self.temperature = temperature
         self.locality_weight_factor = locality_weight_factor
-        self.hydro_interpolation_method = hydro_interpolation_method
-        self.max_angular_distance = max_angular_distance
-        self.hydro_feature_enhancement = hydro_feature_enhancement
+        self.hydro_method = hydro_method
+        self.hydro_params = hydro_params if hydro_params is not None else {}
         
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -267,39 +268,36 @@ class TransformerSpatialInterpolator:
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
-        # Input projection - Now expects 15 features by default
-        feature_dim = 15
-        if hydro_feature_enhancement:
-            feature_dim = 17  # Add 2 more features for hydro-specific information
-        self.input_proj = nn.Linear(feature_dim, d_model)
+        # Input projection - FIXED: Now expects exactly 15 input features
+        self.input_proj = nn.Linear(15, d_model)
         
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
     
-    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None,
-                               hydro_interpolation_method=None, max_angular_distance=None,
-                               hydro_feature_enhancement=None):
+    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None):
         """Update spatial parameters dynamically"""
         if spatial_sigma is not None:
             self.spatial_sigma = spatial_sigma
         if locality_weight_factor is not None:
             self.locality_weight_factor = locality_weight_factor
-        if hydro_interpolation_method is not None:
-            self.hydro_interpolation_method = hydro_interpolation_method
-        if max_angular_distance is not None:
-            self.max_angular_distance = max_angular_distance
-        if hydro_feature_enhancement is not None:
-            self.hydro_feature_enhancement = hydro_feature_enhancement
+    
+    def set_hydro_method(self, method, params=None):
+        """Set hydrostatic interpolation method"""
+        self.hydro_method = method
+        if params:
+            self.hydro_params = params
     
     def debug_feature_dimensions(self, params_list, target_angle_deg):
         """Debug method to check feature dimensions"""
         encoded = self.encode_parameters(params_list, target_angle_deg)
         print(f"Debug: Encoded shape: {encoded.shape}")
         print(f"Debug: Number of features: {encoded.shape[1]}")
+        
         # Print first encoded vector
         if len(params_list) > 0:
             print(f"Debug: First encoded vector: {encoded[0]}")
             print(f"Debug: Number of non-zero elements: {torch.sum(encoded[0] != 0).item()}")
+        
         return encoded.shape
     
     def compute_positional_weights(self, source_params, target_params):
@@ -334,10 +332,10 @@ class TransformerSpatialInterpolator:
         
         return np.array(weights)
     
-    def encode_parameters(self, params_list, target_angle_deg):
-        """Encode parameters into transformer input"""
+    def encode_parameters(self, params_list, target_angle_deg, source_hydro_data=None):
+        """Encode parameters into transformer input - FIXED to return exactly 15 features"""
         encoded = []
-        for params in params_list:
+        for idx, params in enumerate(params_list):
             # Create feature vector
             features = []
             
@@ -364,38 +362,185 @@ class TransformerSpatialInterpolator:
             angle_diff = abs(theta_deg - target_angle_deg)
             features.append(np.exp(-angle_diff / 45.0))
             features.append(np.sin(np.radians(2 * theta_deg)))
-            features.append(np.cos(np.radians(2 * theta_deg)))
+            features.append(np.cos(np.radians(2 * theta_deg)))  # FIX: Added this feature
             
             # Habit plane proximity (1 feature)
             habit_distance = abs(theta_deg - 54.7)
             features.append(np.exp(-habit_distance / 15.0))
             
-            # Hydro-specific feature enhancement (if enabled)
-            if self.hydro_feature_enhancement:
-                # Add features related to hydrostatic stress patterns
-                # These would need to be computed from the simulation data
-                # For now, we'll use placeholder values
-                features.append(0.5)  # Placeholder for tension/compression ratio
-                features.append(0.0)  # Placeholder for hydrostatic sign consistency
+            # Add hydrostatic-specific features if method requires and data is available
+            if self.hydro_method == "enhanced_features" and source_hydro_data is not None and idx < len(source_hydro_data):
+                hydro_field = source_hydro_data[idx]
+                # Add hydrostatic statistics as features
+                features.append(np.mean(np.sign(hydro_field)))  # Mean sign
+                features.append(np.mean(hydro_field > 0))  # Tension ratio
+                features.append(np.std(hydro_field))  # Variability
             
-            # Verify we have the correct number of features
-            expected_features = 17 if self.hydro_feature_enhancement else 15
-            if len(features) != expected_features:
-                st.warning(f"Warning: Expected {expected_features} features, got {len(features)}. Adjusting.")
-                
-                # Pad with zeros if fewer than expected
-                while len(features) < expected_features:
+            # Verify we have exactly 15 features (or more if enhanced)
+            target_features = 15
+            if self.hydro_method == "enhanced_features" and source_hydro_data is not None:
+                target_features = 18  # Added 3 hydro features
+            
+            if len(features) != target_features:
+                # Pad with zeros if fewer
+                while len(features) < target_features:
                     features.append(0.0)
-                
-                # Truncate if more than expected
-                features = features[:expected_features]
+                # Truncate if more
+                features = features[:target_features]
             
             encoded.append(features)
         
         return torch.FloatTensor(encoded)
     
+    def interpolate_hydrostatic_channel_split(self, source_fields, combined_weights, shape):
+        """Interpolate hydrostatic stress using channel splitting method"""
+        # Split each source's hydrostatic field into positive and negative channels
+        hydro_pos_fields = []
+        hydro_neg_fields = []
+        
+        for fields in source_fields:
+            hydro = fields['sigma_hydro']
+            # Split into positive (tension) and negative (compression) channels
+            hydro_pos = np.maximum(hydro, 0)
+            hydro_neg = -np.minimum(hydro, 0)  # Positive values for compression magnitude
+            hydro_pos_fields.append(hydro_pos)
+            hydro_neg_fields.append(hydro_neg)
+        
+        # Interpolate each channel separately
+        interpolated_pos = np.zeros(shape)
+        interpolated_neg = np.zeros(shape)
+        
+        for i in range(len(source_fields)):
+            interpolated_pos += combined_weights[i] * hydro_pos_fields[i]
+            interpolated_neg += combined_weights[i] * hydro_neg_fields[i]
+        
+        # Recombine: tension - compression
+        interpolated_hydro = interpolated_pos - interpolated_neg
+        
+        # Calculate channel statistics
+        pos_mean = np.mean(interpolated_pos)
+        neg_mean = np.mean(interpolated_neg)
+        pos_max = np.max(interpolated_pos)
+        neg_max = np.max(interpolated_neg)
+        
+        return interpolated_hydro, {
+            'tension_mean': float(pos_mean),
+            'compression_mean': float(neg_mean),
+            'tension_max': float(pos_max),
+            'compression_max': float(neg_max),
+            'tension_ratio': float(pos_mean / (pos_mean + neg_mean + 1e-10))
+        }
+    
+    def interpolate_hydrostatic_weighted_by_sign(self, source_fields, combined_weights, shape, transformer_weights, pos_weights):
+        """Interpolate hydrostatic with sign-aware weighting"""
+        hydro_fields = [fields['sigma_hydro'] for fields in source_fields]
+        
+        # Calculate sign agreement between sources
+        sign_agreement = np.zeros(shape)
+        for i in range(len(hydro_fields)):
+            for j in range(i + 1, len(hydro_fields)):
+                # Calculate sign correlation between source i and j
+                sign_corr = np.mean(np.sign(hydro_fields[i]) == np.sign(hydro_fields[j]))
+                # Add to agreement matrix (simplified)
+                sign_agreement += sign_corr
+        
+        # Normalize sign agreement
+        if np.max(sign_agreement) > 0:
+            sign_agreement = sign_agreement / np.max(sign_agreement)
+        
+        # Adjust weights based on sign agreement in each region
+        adjusted_weights = combined_weights.copy()
+        
+        # For regions with low sign agreement, increase locality weight factor
+        low_agreement_mask = sign_agreement < 0.5
+        if np.any(low_agreement_mask):
+            # In low agreement regions, favor spatial weights more
+            adjusted_locality = 0.3  # Lower transformer influence
+            for i in range(len(source_fields)):
+                if low_agreement_mask.any():  # Apply to whole field for simplicity
+                    adjusted_weights[i] = (
+                        adjusted_locality * transformer_weights[i] + 
+                        (1 - adjusted_locality) * pos_weights[i]
+                    )
+        
+        # Normalize adjusted weights
+        adjusted_weights = adjusted_weights / np.sum(adjusted_weights)
+        
+        # Interpolate with adjusted weights
+        interpolated_hydro = np.zeros(shape)
+        for i, fields in enumerate(source_fields):
+            interpolated_hydro += adjusted_weights[i] * fields['sigma_hydro']
+        
+        return interpolated_hydro, {
+            'sign_agreement_mean': float(np.mean(sign_agreement)),
+            'sign_agreement_min': float(np.min(sign_agreement)),
+            'low_agreement_fraction': float(np.mean(low_agreement_mask)),
+            'weight_adjustment_applied': True
+        }
+    
+    def interpolate_hydrostatic_angular_filter(self, source_fields, combined_weights, shape, source_distances, angular_threshold=10.0):
+        """Interpolate hydrostatic with angular distance filtering"""
+        # Filter sources by angular distance
+        filtered_indices = [i for i, dist in enumerate(source_distances) if dist <= angular_threshold]
+        
+        if not filtered_indices:
+            st.warning(f"No sources within {angular_threshold}° angular distance. Using all sources.")
+            filtered_indices = list(range(len(source_fields)))
+        
+        # Re-normalize weights for filtered sources
+        filtered_weights = combined_weights[filtered_indices]
+        if np.sum(filtered_weights) > 0:
+            filtered_weights = filtered_weights / np.sum(filtered_weights)
+        
+        # Interpolate using only filtered sources
+        interpolated_hydro = np.zeros(shape)
+        for idx, source_idx in enumerate(filtered_indices):
+            interpolated_hydro += filtered_weights[idx] * source_fields[source_idx]['sigma_hydro']
+        
+        return interpolated_hydro, {
+            'angular_threshold': angular_threshold,
+            'filtered_sources': len(filtered_indices),
+            'total_sources': len(source_fields),
+            'filter_ratio': len(filtered_indices) / len(source_fields)
+        }
+    
+    def interpolate_hydrostatic_magnitude_preserving(self, source_fields, combined_weights, shape):
+        """Interpolate hydrostatic with magnitude preservation"""
+        hydro_fields = [fields['sigma_hydro'] for fields in source_fields]
+        
+        # First interpolate normally
+        interpolated_hydro = np.zeros(shape)
+        for i, fields in enumerate(source_fields):
+            interpolated_hydro += combined_weights[i] * fields['sigma_hydro']
+        
+        # Calculate magnitude statistics from sources
+        source_magnitudes = [np.abs(hydro) for hydro in hydro_fields]
+        
+        # Interpolate magnitude separately
+        interpolated_magnitude = np.zeros(shape)
+        for i, magnitude in enumerate(source_magnitudes):
+            interpolated_magnitude += combined_weights[i] * magnitude
+        
+        # Preserve sign from interpolated hydro but use interpolated magnitude
+        interpolated_hydro_preserved = np.sign(interpolated_hydro) * interpolated_magnitude
+        
+        # Blend: use preserved version in high-gradient regions
+        gradient = np.abs(np.gradient(interpolated_hydro)[0]) + np.abs(np.gradient(interpolated_hydro)[1])
+        gradient_normalized = gradient / (np.max(gradient) + 1e-10)
+        
+        # In high gradient regions, use magnitude-preserved version
+        blend_factor = gradient_normalized
+        final_hydro = (1 - blend_factor) * interpolated_hydro + blend_factor * interpolated_hydro_preserved
+        
+        return final_hydro, {
+            'gradient_mean': float(np.mean(gradient)),
+            'gradient_max': float(np.max(gradient)),
+            'blend_factor_mean': float(np.mean(blend_factor)),
+            'magnitude_preservation_applied': True
+        }
+    
     def interpolate_spatial_fields(self, sources, target_angle_deg, target_params):
-        """Interpolate full spatial stress fields with enhanced hydrostatic handling"""
+        """Interpolate full spatial stress fields using transformer attention with hydrostatic optimization"""
         if not sources:
             st.warning("No sources provided for interpolation.")
             return None
@@ -406,7 +551,6 @@ class TransformerSpatialInterpolator:
             source_fields = []
             source_indices = []  # Track original indices
             
-            # First pass: collect all sources
             for i, src in enumerate(sources):
                 if 'params' not in src or 'history' not in src:
                     st.warning(f"Skipping source {i}: missing params or history")
@@ -460,36 +604,6 @@ class TransformerSpatialInterpolator:
                 st.error("No valid sources with stress fields found.")
                 return None
             
-            # Filter sources by angular distance if specified
-            if self.max_angular_distance is not None and self.max_angular_distance > 0:
-                target_theta_rad = target_params.get('theta', 0.0)
-                target_theta_deg = np.degrees(target_theta_rad)
-                
-                filtered_params = []
-                filtered_fields = []
-                filtered_indices = []
-                
-                for i, (params, fields) in enumerate(zip(source_params, source_fields)):
-                    src_theta_rad = params.get('theta', 0.0)
-                    src_theta_deg = np.degrees(src_theta_rad)
-                    
-                    # Calculate angular distance with circular handling
-                    angular_dist = abs(src_theta_deg - target_theta_deg)
-                    angular_dist = min(angular_dist, 360 - angular_dist)
-                    
-                    if angular_dist <= self.max_angular_distance:
-                        filtered_params.append(params)
-                        filtered_fields.append(fields)
-                        filtered_indices.append(source_indices[i])
-                
-                if len(filtered_params) < 2:
-                    st.warning(f"Only {len(filtered_params)} sources within {self.max_angular_distance}° angular distance. Using all sources instead.")
-                else:
-                    source_params = filtered_params
-                    source_fields = filtered_fields
-                    source_indices = filtered_indices
-                    st.info(f"Filtered to {len(source_params)} sources within {self.max_angular_distance}° angular distance.")
-            
             # Check if all fields have same shape
             shapes = [f['von_mises'].shape for f in source_fields]
             if len(set(shapes)) > 1:
@@ -510,9 +624,20 @@ class TransformerSpatialInterpolator:
                     resized_fields.append(resized)
                 source_fields = resized_fields
             
-            # Debug: Check feature dimensions
-            source_features = self.encode_parameters(source_params, target_angle_deg)
-            target_features = self.encode_parameters([target_params], target_angle_deg)
+            # Prepare hydrostatic data for enhanced feature encoding if needed
+            hydro_data = None
+            if self.hydro_method == "enhanced_features":
+                hydro_data = [fields['sigma_hydro'] for fields in source_fields]
+            
+            # Encode parameters with optional hydrostatic features
+            source_features = self.encode_parameters(source_params, target_angle_deg, hydro_data)
+            target_features = self.encode_parameters([target_params], target_angle_deg, None)
+            
+            # Ensure we have exactly the right number of features
+            expected_features = source_features.shape[1]
+            if target_features.shape[1] < expected_features:
+                padding = torch.zeros(target_features.shape[0], expected_features - target_features.shape[1])
+                target_features = torch.cat([target_features, padding], dim=1)
             
             # Compute positional weights with distance decay
             pos_weights = self.compute_positional_weights(source_params, target_params)
@@ -530,7 +655,11 @@ class TransformerSpatialInterpolator:
             # Create sequence: [target, source1, source2, ...]
             all_features = torch.cat([target_features, source_features], dim=0).unsqueeze(0)  # [1, seq_len, features]
             
-            # Apply input projection
+            # Apply input projection (adjust for feature dimension)
+            if self.hydro_method == "enhanced_features":
+                # Update input projection for enhanced features
+                self.input_proj = nn.Linear(expected_features, self.d_model)
+            
             proj_features = self.input_proj(all_features)
             
             # Add positional encoding
@@ -554,7 +683,7 @@ class TransformerSpatialInterpolator:
             
             # Apply locality weight factor to balance spatial and transformer weights
             combined_weights = (
-                self.locality_weight_factor * transformer_weights +
+                self.locality_weight_factor * transformer_weights + 
                 (1 - self.locality_weight_factor) * pos_weights
             )
             
@@ -566,93 +695,14 @@ class TransformerSpatialInterpolator:
             entropy_spatial = self._calculate_entropy(pos_weights)
             entropy_combined = self._calculate_entropy(combined_weights)
             
-            # Interpolate spatial fields - with special handling for hydrostatic stress
+            # Interpolate spatial fields
             interpolated_fields = {}
             shape = source_fields[0]['von_mises'].shape
             
-            # Interpolate von Mises and stress magnitude normally
-            for component in ['von_mises', 'sigma_mag']:
-                interpolated = np.zeros(shape)
-                for i, fields in enumerate(source_fields):
-                    if component in fields:
-                        interpolated += combined_weights[i] * fields[component]
-                interpolated_fields[component] = interpolated
-            
-            # Handle hydrostatic stress with the selected method
-            if self.hydro_interpolation_method == 'standard':
-                # Standard linear interpolation
-                interpolated_hydro = np.zeros(shape)
-                for i, fields in enumerate(source_fields):
-                    interpolated_hydro += combined_weights[i] * fields['sigma_hydro']
-                interpolated_fields['sigma_hydro'] = interpolated_hydro
-                
-            elif self.hydro_interpolation_method == 'split_channels':
-                # Split into positive (tension) and negative (compression) channels
-                interpolated_pos = np.zeros(shape)
-                interpolated_neg = np.zeros(shape)
-                
-                for i, fields in enumerate(source_fields):
-                    hydro = fields['sigma_hydro']
-                    hydro_pos = np.maximum(hydro, 0)  # Tension (positive values)
-                    hydro_neg = -np.minimum(hydro, 0)  # Compression (negative values converted to positive)
-                    
-                    interpolated_pos += combined_weights[i] * hydro_pos
-                    interpolated_neg += combined_weights[i] * hydro_neg
-                
-                # Recombine with proper signs
-                interpolated_hydro = interpolated_pos - interpolated_neg
-                interpolated_fields['sigma_hydro'] = interpolated_hydro
-                
-            elif self.hydro_interpolation_method == 'sign_preserving':
-                # Preserve sign by interpolating magnitude and sign separately
-                interpolated_magnitude = np.zeros(shape)
-                sign_weight = np.zeros(shape)
-                
-                for i, fields in enumerate(source_fields):
-                    hydro = fields['sigma_hydro']
-                    magnitude = np.abs(hydro)
-                    sign = np.sign(hydro)
-                    
-                    interpolated_magnitude += combined_weights[i] * magnitude
-                    sign_weight += combined_weights[i] * sign
-                
-                # Determine final sign based on weighted sign
-                final_sign = np.sign(sign_weight)
-                interpolated_hydro = final_sign * interpolated_magnitude
-                interpolated_fields['sigma_hydro'] = interpolated_hydro
-                
-            elif self.hydro_interpolation_method == 'nearest_sign':
-                # Use the sign from the highest weighted source at each point
-                interpolated_magnitude = np.zeros(shape)
-                sign_influence = np.zeros((len(source_fields),) + shape)
-                
-                # Calculate weighted magnitude and sign influence
-                for i, fields in enumerate(source_fields):
-                    hydro = fields['sigma_hydro']
-                    magnitude = np.abs(hydro)
-                    sign = np.sign(hydro)
-                    
-                    interpolated_magnitude += combined_weights[i] * magnitude
-                    sign_influence[i] = combined_weights[i] * sign
-                
-                # Determine sign at each point based on the strongest influence
-                dominant_sign_index = np.argmax(np.abs(sign_influence), axis=0)
-                final_sign = np.zeros(shape)
-                for i in range(len(source_fields)):
-                    mask = (dominant_sign_index == i)
-                    if np.any(mask):
-                        final_sign[mask] = np.sign(source_fields[i]['sigma_hydro'][mask])
-                
-                interpolated_hydro = final_sign * interpolated_magnitude
-                interpolated_fields['sigma_hydro'] = interpolated_hydro
-            
-            # Compute additional metrics
-            max_vm = np.max(interpolated_fields['von_mises'])
-            max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
-            
-            # Extract source theta values for visualization
+            # Extract source distances for angular filtering if needed
             source_theta_degrees = []
-            source_distances = []  # Store distances to target
+            source_distances = []
+            
             target_theta_rad = target_params.get('theta', 0.0)
             target_theta_deg = np.degrees(target_theta_rad)
             
@@ -663,8 +713,85 @@ class TransformerSpatialInterpolator:
                 
                 # Calculate angular distance
                 angular_dist = abs(theta_deg - target_theta_deg)
-                angular_dist = min(angular_dist, 360 - angular_dist)  # Handle circular nature
+                angular_dist = min(angular_dist, 360 - angular_dist)
                 source_distances.append(angular_dist)
+            
+            # Interpolate von Mises and stress magnitude (standard method)
+            for component in ['von_mises', 'sigma_mag']:
+                interpolated = np.zeros(shape)
+                for i, fields in enumerate(source_fields):
+                    if component in fields:
+                        interpolated += combined_weights[i] * fields[component]
+                interpolated_fields[component] = interpolated
+            
+            # Interpolate hydrostatic stress based on selected method
+            hydro_stats = {}
+            if self.hydro_method == "standard":
+                # Standard linear interpolation
+                interpolated_hydro = np.zeros(shape)
+                for i, fields in enumerate(source_fields):
+                    interpolated_hydro += combined_weights[i] * fields['sigma_hydro']
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats['method'] = 'standard'
+                
+            elif self.hydro_method == "channel_split":
+                # Channel splitting method
+                interpolated_hydro, channel_stats = self.interpolate_hydrostatic_channel_split(
+                    source_fields, combined_weights, shape
+                )
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats.update(channel_stats)
+                hydro_stats['method'] = 'channel_split'
+                
+            elif self.hydro_method == "sign_aware":
+                # Sign-aware weighting method
+                interpolated_hydro, sign_stats = self.interpolate_hydrostatic_weighted_by_sign(
+                    source_fields, combined_weights, shape, transformer_weights, pos_weights
+                )
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats.update(sign_stats)
+                hydro_stats['method'] = 'sign_aware'
+                
+            elif self.hydro_method == "angular_filter":
+                # Angular distance filtering
+                angular_threshold = self.hydro_params.get('angular_threshold', 10.0)
+                interpolated_hydro, filter_stats = self.interpolate_hydrostatic_angular_filter(
+                    source_fields, combined_weights, shape, source_distances, angular_threshold
+                )
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats.update(filter_stats)
+                hydro_stats['method'] = 'angular_filter'
+                
+            elif self.hydro_method == "magnitude_preserving":
+                # Magnitude preserving method
+                interpolated_hydro, magnitude_stats = self.interpolate_hydrostatic_magnitude_preserving(
+                    source_fields, combined_weights, shape
+                )
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats.update(magnitude_stats)
+                hydro_stats['method'] = 'magnitude_preserving'
+                
+            elif self.hydro_method == "enhanced_features":
+                # Enhanced feature encoding (already applied in encoding)
+                # Use standard interpolation but with enhanced features
+                interpolated_hydro = np.zeros(shape)
+                for i, fields in enumerate(source_fields):
+                    interpolated_hydro += combined_weights[i] * fields['sigma_hydro']
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats['method'] = 'enhanced_features'
+                hydro_stats['feature_count'] = source_features.shape[1]
+                
+            else:
+                # Fallback to standard
+                interpolated_hydro = np.zeros(shape)
+                for i, fields in enumerate(source_fields):
+                    interpolated_hydro += combined_weights[i] * fields['sigma_hydro']
+                interpolated_fields['sigma_hydro'] = interpolated_hydro
+                hydro_stats['method'] = 'standard'
+            
+            # Compute additional metrics
+            max_vm = np.max(interpolated_fields['von_mises'])
+            max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
             
             return {
                 'fields': interpolated_fields,
@@ -680,7 +807,7 @@ class TransformerSpatialInterpolator:
                 },
                 'statistics': {
                     'von_mises': {
-                        'max': float(np.max(interpolated_fields['von_mises'])),
+                        'max': float(max_vm),
                         'mean': float(np.mean(interpolated_fields['von_mises'])),
                         'std': float(np.std(interpolated_fields['von_mises'])),
                         'min': float(np.min(interpolated_fields['von_mises']))
@@ -698,6 +825,7 @@ class TransformerSpatialInterpolator:
                         'min': float(np.min(interpolated_fields['sigma_mag']))
                     }
                 },
+                'hydro_optimization': hydro_stats,
                 'target_params': target_params,
                 'target_angle': target_angle_deg,
                 'shape': shape,
@@ -705,10 +833,9 @@ class TransformerSpatialInterpolator:
                 'source_theta_degrees': source_theta_degrees,
                 'source_distances': source_distances,
                 'source_indices': source_indices,
-                'source_fields': source_fields,  # Store source fields for comparison
-                'hydro_interpolation_method': self.hydro_interpolation_method
+                'source_fields': source_fields
             }
-        
+            
         except Exception as e:
             st.error(f"Error during interpolation: {str(e)}")
             import traceback
@@ -728,6 +855,7 @@ class TransformerSpatialInterpolator:
             von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
                                      6*(txy**2 + tyz**2 + tzx**2)))
             return von_mises
+        
         return np.zeros((100, 100))  # Default shape
     
     def compute_hydrostatic(self, stress_fields):
@@ -737,6 +865,7 @@ class TransformerSpatialInterpolator:
             syy = stress_fields['sigma_yy']
             szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
             return (sxx + syy + szz) / 3
+        
         return np.zeros((100, 100))  # Default shape
     
     def _calculate_entropy(self, weights):
@@ -749,26 +878,21 @@ class TransformerSpatialInterpolator:
         return -np.sum(weights * np.log(weights + 1e-10))  # Add small epsilon to avoid log(0)
 
 # =============================================
-# ENHANCED HEATMAP VISUALIZER WITH COMPARISON DASHBOARD
+# ENHANCED HEATMAP VISUALIZER WITH HYDROSTATIC ANALYSIS
 # =============================================
-class HeatMapVisualizer:
-    """Enhanced heat map visualizer with comparison dashboard and publication styling"""
+class EnhancedHeatMapVisualizer:
+    """Enhanced heat map visualizer with hydrostatic analysis dashboard"""
     def __init__(self):
         self.colormaps = COLORMAP_OPTIONS
     
     def create_stress_heatmap(self, stress_field, title="Stress Heat Map",
-                             cmap_name='viridis', figsize=(12, 10),
-                             colorbar_label="Stress (GPa)", vmin=None, vmax=None,
-                             show_stats=True, target_angle=None, defect_type=None,
-                             show_colorbar=True, aspect_ratio='equal',
-                             is_hydrostatic=False):
+                            cmap_name='viridis', figsize=(12, 10),
+                            colorbar_label="Stress (GPa)", vmin=None, vmax=None,
+                            show_stats=True, target_angle=None, defect_type=None,
+                            show_colorbar=True, aspect_ratio='equal'):
         """Create enhanced heat map with chosen colormap and publication styling"""
         # Create figure
         fig, ax = plt.subplots(figsize=figsize)
-        
-        # For hydrostatic stress, automatically use a diverging colormap if not specified
-        if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-            cmap_name = 'RdBu_r'  # Default diverging colormap for hydrostatic stress
         
         # Get colormap
         if cmap_name in plt.colormaps():
@@ -781,12 +905,6 @@ class HeatMapVisualizer:
             vmin = np.nanmin(stress_field)
         if vmax is None:
             vmax = np.nanmax(stress_field)
-        
-        # For hydrostatic stress, ensure symmetric color scale around zero
-        if is_hydrostatic:
-            max_abs = max(abs(vmin), abs(vmax))
-            vmin = -max_abs
-            vmax = max_abs
         
         # Create heatmap
         im = ax.imshow(stress_field, cmap=cmap, vmin=vmin, vmax=vmax,
@@ -802,9 +920,6 @@ class HeatMapVisualizer:
         title_str = title
         if target_angle is not None and defect_type is not None:
             title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
-        if is_hydrostatic:
-            title_str += " (Diverging Scale)"
-        
         ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
         ax.set_xlabel('X Position', fontsize=16, fontweight='bold')
         ax.set_ylabel('Y Position', fontsize=16, fontweight='bold')
@@ -827,16 +942,221 @@ class HeatMapVisualizer:
         plt.tight_layout()
         return fig
     
+    def create_hydrostatic_analysis_dashboard(self, interpolated_fields, source_fields, 
+                                             hydro_stats, target_angle, defect_type,
+                                             figsize=(20, 16)):
+        """Create comprehensive hydrostatic stress analysis dashboard"""
+        fig = plt.figure(figsize=figsize)
+        gs = fig.add_gridspec(3, 3, hspace=0.25, wspace=0.25)
+        
+        # 1. Hydrostatic stress map (top left)
+        ax1 = fig.add_subplot(gs[0, 0])
+        hydro_field = interpolated_fields['sigma_hydro']
+        max_abs = np.max(np.abs(hydro_field))
+        
+        im1 = ax1.imshow(hydro_field, cmap='RdBu_r', vmin=-max_abs, vmax=max_abs,
+                        aspect='equal', interpolation='bilinear', origin='lower')
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label='Hydrostatic Stress (GPa)')
+        ax1.set_title(f'Hydrostatic Stress\nMethod: {hydro_stats.get("method", "standard")}', 
+                     fontsize=16, fontweight='bold')
+        ax1.set_xlabel('X Position')
+        ax1.set_ylabel('Y Position')
+        ax1.grid(True, alpha=0.2)
+        
+        # 2. Tension/Compression separation (top center)
+        ax2 = fig.add_subplot(gs[0, 1])
+        tension_mask = hydro_field > 0
+        compression_mask = hydro_field < 0
+        
+        # Create RGB visualization
+        rgb_image = np.zeros((*hydro_field.shape, 3))
+        rgb_image[tension_mask, 0] = hydro_field[tension_mask] / np.max(hydro_field[tension_mask]) if np.any(tension_mask) else 0  # Red for tension
+        rgb_image[compression_mask, 2] = -hydro_field[compression_mask] / np.max(-hydro_field[compression_mask]) if np.any(compression_mask) else 0  # Blue for compression
+        
+        ax2.imshow(rgb_image, aspect='equal', origin='lower')
+        ax2.set_title('Tension (Red) / Compression (Blue)', fontsize=16, fontweight='bold')
+        ax2.set_xlabel('X Position')
+        ax2.set_ylabel('Y Position')
+        
+        # Add tension/compression statistics
+        tension_area = np.sum(tension_mask) / tension_mask.size * 100
+        compression_area = np.sum(compression_mask) / compression_mask.size * 100
+        neutral_area = 100 - tension_area - compression_area
+        
+        stats_text = (f"Tension: {tension_area:.1f}%\n"
+                     f"Compression: {compression_area:.1f}%\n"
+                     f"Neutral: {neutral_area:.1f}%")
+        ax2.text(0.02, 0.98, stats_text, transform=ax2.transAxes,
+                fontsize=11, fontweight='bold', verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+        
+        # 3. Hydrostatic statistics (top right)
+        ax3 = fig.add_subplot(gs[0, 2])
+        ax3.axis('off')
+        
+        stats = hydro_stats.copy()
+        # Remove method from display
+        method = stats.pop('method', 'standard')
+        
+        stats_text = f"Hydrostatic Optimization Method: {method}\n\n"
+        for key, value in stats.items():
+            if isinstance(value, float):
+                stats_text += f"{key.replace('_', ' ').title()}: {value:.4f}\n"
+            else:
+                stats_text += f"{key.replace('_', ' ').title()}: {value}\n"
+        
+        ax3.text(0.1, 0.5, stats_text, transform=ax3.transAxes,
+                fontsize=12, family='monospace', fontweight='bold',
+                verticalalignment='center',
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8, edgecolor='blue', linewidth=2))
+        ax3.set_title('Hydrostatic Optimization Statistics', fontsize=16, fontweight='bold', pad=20)
+        
+        # 4. Source hydrostatic comparison (middle left)
+        ax4 = fig.add_subplot(gs[1, 0])
+        if len(source_fields) > 0:
+            # Plot distribution of source hydrostatic values
+            source_hydro_means = []
+            source_hydro_stds = []
+            
+            for fields in source_fields:
+                hydro = fields['sigma_hydro']
+                source_hydro_means.append(np.mean(hydro))
+                source_hydro_stds.append(np.std(hydro))
+            
+            x_pos = np.arange(len(source_fields))
+            ax4.bar(x_pos, source_hydro_means, yerr=source_hydro_stds, 
+                   alpha=0.7, color='steelblue', edgecolor='black', capsize=5)
+            ax4.axhline(y=np.mean(hydro_field), color='red', linestyle='--', linewidth=2, 
+                       label=f'Interpolated Mean: {np.mean(hydro_field):.3f}')
+            
+            ax4.set_xlabel('Source Index')
+            ax4.set_ylabel('Mean Hydrostatic Stress (GPa)')
+            ax4.set_title('Source Hydrostatic Statistics', fontsize=16, fontweight='bold')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3, axis='y')
+        
+        # 5. Histogram of hydrostatic values (middle center)
+        ax5 = fig.add_subplot(gs[1, 1])
+        ax5.hist(hydro_field.flatten(), bins=50, alpha=0.7, color='green', edgecolor='black')
+        ax5.set_xlabel('Hydrostatic Stress (GPa)')
+        ax5.set_ylabel('Frequency')
+        ax5.set_title('Hydrostatic Distribution', fontsize=16, fontweight='bold')
+        ax5.grid(True, alpha=0.3)
+        
+        # Add Gaussian fit
+        from scipy.stats import norm
+        mu, std = norm.fit(hydro_field.flatten())
+        x = np.linspace(np.min(hydro_field), np.max(hydro_field), 100)
+        p = norm.pdf(x, mu, std)
+        ax5.plot(x, p * len(hydro_field.flatten()) * (x[1]-x[0]), 'r-', linewidth=2,
+                label=f'Gaussian Fit\nμ={mu:.3f}, σ={std:.3f}')
+        ax5.legend()
+        
+        # 6. Cumulative distribution (middle right)
+        ax6 = fig.add_subplot(gs[1, 2])
+        sorted_values = np.sort(hydro_field.flatten())
+        cdf = np.arange(1, len(sorted_values) + 1) / len(sorted_values)
+        ax6.plot(sorted_values, cdf, 'b-', linewidth=2)
+        ax6.set_xlabel('Hydrostatic Stress (GPa)')
+        ax6.set_ylabel('Cumulative Probability')
+        ax6.set_title('Cumulative Distribution Function', fontsize=16, fontweight='bold')
+        ax6.grid(True, alpha=0.3)
+        
+        # Add quartile markers
+        for q in [0.25, 0.5, 0.75]:
+            idx = int(q * len(sorted_values))
+            ax6.axvline(x=sorted_values[idx], color='r', linestyle='--', alpha=0.5)
+            ax6.text(sorted_values[idx], q, f'Q{int(q*100)}={sorted_values[idx]:.3f}', 
+                    fontsize=10, ha='right', va='bottom')
+        
+        # 7. Gradient analysis (bottom left)
+        ax7 = fig.add_subplot(gs[2, 0])
+        grad_x, grad_y = np.gradient(hydro_field)
+        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+        
+        im7 = ax7.imshow(gradient_magnitude, cmap='hot', aspect='equal', 
+                        interpolation='bilinear', origin='lower')
+        plt.colorbar(im7, ax=ax7, fraction=0.046, pad=0.04, label='Gradient Magnitude (GPa/px)')
+        ax7.set_title('Hydrostatic Stress Gradient', fontsize=16, fontweight='bold')
+        ax7.set_xlabel('X Position')
+        ax7.set_ylabel('Y Position')
+        ax7.grid(True, alpha=0.2)
+        
+        # 8. Sign consistency analysis (bottom center)
+        ax8 = fig.add_subplot(gs[2, 1])
+        if len(source_fields) >= 2:
+            # Calculate sign agreement between all source pairs
+            sign_agreement = np.zeros(hydro_field.shape)
+            source_hydro_fields = [fields['sigma_hydro'] for fields in source_fields]
+            
+            pair_count = 0
+            for i in range(len(source_hydro_fields)):
+                for j in range(i + 1, len(source_hydro_fields)):
+                    agreement = (np.sign(source_hydro_fields[i]) == np.sign(source_hydro_fields[j])).astype(float)
+                    sign_agreement += agreement
+                    pair_count += 1
+            
+            if pair_count > 0:
+                sign_agreement = sign_agreement / pair_count
+            
+            im8 = ax8.imshow(sign_agreement, cmap='viridis', vmin=0, vmax=1,
+                           aspect='equal', interpolation='bilinear', origin='lower')
+            plt.colorbar(im8, ax=ax8, fraction=0.046, pad=0.04, label='Sign Agreement Ratio')
+            ax8.set_title('Source Sign Agreement', fontsize=16, fontweight='bold')
+            ax8.set_xlabel('X Position')
+            ax8.set_ylabel('Y Position')
+            ax8.grid(True, alpha=0.2)
+            
+            # Add average agreement
+            avg_agreement = np.mean(sign_agreement)
+            ax8.text(0.02, 0.98, f'Avg Agreement: {avg_agreement:.3f}', 
+                    transform=ax8.transAxes, fontsize=11, fontweight='bold',
+                    verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+        
+        # 9. Method comparison explanation (bottom right)
+        ax9 = fig.add_subplot(gs[2, 2])
+        ax9.axis('off')
+        
+        method_descriptions = {
+            'standard': 'Standard linear interpolation. Simple but prone to sign cancellation.',
+            'channel_split': 'Separates tension/compression channels. Reduces sign cancellation.',
+            'sign_aware': 'Adjusts weights based on sign agreement. Better for mixed-sign regions.',
+            'angular_filter': 'Uses only nearby angular sources. Physically more consistent.',
+            'magnitude_preserving': 'Preserves stress magnitude while interpolating sign.',
+            'enhanced_features': 'Uses hydrostatic statistics as additional features.'
+        }
+        
+        method = hydro_stats.get('method', 'standard')
+        description = method_descriptions.get(method, 'Standard linear interpolation.')
+        
+        explanation_text = (
+            f"Current Method: {method}\n\n"
+            f"{description}\n\n"
+            f"Key Insights:\n"
+            f"• Hydrostatic stress has both tension (+) and compression (-)\n"
+            f"• Linear averaging can cancel opposite signs\n"
+            f"• Method aims to preserve physical realism\n"
+            f"• Check error metrics in comparison dashboard"
+        )
+        
+        ax9.text(0.1, 0.5, explanation_text, transform=ax9.transAxes,
+                fontsize=11, family='monospace', fontweight='bold',
+                verticalalignment='center',
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8, edgecolor='green', linewidth=2))
+        ax9.set_title('Method Explanation', fontsize=16, fontweight='bold', pad=20)
+        
+        plt.suptitle(f'Hydrostatic Stress Analysis - θ={target_angle:.1f}°, {defect_type} - Method: {method}',
+                    fontsize=24, fontweight='bold', y=0.98)
+        plt.tight_layout()
+        
+        return fig
+    
     def create_interactive_heatmap(self, stress_field, title="Stress Heat Map",
-                                  cmap_name='viridis', width=800, height=700,
-                                  target_angle=None, defect_type=None,
-                                  is_hydrostatic=False):
+                                 cmap_name='viridis', width=800, height=700,
+                                 target_angle=None, defect_type=None):
         """Create interactive heatmap with Plotly with enhanced styling"""
         try:
-            # For hydrostatic stress, automatically use a diverging colormap if not specified
-            if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-                cmap_name = 'RdBu_r'  # Default diverging colormap for hydrostatic stress
-            
             # Validate colormap
             if cmap_name not in px.colors.named_colorscales():
                 cmap_name = 'viridis'  # Default fallback
@@ -853,20 +1173,12 @@ class HeatMapVisualizer:
                         row_text.append(f"Position: ({i}, {j})<br>Stress: {stress_field[i, j]:.4f} GPa")
                 hover_text.append(row_text)
             
-            # For hydrostatic stress, ensure symmetric color scale around zero
-            zmin = np.nanmin(stress_field)
-            zmax = np.nanmax(stress_field)
-            if is_hydrostatic:
-                max_abs = max(abs(zmin), abs(zmax))
-                zmin = -max_abs
-                zmax = max_abs
-            
             # Create heatmap trace
             heatmap_trace = go.Heatmap(
                 z=stress_field,
                 colorscale=cmap_name,
-                zmin=zmin,
-                zmax=zmax,
+                zmin=np.nanmin(stress_field),
+                zmax=np.nanmax(stress_field),
                 hoverinfo='text',
                 text=hover_text,
                 colorbar=dict(
@@ -888,8 +1200,6 @@ class HeatMapVisualizer:
             title_str = title
             if target_angle is not None and defect_type is not None:
                 title_str = f"{title}<br>θ = {target_angle:.1f}°, Defect: {defect_type}"
-            if is_hydrostatic:
-                title_str += "<br>(Diverging Scale)"
             
             # Update layout with publication styling
             fig.update_layout(
@@ -934,23 +1244,13 @@ class HeatMapVisualizer:
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
     
-    def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info,
+    def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info, 
                                    target_angle, defect_type, component='von_mises',
                                    cmap_name='viridis', figsize=(20, 15),
                                    ground_truth_index=None):
-        """
-        Create comprehensive comparison dashboard showing:
-        1. Interpolated result
-        2. Ground truth (selected source or closest match)
-        3. Difference between interpolated and ground truth
-        4. Weight distribution analysis
-        5. Angular distribution of sources
-        """
+        """Create comprehensive comparison dashboard"""
         fig = plt.figure(figsize=figsize)
         gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
-        
-        # Determine if we're visualizing hydrostatic stress
-        is_hydrostatic = (component == 'sigma_hydro')
         
         # Determine vmin and vmax for consistent scaling
         all_values = [interpolated_fields[component]]
@@ -960,24 +1260,12 @@ class HeatMapVisualizer:
         vmin = min(np.min(field) for field in all_values)
         vmax = max(np.max(field) for field in all_values)
         
-        # For hydrostatic stress, ensure symmetric color scale around zero
-        if is_hydrostatic:
-            max_abs = max(abs(vmin), abs(vmax))
-            vmin = -max_abs
-            vmax = max_abs
-        
         # 1. Interpolated result (top left)
         ax1 = fig.add_subplot(gs[0, 0])
-        
-        # For hydrostatic stress, automatically use a diverging colormap if not specified
-        cmap_used = cmap_name
-        if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-            cmap_used = 'RdBu_r'
-        
-        im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_used,
+        im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name, 
                         vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
         plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}',
+        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}', 
                      fontsize=16, fontweight='bold')
         ax1.set_xlabel('X Position')
         ax1.set_ylabel('Y Position')
@@ -989,30 +1277,32 @@ class HeatMapVisualizer:
             gt_field = source_fields[ground_truth_index][component]
             gt_theta = source_info['theta_degrees'][ground_truth_index]
             gt_distance = source_info['distances'][ground_truth_index]
-            im2 = ax2.imshow(gt_field, cmap=cmap_used,
+            
+            im2 = ax2.imshow(gt_field, cmap=cmap_name, 
                             vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
             plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-            ax2.set_title(f'Ground Truth\nθ = {gt_theta:.1f}° (Δ = {gt_distance:.1f}°)',
+            ax2.set_title(f'Ground Truth\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°)', 
                          fontsize=16, fontweight='bold')
             ax2.set_xlabel('X Position')
             ax2.set_ylabel('Y Position')
             ax2.grid(True, alpha=0.2)
         else:
-            ax2.text(0.5, 0.5, 'Select Ground Truth\nSource',
+            ax2.text(0.5, 0.5, 'Select Ground Truth Source', 
                     ha='center', va='center', fontsize=14, fontweight='bold')
             ax2.set_title('Ground Truth Selection', fontsize=16, fontweight='bold')
             ax2.set_axis_off()
         
-        # 3. Difference plot (top right) - Always use diverging colormap for differences
+        # 3. Difference plot (top right)
         ax3 = fig.add_subplot(gs[0, 2])
         if ground_truth_index is not None and ground_truth_index < len(source_fields):
             diff_field = interpolated_fields[component] - source_fields[ground_truth_index][component]
             max_diff = np.max(np.abs(diff_field))
-            im3 = ax3.imshow(diff_field, cmap='RdBu_r',
-                            vmin=-max_diff, vmax=max_diff, aspect='equal',
+            
+            im3 = ax3.imshow(diff_field, cmap='RdBu_r', 
+                            vmin=-max_diff, vmax=max_diff, aspect='equal', 
                             interpolation='bilinear', origin='lower')
             plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04, label='Difference (GPa)')
-            ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa',
+            ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa', 
                          fontsize=16, fontweight='bold')
             ax3.set_xlabel('X Position')
             ax3.set_ylabel('Y Position')
@@ -1022,6 +1312,7 @@ class HeatMapVisualizer:
             mse = np.mean(diff_field**2)
             mae = np.mean(np.abs(diff_field))
             rmse = np.sqrt(mse)
+            
             error_text = (f"MSE: {mse:.4f}\n"
                          f"MAE: {mae:.4f}\n"
                          f"RMSE: {rmse:.4f}")
@@ -1029,7 +1320,7 @@ class HeatMapVisualizer:
                     fontsize=12, fontweight='bold', verticalalignment='top',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
         else:
-            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected',
+            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected', 
                     ha='center', va='center', fontsize=14, fontweight='bold')
             ax3.set_title('Difference Analysis', fontsize=16, fontweight='bold')
             ax3.set_axis_off()
@@ -1039,6 +1330,7 @@ class HeatMapVisualizer:
         if 'weights' in source_info:
             weights = source_info['weights']['combined']
             x = range(len(weights))
+            
             bars = ax4.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
             ax4.set_xlabel('Source Index')
             ax4.set_ylabel('Weight')
@@ -1074,8 +1366,8 @@ class HeatMapVisualizer:
             else:
                 sizes = 50 * np.ones(len(angles_rad))
             
-            scatter = ax5.scatter(angles_rad, distances,
-                                s=sizes, alpha=0.7, c='blue', edgecolors='black')
+            scatter = ax5.scatter(angles_rad, distances, 
+                                 s=sizes, alpha=0.7, c='blue', edgecolors='black')
             
             # Plot target angle
             target_rad = np.radians(target_angle)
@@ -1084,6 +1376,7 @@ class HeatMapVisualizer:
             # Plot habit plane (54.7°)
             habit_rad = np.radians(54.7)
             ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label='Habit Plane (54.7°)')
+            
             ax5.set_title('Angular Distribution of Sources', fontsize=16, fontweight='bold', pad=20)
             ax5.set_theta_zero_location('N')  # 0° at top
             ax5.set_theta_direction(-1)  # Clockwise
@@ -1133,6 +1426,7 @@ class HeatMapVisualizer:
         
         # 7. Local spatial correlation analysis (bottom row)
         ax7 = fig.add_subplot(gs[2, :])
+        
         if ground_truth_index is not None and ground_truth_index < len(source_fields):
             # Calculate spatial correlation between interpolated and ground truth
             interp_flat = interpolated_fields[component].flatten()
@@ -1147,10 +1441,12 @@ class HeatMapVisualizer:
             ax7.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Correlation')
             
             # Calculate correlation coefficient
+            from scipy.stats import pearsonr
             corr_coef, _ = pearsonr(gt_flat, interp_flat)
+            
             ax7.set_xlabel(f'Ground Truth {component.replace("_", " ").title()} (GPa)')
             ax7.set_ylabel(f'Interpolated {component.replace("_", " ").title()} (GPa)')
-            ax7.set_title(f'Spatial Correlation Analysis\nPearson Correlation: {corr_coef:.3f}',
+            ax7.set_title(f'Spatial Correlation Analysis\nPearson Correlation: {corr_coef:.3f}', 
                          fontsize=16, fontweight='bold')
             ax7.grid(True, alpha=0.3)
             ax7.legend()
@@ -1168,448 +1464,97 @@ class HeatMapVisualizer:
         plt.suptitle(f'Comprehensive Stress Field Analysis - Target θ={target_angle:.1f}°, {defect_type}',
                     fontsize=24, fontweight='bold', y=0.98)
         plt.tight_layout()
+        
         return fig
-    
-    def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
-                                     cmap_name='viridis', width=900, height=700,
-                                     target_angle=None, defect_type=None,
-                                     is_hydrostatic=False):
-        """Create interactive 3D surface plot with Plotly"""
-        try:
-            # For hydrostatic stress, automatically use a diverging colormap if not specified
-            if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-                cmap_name = 'RdBu_r'  # Default diverging colormap for hydrostatic stress
-            
-            # Validate colormap
-            if cmap_name not in px.colors.named_colorscales():
-                cmap_name = 'viridis'
-            
-            # Create meshgrid
-            x = np.arange(stress_field.shape[1])
-            y = np.arange(stress_field.shape[0])
-            X, Y = np.meshgrid(x, y)
-            
-            # Create hover text
-            hover_text = []
-            for i in range(stress_field.shape[0]):
-                row_text = []
-                for j in range(stress_field.shape[1]):
-                    row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa")
-                hover_text.append(row_text)
-            
-            # For hydrostatic stress, ensure symmetric color scale around zero
-            zmin = np.nanmin(stress_field)
-            zmax = np.nanmax(stress_field)
-            if is_hydrostatic:
-                max_abs = max(abs(zmin), abs(zmax))
-                zmin = -max_abs
-                zmax = max_abs
-            
-            # Create 3D surface trace
-            surface_trace = go.Surface(
-                z=stress_field,
-                x=X,
-                y=Y,
-                colorscale=cmap_name,
-                zmin=zmin,
-                zmax=zmax,
-                contours={
-                    "z": {"show": True, "usecolormap": True, "highlightcolor": "limegreen", "project": {"z": True}}
-                },
-                hoverinfo='text',
-                text=hover_text
-            )
-            
-            # Create figure
-            fig = go.Figure(data=[surface_trace])
-            
-            # Enhanced title
-            title_str = title
-            if target_angle is not None and defect_type is not None:
-                title_str = f"{title}<br>θ = {target_angle:.1f}°, Defect: {defect_type}"
-            if is_hydrostatic:
-                title_str += "<br>(Diverging Scale)"
-            
-            # Update layout with publication styling
-            fig.update_layout(
-                title=dict(
-                    text=title_str,
-                    font=dict(size=24, family="Arial Black", color='darkblue'),
-                    x=0.5,
-                    y=0.95
-                ),
-                width=width,
-                height=height,
-                scene=dict(
-                    xaxis=dict(
-                        title=dict(text="X Position", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    yaxis=dict(
-                        title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    zaxis=dict(
-                        title=dict(text="Stress (GPa)", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    camera=dict(
-                        eye=dict(x=1.5, y=1.5, z=1.0)
-                    ),
-                    aspectratio=dict(x=1, y=1, z=0.7)
-                ),
-                plot_bgcolor='white',
-                paper_bgcolor='white',
-                margin=dict(l=0, r=0, t=100, b=0)
-            )
-            return fig
-        except Exception as e:
-            st.error(f"Error creating 3D surface: {e}")
-            fig = go.Figure()
-            fig.add_annotation(text="Error creating 3D surface", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
-            return fig
-    
-    def create_angular_orientation_plot(self, target_angle_deg, defect_type="Unknown",
-                                       figsize=(8, 8), show_habit_plane=True):
-        """Create polar plot showing angular orientation"""
-        fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111, projection='polar')
-        
-        # Convert target angle to radians
-        theta_rad = np.radians(target_angle_deg)
-        
-        # Plot the defect orientation as a red arrow
-        ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02,
-                color='red', alpha=0.8, label=f'Defect Orientation: {target_angle_deg:.1f}°')
-        
-        # Plot habit plane orientation (54.7°) if requested
-        if show_habit_plane:
-            habit_plane_rad = np.radians(54.7)
-            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02,
-                    color='blue', alpha=0.5, label='Habit Plane (54.7°)')
-        
-        # Plot cardinal directions
-        for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
-            ax.axvline(np.radians(angle), color='gray', linestyle='--', alpha=0.3)
-        
-        # Customize plot
-        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}',
-                    fontsize=20, fontweight='bold', pad=20)
-        ax.set_theta_zero_location('N')  # 0° at top
-        ax.set_theta_direction(-1)  # Clockwise
-        ax.set_ylim(0, 1.5)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
-        
-        # Add annotation for angular difference from habit plane
-        if show_habit_plane:
-            angular_diff = abs(target_angle_deg - 54.7)
-            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom habit plane',
-                       xy=(theta_rad, 1.2), xytext=(theta_rad, 1.4),
-                       arrowprops=dict(arrowstyle='->', color='green', alpha=0.7),
-                       fontsize=12, fontweight='bold',
-                       ha='center', va='center',
-                       bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.7))
-        
-        plt.tight_layout()
-        return fig
-    
-    def create_comparison_heatmaps(self, stress_fields_dict, cmap_name='viridis',
-                                 figsize=(18, 6), titles=None, target_angle=None, defect_type=None):
-        """Create comparison heatmaps for multiple stress components"""
-        n_components = len(stress_fields_dict)
-        fig, axes = plt.subplots(1, n_components, figsize=figsize)
-        
-        if n_components == 1:
-            axes = [axes]
-        
-        if titles is None:
-            titles = list(stress_fields_dict.keys())
-        
-        for idx, ((component_name, stress_field), title) in enumerate(zip(stress_fields_dict.items(), titles)):
-            ax = axes[idx]
-            
-            # For hydrostatic stress, automatically use a diverging colormap if not specified
-            cmap_used = cmap_name
-            is_hydrostatic = (component_name == 'sigma_hydro')
-            if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-                cmap_used = 'RdBu_r'
-            
-            # Determine vmin and vmax
-            vmin = np.nanmin(stress_field)
-            vmax = np.nanmax(stress_field)
-            
-            # For hydrostatic stress, ensure symmetric color scale around zero
-            if is_hydrostatic:
-                max_abs = max(abs(vmin), abs(vmax))
-                vmin = -max_abs
-                vmax = max_abs
-            
-            # Get colormap
-            if cmap_used in plt.colormaps():
-                cmap = plt.get_cmap(cmap_used)
-            else:
-                cmap = plt.get_cmap('viridis')
-            
-            # Create heatmap with equal aspect ratio
-            im = ax.imshow(stress_field, cmap=cmap, vmin=vmin, vmax=vmax, 
-                          aspect='equal', interpolation='bilinear', origin='lower')
-            
-            # Add colorbar
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label("Stress (GPa)", fontsize=14)
-            cbar.ax.tick_params(labelsize=12)
-            
-            # Customize subplot with publication styling
-            ax.set_title(title, fontsize=18, fontweight='bold')
-            ax.set_xlabel('X Position', fontsize=14)
-            ax.set_ylabel('Y Position', fontsize=14)
-            
-            # Add grid
-            ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5)
-            
-            # Set tick parameters
-            ax.tick_params(axis='both', which='major', labelsize=12)
-        
-        # Add super title with target parameters
-        suptitle = "Stress Component Comparison"
-        if target_angle is not None and defect_type is not None:
-            suptitle = f"Stress Component Comparison - θ = {target_angle:.1f}°, {defect_type}"
-        plt.suptitle(suptitle, fontsize=22, fontweight='bold', y=1.02)
-        plt.tight_layout()
-        return fig
-    
-    def create_3d_surface_plot(self, stress_field, title="3D Stress Surface",
-                             cmap_name='viridis', figsize=(14, 10), target_angle=None, defect_type=None,
-                             is_hydrostatic=False):
-        """Create 3D surface plot of stress field with enhanced styling"""
-        fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111, projection='3d')
-        
-        # For hydrostatic stress, automatically use a diverging colormap if not specified
-        if is_hydrostatic and cmap_name not in ['RdBu', 'RdBu_r', 'coolwarm', 'bwr', 'seismic']:
-            cmap_name = 'RdBu_r'
-        
-        # Create meshgrid
-        x = np.arange(stress_field.shape[1])
-        y = np.arange(stress_field.shape[0])
-        X, Y = np.meshgrid(x, y)
-        
-        # Get colormap
-        if cmap_name in plt.colormaps():
-            cmap = plt.get_cmap(cmap_name)
-        else:
-            cmap = plt.get_cmap('viridis')
-        
-        # For hydrostatic stress, ensure symmetric color scale around zero
-        vmin = np.nanmin(stress_field)
-        vmax = np.nanmax(stress_field)
-        if is_hydrostatic:
-            max_abs = max(abs(vmin), abs(vmax))
-            vmin = -max_abs
-            vmax = max_abs
-        
-        # Normalize for coloring
-        norm = Normalize(vmin=vmin, vmax=vmax)
-        
-        # Create surface plot
-        surf = ax.plot_surface(X, Y, stress_field, cmap=cmap, norm=norm,
-                             linewidth=0, antialiased=True, alpha=0.8, rstride=1, cstride=1)
-        
-        # Add colorbar
-        cbar = fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
-        cbar.set_label("Stress (GPa)", fontsize=16, fontweight='bold')
-        cbar.ax.tick_params(labelsize=14)
-        
-        # Enhanced title
-        title_str = title
-        if target_angle is not None and defect_type is not None:
-            title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
-        if is_hydrostatic:
-            title_str += "\n(Diverging Scale)"
-        
-        # Customize plot with publication styling
-        ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
-        ax.set_xlabel('X Position', fontsize=16, fontweight='bold', labelpad=10)
-        ax.set_ylabel('Y Position', fontsize=16, fontweight='bold', labelpad=10)
-        ax.set_zlabel('Stress (GPa)', fontsize=16, fontweight='bold', labelpad=10)
-        
-        # Set tick parameters
-        ax.tick_params(axis='x', labelsize=14)
-        ax.tick_params(axis='y', labelsize=14)
-        ax.tick_params(axis='z', labelsize=14)
-        
-        # Adjust view angle
-        ax.view_init(elev=30, azim=45)
-        plt.tight_layout()
-        return fig
-    
-    def get_colormap_preview(self, cmap_name, figsize=(12, 1)):
-        """Generate preview of a colormap with enhanced styling"""
-        fig, ax = plt.subplots(figsize=figsize)
-        gradient = np.linspace(0, 1, 256).reshape(1, -1)
-        ax.imshow(gradient, aspect='auto', cmap=cmap_name)
-        ax.set_title(f"Colormap: {cmap_name}", fontsize=18, fontweight='bold')
-        ax.set_xticks([])
-        ax.set_yticks([])
-        
-        # Add value labels with enhanced styling
-        ax.text(0, 0.5, "Min", transform=ax.transAxes,
-               va='center', ha='right', fontsize=14, fontweight='bold',
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
-        ax.text(1, 0.5, "Max", transform=ax.transAxes,
-               va='center', ha='left', fontsize=14, fontweight='bold',
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
-        
-        # Add ticks
-        ax.set_xticks([0, 128, 255])
-        ax.set_xticklabels(['0.0', '0.5', '1.0'], fontsize=12)
-        ax.xaxis.set_ticks_position('bottom')
-        plt.tight_layout()
-        return fig
-    
-    def create_comprehensive_dashboard(self, stress_fields, theta, defect_type,
-                                      cmap_name='viridis', figsize=(24, 16)):
-        """Create comprehensive dashboard with all stress components and angular orientation"""
-        fig = plt.figure(figsize=figsize)
-        
-        # Create subplots grid with polar plot included
-        gs = fig.add_gridspec(3, 4, hspace=0.35, wspace=0.35)
-        
-        # 0. Angular orientation plot (polar plot)
-        ax0 = fig.add_subplot(gs[0, 0], projection='polar')
-        theta_rad = np.radians(theta)
-        ax0.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, color='red', alpha=0.8)
-        
-        # Plot habit plane
-        habit_plane_rad = np.radians(54.7)
-        ax0.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, color='blue', alpha=0.5)
-        
-        # Customize polar plot
-        ax0.set_title(f'Defect Orientation\nθ = {theta:.1f}°', fontsize=16, fontweight='bold', pad=15)
-        ax0.set_theta_zero_location('N')
-        ax0.set_theta_direction(-1)
-        ax0.set_ylim(0, 1.5)
-        ax0.grid(True, alpha=0.3)
-        
-        # 1. Von Mises stress (main plot)
-        ax1 = fig.add_subplot(gs[0, 1:3])
-        im1 = ax1.imshow(stress_fields['von_mises'], cmap=cmap_name, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im1, ax=ax1, label='Von Mises Stress (GPa)')
-        ax1.set_title(f'Von Mises Stress at θ={theta}°\nDefect: {defect_type}',
-                     fontsize=18, fontweight='bold')
-        ax1.set_xlabel('X Position', fontsize=14)
-        ax1.set_ylabel('Y Position', fontsize=14)
-        ax1.grid(True, alpha=0.2)
-        
-        # 2. Hydrostatic stress - Always use diverging colormap
-        ax2 = fig.add_subplot(gs[0, 3])
-        # Always use diverging colormap for hydrostatic
-        hydro_cmap = 'RdBu_r'
-        im2 = ax2.imshow(stress_fields['sigma_hydro'], cmap=hydro_cmap, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im2, ax=ax2, label='Hydrostatic Stress (GPa)')
-        ax2.set_title('Hydrostatic Stress\n(Diverging Scale)', fontsize=18, fontweight='bold')
-        ax2.set_xlabel('X Position', fontsize=14)
-        ax2.set_ylabel('Y Position', fontsize=14)
-        ax2.grid(True, alpha=0.2)
-        
-        # 3. Stress magnitude
-        ax3 = fig.add_subplot(gs[1, 0])
-        im3 = ax3.imshow(stress_fields['sigma_mag'], cmap=cmap_name, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im3, ax=ax3, label='Stress Magnitude (GPa)')
-        ax3.set_title('Stress Magnitude', fontsize=18, fontweight='bold')
-        ax3.set_xlabel('X Position', fontsize=14)
-        ax3.set_ylabel('Y Position', fontsize=14)
-        ax3.grid(True, alpha=0.2)
-        
-        # 4. Histogram of von Mises
-        ax4 = fig.add_subplot(gs[1, 1])
-        ax4.hist(stress_fields['von_mises'].flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
-        ax4.set_xlabel('Von Mises Stress (GPa)', fontsize=14)
-        ax4.set_ylabel('Frequency', fontsize=14)
-        ax4.set_title('Von Mises Distribution', fontsize=16, fontweight='bold')
-        ax4.grid(True, alpha=0.3)
-        
-        # 5. Histogram of hydrostatic - with symmetric bins around zero
-        ax5 = fig.add_subplot(gs[1, 2])
-        hydro_data = stress_fields['sigma_hydro'].flatten()
-        max_abs = max(abs(np.min(hydro_data)), abs(np.max(hydro_data)))
-        bins = np.linspace(-max_abs, max_abs, 51)
-        ax5.hist(hydro_data, bins=bins, alpha=0.7, color='purple', edgecolor='black')
-        ax5.set_xlabel('Hydrostatic Stress (GPa)', fontsize=14)
-        ax5.set_ylabel('Frequency', fontsize=14)
-        ax5.set_title('Hydrostatic Distribution\n(Symmetric Scale)', fontsize=16, fontweight='bold')
-        ax5.grid(True, alpha=0.3)
-        ax5.axvline(x=0, color='black', linestyle='--', alpha=0.5)
-        
-        # 6. Line profiles
-        ax6 = fig.add_subplot(gs[1, 3])
-        middle_row = stress_fields['von_mises'].shape[0] // 2
-        middle_col = stress_fields['von_mises'].shape[1] // 2
-        ax6.plot(stress_fields['von_mises'][middle_row, :], label='Von Mises', linewidth=2)
-        ax6.plot(stress_fields['sigma_hydro'][middle_row, :], label='Hydrostatic', linewidth=2)
-        ax6.plot(stress_fields['sigma_mag'][middle_row, :], label='Magnitude', linewidth=2)
-        ax6.set_xlabel('X Position', fontsize=14)
-        ax6.set_ylabel('Stress (GPa)', fontsize=14)
-        ax6.set_title(f'Line Profile at Row {middle_row}', fontsize=16, fontweight='bold')
-        ax6.legend(fontsize=12)
-        ax6.grid(True, alpha=0.3)
-        
-        # 7. Statistics table
-        ax7 = fig.add_subplot(gs[2, 0:2])
-        ax7.axis('off')
-        
-        # Prepare statistics with enhanced formatting
-        stats_text = (
-            f"Von Mises Stress:\n"
-            f"  Max: {np.max(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Min: {np.min(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['von_mises']):.3f} GPa\n\n"
-            f"Hydrostatic Stress:\n"
-            f"  Max Tension: {np.max(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Max Compression: {np.min(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['sigma_hydro']):.3f} GPa\n\n"
-            f"Stress Magnitude:\n"
-            f"  Max: {np.max(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Min: {np.min(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['sigma_mag']):.3f} GPa"
-        )
-        ax7.text(0.1, 0.5, stats_text, fontsize=13, family='monospace', fontweight='bold',
-                verticalalignment='center', transform=ax7.transAxes,
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, edgecolor='brown', linewidth=2))
-        ax7.set_title('Stress Statistics', fontsize=18, fontweight='bold', pad=20)
-        
-        # 8. Target parameters display
-        ax8 = fig.add_subplot(gs[2, 2:])
-        ax8.axis('off')
-        params_text = (
-            f"Target Parameters:\n"
-            f"  Polar Angle (θ): {theta:.1f}°\n"
-            f"  Defect Type: {defect_type}\n"
-            f"  Shape: Square (default)\n"
-            f"  Simulation Grid: {stress_fields['von_mises'].shape[0]} × {stress_fields['von_mises'].shape[1]}\n"
-            f"  Habit Plane: 54.7°\n"
-            f"  Angular Deviation: {abs(theta - 54.7):.1f}°\n"
-            f"  Hydro Interp Method: {stress_fields.get('hydro_method', 'standard')}"
-        )
-        ax8.text(0.1, 0.5, params_text, fontsize=13, family='monospace', fontweight='bold',
-                verticalalignment='center', transform=ax8.transAxes,
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8, edgecolor='blue', linewidth=2))
-        ax8.set_title('Interpolation Parameters', fontsize=18, fontweight='bold', pad=20)
-        
-        plt.suptitle(f'Comprehensive Stress Analysis - θ={theta}°, {defect_type}',
-                    fontsize=24, fontweight='bold', y=0.98)
-        plt.tight_layout()
-        return fig
+
+# =============================================
+# HYDROSTATIC ENHANCEMENT EXPLANATIONS
+# =============================================
+HYDROSTATIC_ENHANCEMENTS = {
+    "standard": {
+        "name": "Standard Linear Interpolation",
+        "description": "Basic weighted average of source hydrostatic fields. Simple but prone to sign cancellation.",
+        "explanation": """
+        • Uses linear weighted average: Σ(w_i * σ_hydro_i)
+        • Prone to sign cancellation when sources have opposite signs
+        • Simple and computationally efficient
+        • Best for sources with consistent sign patterns
+        """,
+        "pros": ["Simple", "Fast", "Deterministic"],
+        "cons": ["Sign cancellation", "Poor for mixed-sign regions", "Blurs transitions"],
+        "implementation": "Direct weighted average"
+    },
+    "channel_split": {
+        "name": "Channel Splitting Method",
+        "description": "Separates tension and compression channels, interpolates separately, then recombines.",
+        "explanation": """
+        • Splits each source: σ⁺ = max(σ, 0), σ⁻ = -min(σ, 0)
+        • Interpolates tension and compression channels separately
+        • Recombines: σ_interp = σ⁺_interp - σ⁻_interp
+        • Reduces sign cancellation significantly
+        • Preserves magnitude better than standard method
+        """,
+        "pros": ["Reduces sign cancellation", "Preserves magnitude", "Better physical realism"],
+        "cons": ["Doubles computation", "May over-smooth", "Requires renormalization"],
+        "implementation": "Separate interpolation of tension/compression channels"
+    },
+    "sign_aware": {
+        "name": "Sign-Aware Weight Adjustment",
+        "description": "Adjusts interpolation weights based on sign agreement between sources.",
+        "explanation": """
+        • Analyzes sign agreement between source pairs
+        • In low-agreement regions, increases spatial locality weight
+        • Dynamically adjusts weights to favor physically consistent sources
+        • Better handles regions with conflicting sign patterns
+        • Adaptive to local sign coherence
+        """,
+        "pros": ["Adaptive to sign patterns", "Better for mixed regions", "Preserves local structure"],
+        "cons": ["Computationally intensive", "Requires pair-wise analysis", "May overfit to noise"],
+        "implementation": "Weight adjustment based on sign agreement metrics"
+    },
+    "angular_filter": {
+        "name": "Angular Distance Filtering",
+        "description": "Uses only sources within specified angular distance from target.",
+        "explanation": """
+        • Filters sources by angular distance: Δθ < threshold
+        • Uses only physically similar sources for interpolation
+        • Reduces influence of dissimilar sources with different sign patterns
+        • Particularly effective near habit plane (54.7°) where hydrostatic is sensitive
+        • Threshold adjustable via parameter
+        """,
+        "pros": ["Physically motivated", "Reduces dissimilar source influence", "Simple to implement"],
+        "cons": ["May discard useful information", "Sensitive to threshold choice", "Risk of too few sources"],
+        "implementation": "Source filtering based on angular distance"
+    },
+    "magnitude_preserving": {
+        "name": "Magnitude-Preserving Interpolation",
+        "description": "Interpolates magnitude and sign separately to preserve stress intensity.",
+        "explanation": """
+        • Interpolates magnitude: |σ|_interp = Σ(w_i * |σ_i|)
+        • Interpolates sign separately or uses weighted sign
+        • Recombines: σ_interp = sign(σ_weighted) * |σ|_interp
+        • Preserves stress intensity while allowing sign interpolation
+        • Blends methods based on gradient magnitude
+        """,
+        "pros": ["Preserves magnitude", "Better for gradient regions", "Hybrid approach"],
+        "cons": ["Complex implementation", "May create artificial patterns", "Blending parameter sensitive"],
+        "implementation": "Separate magnitude/sign interpolation with gradient-based blending"
+    },
+    "enhanced_features": {
+        "name": "Enhanced Feature Encoding",
+        "description": "Adds hydrostatic-specific features to transformer encoding.",
+        "explanation": """
+        • Augments parameter encoding with hydrostatic statistics
+        • Features: mean sign, tension ratio, variability
+        • Transformer learns better similarities for signed fields
+        • Requires updating input projection layer
+        • More informed attention mechanism
+        """,
+        "pros": ["Better similarity learning", "Informed attention", "Holistic approach"],
+        "cons": ["Breaks existing encoding", "Requires model adjustment", "Increased complexity"],
+        "implementation": "Extended feature vector with hydrostatic statistics"
+    }
+}
 
 # =============================================
 # RESULTS MANAGER FOR EXPORT
@@ -1625,9 +1570,9 @@ class ResultsManager:
         export_data = {
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
-                'interpolation_method': 'transformer_spatial',
-                'visualization_params': visualization_params,
-                'hydro_interpolation_method': result.get('hydro_interpolation_method', 'standard')
+                'interpolation_method': 'enhanced_transformer_spatial',
+                'hydro_method': interpolation_result.get('hydro_optimization', {}).get('method', 'standard'),
+                'visualization_params': visualization_params
             },
             'result': {
                 'target_angle': result['target_angle'],
@@ -1635,11 +1580,11 @@ class ResultsManager:
                 'shape': result['shape'],
                 'statistics': result['statistics'],
                 'weights': result['weights'],
+                'hydro_optimization': result.get('hydro_optimization', {}),
                 'num_sources': result.get('num_sources', 0),
                 'source_theta_degrees': result.get('source_theta_degrees', []),
                 'source_distances': result.get('source_distances', []),
-                'source_indices': result.get('source_indices', []),
-                'hydro_interpolation_method': result.get('hydro_interpolation_method', 'standard')
+                'source_indices': result.get('source_indices', [])
             }
         }
         
@@ -1655,8 +1600,8 @@ class ResultsManager:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             theta = export_data['result']['target_angle']
             defect = export_data['result']['target_params']['defect_type']
-            method = export_data['metadata']['hydro_interpolation_method']
-            filename = f"transformer_interpolation_theta_{theta}_{defect}_{method}_{timestamp}.json"
+            hydro_method = export_data['metadata']['hydro_method']
+            filename = f"enhanced_interpolation_theta_{theta}_{defect}_{hydro_method}_{timestamp}.json"
         
         json_str = json.dumps(export_data, indent=2, default=self._json_serializer)
         return json_str, filename
@@ -1667,8 +1612,8 @@ class ResultsManager:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             theta = interpolation_result['target_angle']
             defect = interpolation_result['target_params']['defect_type']
-            method = interpolation_result.get('hydro_interpolation_method', 'standard')
-            filename = f"stress_fields_theta_{theta}_{defect}_{method}_{timestamp}.csv"
+            hydro_method = interpolation_result.get('hydro_optimization', {}).get('method', 'standard')
+            filename = f"enhanced_stress_fields_theta_{theta}_{defect}_{hydro_method}_{timestamp}.csv"
         
         # Create DataFrame with flattened data
         data_dict = {}
@@ -1695,14 +1640,14 @@ class ResultsManager:
             return str(obj)
 
 # =============================================
-# MAIN APPLICATION WITH COMPLETE IMPLEMENTATION
+# MAIN APPLICATION WITH HYDROSTATIC ENHANCEMENT
 # =============================================
 def main():
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Transformer Stress Interpolation with Comparison Dashboard",
+        page_title="Enhanced Transformer Stress Interpolation with Hydrostatic Optimization",
         layout="wide",
-        page_icon="🔮",
+        page_icon="🔬",
         initial_sidebar_state="expanded"
     )
     
@@ -1747,6 +1692,35 @@ def main():
         margin: 1.2rem 0;
         font-size: 1.1rem;
     }
+    .method-card {
+        background-color: #F7FEF5;
+        border: 2px solid #10B981;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }
+    .method-title {
+        color: #065F46;
+        font-weight: 800;
+        font-size: 1.3rem;
+        margin-bottom: 0.5rem;
+    }
+    .pros-cons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    .pros {
+        background-color: #D1FAE5;
+        padding: 0.8rem;
+        border-radius: 6px;
+    }
+    .cons {
+        background-color: #FEE2E2;
+        padding: 0.8rem;
+        border-radius: 6px;
+    }
     .stTabs [data-baseweb="tab-list"] {
         gap: 2.5rem;
     }
@@ -1783,38 +1757,22 @@ def main():
         color: #059669;
         font-size: 1.1rem;
     }
-    .hydro-solution-box {
-        background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
-        border-radius: 10px;
-        padding: 15px;
-        margin: 10px 0;
-        border: 2px solid #F59E0B;
-    }
-    .solution-title {
-        font-weight: 700;
-        color: #B45309;
-        font-size: 1.1rem;
-        margin-bottom: 5px;
-    }
     </style>
     """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🔮 Transformer Stress Field Interpolation with Comparison Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🔬 Enhanced Transformer Stress Interpolation with Hydrostatic Optimization</h1>', unsafe_allow_html=True)
     
     # Description
     st.markdown("""
     <div class="info-box">
-    <strong>🔮 Physics-aware stress interpolation with comprehensive comparison dashboard.</strong><br>
-    • Load simulation files from numerical_solutions directory<br>
-    • Interpolate stress fields at custom polar angles (default: 54.7°)<br>
-    • Visualize von Mises, hydrostatic, and stress magnitude fields<br>
-    • <strong>New:</strong> Adjustable spatial locality weight factor for better visual similarity to nearby sources<br>
-    • <strong>New:</strong> Comprehensive comparison dashboard with ground truth selection and difference analysis<br>
-    • <strong>New:</strong> Multiple specialized interpolation methods for hydrostatic stress to reduce artifacts<br>
-    • Choose from 50+ colormaps including jet, turbo, rainbow, inferno<br>
-    • Publication-ready visualizations with angular orientation plots<br>
-    • Export results in multiple formats
+        <strong>🔬 Advanced stress interpolation with specialized hydrostatic optimization methods.</strong><br>
+        • Load simulation files from numerical_solutions directory<br>
+        • Interpolate stress fields at custom polar angles<br>
+        • <strong>NEW:</strong> Choose from 6 hydrostatic interpolation enhancement methods<br>
+        • Comprehensive analysis of hydrostatic stress behavior<br>
+        • Compare different optimization strategies<br>
+        • Publication-ready visualizations with detailed explanations
     </div>
     """, unsafe_allow_html=True)
     
@@ -1824,32 +1782,34 @@ def main():
     if 'loader' not in st.session_state:
         st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
     if 'transformer_interpolator' not in st.session_state:
-        # Initialize with adjustable spatial locality weight factor
-        st.session_state.transformer_interpolator = TransformerSpatialInterpolator(
+        # Initialize with standard method
+        st.session_state.transformer_interpolator = EnhancedTransformerSpatialInterpolator(
             spatial_sigma=0.2,
-            locality_weight_factor=0.7,  # Default: 70% transformer weights, 30% spatial locality
-            hydro_interpolation_method='standard',
-            max_angular_distance=None,
-            hydro_feature_enhancement=False
+            locality_weight_factor=0.7,
+            hydro_method="standard"
         )
     if 'heatmap_visualizer' not in st.session_state:
-        st.session_state.heatmap_visualizer = HeatMapVisualizer()
+        st.session_state.heatmap_visualizer = EnhancedHeatMapVisualizer()
     if 'results_manager' not in st.session_state:
         st.session_state.results_manager = ResultsManager()
     if 'interpolation_result' not in st.session_state:
         st.session_state.interpolation_result = None
     if 'selected_ground_truth' not in st.session_state:
         st.session_state.selected_ground_truth = None
+    if 'selected_hydro_method' not in st.session_state:
+        st.session_state.selected_hydro_method = "standard"
+    if 'hydro_params' not in st.session_state:
+        st.session_state.hydro_params = {}
     
     # Sidebar
     with st.sidebar:
-        st.markdown('<h2 class="section-header">🔧 Configuration</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
         
         # Data loading
         st.markdown("#### 📂 Data Management")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📥 Load Solutions", use_container_width=True):
+            if st.button("📤 Load Solutions", use_container_width=True):
                 with st.spinner("Loading solutions..."):
                     st.session_state.solutions = st.session_state.loader.load_all_solutions()
                 if st.session_state.solutions:
@@ -1863,15 +1823,6 @@ def main():
                 st.session_state.selected_ground_truth = None
                 st.success("Cache cleared")
         
-        # Debug button
-        if st.button("🐞 Debug Feature Dimensions", use_container_width=True):
-            if st.session_state.solutions:
-                source_params = [sol['params'] for sol in st.session_state.solutions]
-                shape = st.session_state.transformer_interpolator.debug_feature_dimensions(
-                    source_params, 54.7
-                )
-                st.write(f"Feature dimensions: {shape}")
-        
         st.divider()
         
         # Target parameters
@@ -1879,9 +1830,9 @@ def main():
         
         # Custom polar angle
         custom_theta = st.slider(
-            "Polar Angle θ (degrees)",
-            min_value=0.0,
-            max_value=180.0,
+            "Polar Angle θ (degrees)", 
+            min_value=0.0, 
+            max_value=180.0, 
             value=54.7,
             step=0.1,
             help="Angle in degrees (0° to 180°). Default habit plane is 54.7°"
@@ -1905,16 +1856,16 @@ def main():
         
         # Kappa parameter
         kappa = st.slider(
-            "Kappa (material property)",
-            min_value=0.1,
-            max_value=2.0,
+            "Kappa (material property)", 
+            min_value=0.1, 
+            max_value=2.0, 
             value=0.6,
             step=0.01,
             help="Material stiffness parameter"
         )
         
         # Eigenstrain auto-calculation
-        st.markdown("#### ⚙️ Eigenstrain Calculation")
+        st.markdown("#### 🧮 Eigenstrain Calculation")
         col_e1, col_e2 = st.columns(2)
         with col_e1:
             auto_eigen = st.checkbox("Auto-calculate eigenstrain", value=True)
@@ -1930,34 +1881,89 @@ def main():
                 st.metric("Eigenstrain ε₀", f"{eigen_strain:.3f}")
             else:
                 eigen_strain = st.slider(
-                    "Eigenstrain ε₀",
-                    min_value=0.0,
-                    max_value=3.0,
+                    "Eigenstrain ε₀", 
+                    min_value=0.0, 
+                    max_value=3.0, 
                     value=0.707,
                     step=0.001
                 )
         
         st.divider()
         
+        # HYDROSTATIC ENHANCEMENT SELECTION
+        st.markdown('<h2 class="section-header">💧 Hydrostatic Enhancement</h2>', unsafe_allow_html=True)
+        
+        # Method selection with detailed descriptions
+        hydro_method_options = list(HYDROSTATIC_ENHANCEMENTS.keys())
+        hydro_method_display = [HYDROSTATIC_ENHANCEMENTS[m]["name"] for m in hydro_method_options]
+        
+        selected_method_display = st.selectbox(
+            "Hydrostatic Interpolation Method",
+            options=hydro_method_display,
+            index=0,
+            help="Select enhancement method for hydrostatic stress interpolation"
+        )
+        
+        # Map back to method key
+        selected_method = hydro_method_options[hydro_method_display.index(selected_method_display)]
+        st.session_state.selected_hydro_method = selected_method
+        
+        # Method-specific parameters
+        st.session_state.hydro_params = {}
+        
+        if selected_method == "angular_filter":
+            angular_threshold = st.slider(
+                "Angular Distance Threshold (°)",
+                min_value=1.0,
+                max_value=45.0,
+                value=10.0,
+                step=1.0,
+                help="Only use sources within this angular distance"
+            )
+            st.session_state.hydro_params['angular_threshold'] = angular_threshold
+        
+        # Show method details
+        method_info = HYDROSTATIC_ENHANCEMENTS[selected_method]
+        
+        with st.expander(f"📚 About {method_info['name']}", expanded=False):
+            st.markdown(f"**Description:** {method_info['description']}")
+            st.markdown("**Explanation:**")
+            st.markdown(method_info['explanation'])
+            st.markdown("**Implementation:**")
+            st.markdown(method_info['implementation'])
+            
+            # Pros and cons
+            st.markdown("**Pros & Cons:**")
+            col_pros, col_cons = st.columns(2)
+            with col_pros:
+                st.markdown("**✅ Pros:**")
+                for pro in method_info['pros']:
+                    st.markdown(f"• {pro}")
+            with col_cons:
+                st.markdown("**❌ Cons:**")
+                for con in method_info['cons']:
+                    st.markdown(f"• {con}")
+        
+        st.divider()
+        
         # Transformer parameters
-        st.markdown('<h2 class="section-header">⚙️ Transformer Parameters</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">🧠 Transformer Parameters</h2>', unsafe_allow_html=True)
         
         # Spatial locality parameters
-        st.markdown("#### 🌐 Spatial Locality Controls")
+        st.markdown("#### 📍 Spatial Locality Controls")
         spatial_sigma = st.slider(
-            "Spatial Sigma",
-            min_value=0.01,
-            max_value=1.0,
+            "Spatial Sigma", 
+            min_value=0.01, 
+            max_value=1.0, 
             value=0.2,
             step=0.01,
             help="Controls the decay rate of spatial weights (higher = slower decay)"
         )
         
-        # KEY FEATURE: Adjustable spatial locality weight factor
         spatial_weight_factor = st.slider(
-            "Spatial Locality Weight Factor",
-            min_value=0.0,
-            max_value=1.0,
+            "Spatial Locality Weight Factor", 
+            min_value=0.0, 
+            max_value=1.0, 
             value=0.7,
             step=0.01,
             help="Balance between transformer attention and spatial locality (0 = pure spatial, 1 = pure transformer)"
@@ -1965,141 +1971,28 @@ def main():
         
         # Attention temperature
         temperature = st.slider(
-            "Attention Temperature",
-            min_value=0.1,
-            max_value=10.0,
+            "Attention Temperature", 
+            min_value=0.1, 
+            max_value=10.0, 
             value=1.0,
             step=0.1,
             help="Softmax temperature for attention weights (lower = sharper distribution)"
         )
         
-        st.divider()
-        
-        # Hydrostatic stress solution selection
-        st.markdown('<h2 class="section-header">💧 Hydrostatic Stress Solutions</h2>', unsafe_allow_html=True)
-        
-        st.markdown("""
-            <strong>Select interpolation method for hydrostatic stress:</strong><br>
-            Hydrostatic stress often has sign transitions that linear interpolation handles poorly.
-        """, unsafe_allow_html=True)
-        
-        hydro_methods = {
-            'standard': {
-                'name': 'Standard Linear Interpolation',
-                'description': 'Simple weighted average (baseline)',
-                'recommended': False
-            },
-            'split_channels': {
-                'name': 'Split Positive/Negative Channels',
-                'description': 'Separately interpolate tension (positive) and compression (negative) components to avoid sign cancellation',
-                'recommended': True
-            },
-            'sign_preserving': {
-                'name': 'Sign-Preserving Magnitude',
-                'description': 'Interpolate magnitude and sign separately, then recombine',
-                'recommended': False
-            },
-            'nearest_sign': {
-                'name': 'Nearest Sign Influence',
-                'description': 'Determine sign based on highest weighted source at each location',
-                'recommended': False
-            }
-        }
-        
-        # Create dropdown for hydrostatic interpolation method
-        hydro_method_names = [f"{'⭐ ' if info['recommended'] else ''}{info['name']}" for info in hydro_methods.values()]
-        selected_method_name = st.selectbox(
-            "Hydrostatic Interpolation Method",
-            options=hydro_method_names,
-            index=1,  # Default to the second option (split_channels)
-            help="Choose how to handle hydrostatic stress interpolation"
-        )
-        
-        # Get the actual method key from the selected name
-        selected_method = None
-        for key, info in hydro_methods.items():
-            if info['name'] in selected_method_name:
-                selected_method = key
-                break
-        
-        if selected_method is None:
-            selected_method = 'split_channels'  # Default fallback
-        
-        # Show the description for the selected method
-        st.markdown(f"""
-            <div class="hydro-solution-box">
-                <div class="solution-title">{hydro_methods[selected_method]['name']}</div>
-                {hydro_methods[selected_method]['description']}
-            </div>
-        """, unsafe_allow_html=True)
-        
-        # Advanced hydrostatic options
-        with st.expander("🔧 Advanced Hydrostatic Options", expanded=False):
-            col_h1, col_h2 = st.columns(2)
-            
-            with col_h1:
-                # Angular distance filtering
-                use_angular_filter = st.checkbox("Filter by Angular Distance", value=False)
-                if use_angular_filter:
-                    max_angle = st.slider(
-                        "Max Angular Distance (°)",
-                        min_value=1.0,
-                        max_value=30.0,
-                        value=10.0,
-                        step=1.0,
-                        help="Only use sources within this angular distance from target"
-                    )
-                else:
-                    max_angle = None
-            
-            with col_h2:
-                # Hydro feature enhancement
-                use_hydro_features = st.checkbox("Enhance Hydro Features", value=False,
-                                                help="Add specialized features for hydrostatic stress patterns")
-        
-        # Update button
-        if st.button("⚙️ Update Interpolator Parameters", use_container_width=True):
+        # Update transformer parameters
+        if st.button("🔄 Update All Parameters", type="primary", use_container_width=True):
+            # Update transformer interpolator
             st.session_state.transformer_interpolator.set_spatial_parameters(
                 spatial_sigma=spatial_sigma,
-                locality_weight_factor=spatial_weight_factor,
-                hydro_interpolation_method=selected_method,
-                max_angular_distance=max_angle if use_angular_filter else None,
-                hydro_feature_enhancement=use_hydro_features
+                locality_weight_factor=spatial_weight_factor
+            )
+            st.session_state.transformer_interpolator.set_hydro_method(
+                selected_method,
+                st.session_state.hydro_params
             )
             st.session_state.transformer_interpolator.temperature = temperature
-            st.success("Interpolator parameters updated!")
-        
-        st.divider()
-        
-        # Run interpolation
-        st.markdown("#### 🚀 Interpolation Control")
-        if st.button("✨ Perform Transformer Interpolation", type="primary", use_container_width=True):
-            if not st.session_state.solutions:
-                st.error("Please load solutions first!")
-            else:
-                with st.spinner("Performing interpolation with enhanced spatial locality..."):
-                    # Setup target parameters
-                    target_params = {
-                        'defect_type': defect_type,
-                        'eps0': eigen_strain,
-                        'kappa': kappa,
-                        'theta': np.radians(custom_theta),
-                        'shape': shape
-                    }
-                    
-                    # Perform interpolation
-                    result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
-                        st.session_state.solutions,
-                        custom_theta,
-                        target_params
-                    )
-                    
-                    if result:
-                        st.session_state.interpolation_result = result
-                        st.success(f"Interpolation successful! Used {result['num_sources']} source solutions. Hydro method: {selected_method}")
-                        st.session_state.selected_ground_truth = None
-                    else:
-                        st.error("Interpolation failed. Check the console for errors.")
+            
+            st.success(f"Parameters updated! Hydrostatic method: {method_info['name']}")
     
     # Main content area
     if st.session_state.solutions:
@@ -2114,7 +2007,8 @@ def main():
                 st.metric("Interpolated Angle", f"{st.session_state.interpolation_result['target_angle']:.1f}°")
         with col_info3:
             if st.session_state.interpolation_result:
-                st.metric("Grid Size", f"{st.session_state.interpolation_result['shape'][0]}×{st.session_state.interpolation_result['shape'][1]}")
+                st.metric("Hydro Method", 
+                         HYDROSTATIC_ENHANCEMENTS[st.session_state.selected_hydro_method]["name"])
         
         # Display source information
         if st.session_state.solutions:
@@ -2128,24 +2022,54 @@ def main():
                 st.markdown(f"**Source Angles Range:** {min(source_thetas):.1f}° to {max(source_thetas):.1f}°")
                 st.markdown(f"**Mean Source Angle:** {np.mean(source_thetas):.1f}°")
     
+    # Run interpolation button
+    st.markdown("---")
+    col_run1, col_run2, col_run3 = st.columns([1, 2, 1])
+    with col_run2:
+        if st.button("🚀 Perform Enhanced Interpolation", type="primary", use_container_width=True):
+            if not st.session_state.solutions:
+                st.error("Please load solutions first!")
+            else:
+                with st.spinner(f"Performing interpolation with {HYDROSTATIC_ENHANCEMENTS[st.session_state.selected_hydro_method]['name']}..."):
+                    # Setup target parameters
+                    target_params = {
+                        'defect_type': defect_type,
+                        'eps0': eigen_strain,
+                        'kappa': kappa,
+                        'theta': np.radians(custom_theta),
+                        'shape': shape
+                    }
+                    
+                    # Perform interpolation with selected method
+                    result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
+                        st.session_state.solutions,
+                        custom_theta,
+                        target_params
+                    )
+                    
+                    if result:
+                        st.session_state.interpolation_result = result
+                        method_name = HYDROSTATIC_ENHANCEMENTS[st.session_state.selected_hydro_method]["name"]
+                        st.success(f"Interpolation successful using {method_name}! Used {result['num_sources']} source solutions.")
+                        st.session_state.selected_ground_truth = None
+                    else:
+                        st.error("Interpolation failed. Check the console for errors.")
+    
     # Results display
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
         
         # Tabs for different views
-        tabs = [":mag: Results Overview", ":chart_with_upwards_trend: Visualization", ":bar_chart: Weights Analysis",
-                ":balance_scale: Comparison Dashboard", ":floppy_disk: Export Results"]
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📈 Results Overview", 
+            "💧 Hydrostatic Analysis",
+            "🎨 Visualization", 
+            "⚖️ Weights Analysis",
+            "🔄 Comparison Dashboard",
+            "💾 Export Results"
+        ])
         
-        if st.session_state.interpolation_result.get('hydro_interpolation_method') != 'standard':
-            tabs.insert(1, ":droplet: Hydrostatic Analysis")
-        
-        tab_objects = st.tabs(tabs)
-        
-        # Tab selection logic
-        tab_indices = {name: i for i, name in enumerate(tabs)}
-        tab_objects = st.tabs(tabs)
-        
-        with tab_objects[tab_indices[":mag: Results Overview"]]:
+        with tab1:
             # Results overview
             st.markdown('<h2 class="section-header">📊 Interpolation Results</h2>', unsafe_allow_html=True)
             
@@ -2153,117 +2077,73 @@ def main():
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric(
-                    "Max Von Mises",
+                    "Max Von Mises", 
                     f"{result['statistics']['von_mises']['max']:.3f} GPa",
                     delta=f"±{result['statistics']['von_mises']['std']:.3f}"
                 )
             with col2:
+                hydro_stats = result['statistics']['sigma_hydro']
                 st.metric(
-                    "Hydrostatic Range",
-                    f"{result['statistics']['sigma_hydro']['max_tension']:.3f}/{result['statistics']['sigma_hydro']['max_compression']:.3f} GPa"
+                    "Hydrostatic Range", 
+                    f"{hydro_stats['max_tension']:.3f}/{hydro_stats['max_compression']:.3f} GPa"
                 )
             with col3:
                 st.metric(
-                    "Mean Stress Magnitude",
+                    "Mean Stress Magnitude", 
                     f"{result['statistics']['sigma_mag']['mean']:.3f} GPa"
                 )
             with col4:
+                hydro_method = result.get('hydro_optimization', {}).get('method', 'standard')
+                method_name = HYDROSTATIC_ENHANCEMENTS[hydro_method]["name"]
                 st.metric(
-                    "Number of Sources",
-                    result['num_sources'],
-                    delta=f"Entropy: {result['weights']['entropy']['combined']:.3f}"
+                    "Hydrostatic Method", 
+                    method_name
                 )
             
-            # Target parameters display
-            st.markdown("#### 🎯 Target Parameters")
-            param_col1, param_col2, param_col3 = st.columns(3)
+            # Target parameters and hydrostatic optimization details
+            st.markdown("#### 🎯 Target Parameters & Hydrostatic Optimization")
+            param_col1, param_col2 = st.columns(2)
+            
             with param_col1:
                 st.markdown(f"""
                 <div class="param-table">
-                <div class="param-key">Angle (θ)</div>
-                <div class="param-value">{result['target_angle']:.2f}°</div>
-                <div class="param-key">Defect Type</div>
-                <div class="param-value">{result['target_params']['defect_type']}</div>
+                    <div class="param-key">Angle (θ)</div>
+                    <div class="param-value">{result['target_angle']:.2f}°</div>
+                    <div class="param-key">Defect Type</div>
+                    <div class="param-value">{result['target_params']['defect_type']}</div>
+                    <div class="param-key">Eigenstrain (ε₀)</div>
+                    <div class="param-value">{result['target_params']['eps0']:.3f}</div>
+                    <div class="param-key">Kappa (κ)</div>
+                    <div class="param-value">{result['target_params']['kappa']:.3f}</div>
                 </div>
                 """, unsafe_allow_html=True)
+            
             with param_col2:
-                st.markdown(f"""
-                <div class="param-table">
-                <div class="param-key">Eigenstrain (ε₀)</div>
-                <div class="param-value">{result['target_params']['eps0']:.3f}</div>
-                <div class="param-key">Kappa (κ)</div>
-                <div class="param-value">{result['target_params']['kappa']:.3f}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            with param_col3:
-                st.markdown(f"""
-                <div class="param-table">
-                <div class="param-key">Shape</div>
-                <div class="param-value">{result['target_params'].get('shape', 'Square')}</div>
-                <div class="param-key">Grid Size</div>
-                <div class="param-value">{result['shape'][0]}×{result['shape'][1]}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            # Hydrostatic solution information
-            st.markdown("#### 💧 Hydrostatic Stress Solution")
-            hydro_info_col1, hydro_info_col2 = st.columns(2)
-            with hydro_info_col1:
-                hydro_method = result['hydro_interpolation_method']
-                method_info = {
-                    'standard': {
-                        'name': 'Standard Linear Interpolation',
-                        'description': 'Simple weighted average of source fields'
-                    },
-                    'split_channels': {
-                        'name': 'Split Positive/Negative Channels',
-                        'description': 'Separately interpolates tension (positive) and compression (negative) components'
-                    },
-                    'sign_preserving': {
-                        'name': 'Sign-Preserving Magnitude',
-                        'description': 'Interpolates magnitude and sign separately'
-                    },
-                    'nearest_sign': {
-                        'name': 'Nearest Sign Influence',
-                        'description': 'Determines sign based on highest weighted source'
-                    }
-                }.get(hydro_method, {'name': 'Unknown Method', 'description': 'Unknown interpolation method'})
+                hydro_opt = result.get('hydro_optimization', {})
+                method_name = HYDROSTATIC_ENHANCEMENTS[hydro_opt.get('method', 'standard')]["name"]
                 
-                st.markdown(f"""
+                opt_details = f"""
                 <div class="param-table">
-                <div class="param-key">Method Used</div>
-                <div class="param-value">{method_info['name']}</div>
-                <div class="param-key">Description</div>
-                <div class="param-value">{method_info['description']}</div>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            with hydro_info_col2:
-                if result.get('num_sources_filtered') is not None:
-                    st.metric("Sources After Filtering", result['num_sources_filtered'])
+                    <div class="param-key">Hydrostatic Method</div>
+                    <div class="param-value">{method_name}</div>
+                """
                 
-                # Show angular filtering info if applied
-                if st.session_state.transformer_interpolator.max_angular_distance is not None:
-                    st.metric("Max Angular Distance", f"{st.session_state.transformer_interpolator.max_angular_distance}°")
-            
-            # Spatial locality factor display
-            st.markdown("#### 🌐 Spatial Locality Configuration")
-            locality_col1, locality_col2 = st.columns(2)
-            with locality_col1:
-                st.metric(
-                    "Spatial Weight Factor",
-                    f"{st.session_state.transformer_interpolator.locality_weight_factor:.2f}",
-                    help="0 = pure spatial weights, 1 = pure transformer weights"
-                )
-            with locality_col2:
-                st.metric(
-                    "Spatial Sigma",
-                    f"{st.session_state.transformer_interpolator.spatial_sigma:.2f}",
-                    help="Controls spatial weight decay rate"
-                )
+                for key, value in hydro_opt.items():
+                    if key != 'method':
+                        if isinstance(value, float):
+                            display_value = f"{value:.4f}"
+                        else:
+                            display_value = str(value)
+                        opt_details += f"""
+                        <div class="param-key">{key.replace('_', ' ').title()}</div>
+                        <div class="param-value">{display_value}</div>
+                        """
+                
+                opt_details += "</div>"
+                st.markdown(opt_details, unsafe_allow_html=True)
             
             # Quick preview of stress fields
-            st.markdown("#### 🖼️ Quick Preview")
+            st.markdown("#### 👀 Quick Preview")
             preview_component = st.selectbox(
                 "Preview Component",
                 options=['von_mises', 'sigma_hydro', 'sigma_mag'],
@@ -2272,137 +2152,103 @@ def main():
             )
             
             if preview_component in result['fields']:
-                is_hydrostatic = (preview_component == 'sigma_hydro')
+                # Use diverging colormap for hydrostatic
+                cmap = 'RdBu_r' if preview_component == 'sigma_hydro' else 'viridis'
+                
                 fig_preview = st.session_state.heatmap_visualizer.create_stress_heatmap(
                     result['fields'][preview_component],
                     title=f"{preview_component.replace('_', ' ').title()} Stress",
-                    cmap_name='viridis',
+                    cmap_name=cmap,
                     target_angle=result['target_angle'],
                     defect_type=result['target_params']['defect_type'],
-                    figsize=(10, 8),
-                    is_hydrostatic=is_hydrostatic
+                    figsize=(10, 8)
                 )
                 st.pyplot(fig_preview)
         
-        # Hydrostatic analysis tab (if not using standard method)
-        if st.session_state.interpolation_result.get('hydro_interpolation_method') != 'standard':
-            with tab_objects[tab_indices[":droplet: Hydrostatic Analysis"]]:
-                st.markdown('<h2 class="section-header">💧 Hydrostatic Stress Analysis</h2>', unsafe_allow_html=True)
+        with tab2:
+            # Hydrostatic Analysis Tab
+            st.markdown('<h2 class="section-header">💧 Hydrostatic Stress Analysis</h2>', unsafe_allow_html=True)
+            
+            # Method comparison explanation
+            hydro_method = result.get('hydro_optimization', {}).get('method', 'standard')
+            method_info = HYDROSTATIC_ENHANCEMENTS[hydro_method]
+            
+            st.markdown(f"""
+            <div class="method-card">
+                <div class="method-title">{method_info['name']}</div>
+                <p><strong>Description:</strong> {method_info['description']}</p>
+                <p><strong>Why it helps:</strong> {method_info['explanation'].split('•')[1].strip() if '•' in method_info['explanation'] else method_info['explanation'][:100]}...</p>
                 
-                st.markdown("""
-                <div class="info-box">
-                <strong>Why hydrostatic stress interpolation is challenging:</strong><br>
-                • Hydrostatic stress can be positive (tensile) or negative (compressive)<br>
-                • Linear interpolation can cause sign cancellation when sources have opposite signs<br>
-                • Sharp transitions between tension and compression zones get blurred<br>
-                • The selected solution attempts to preserve these critical features
+                <div class="pros-cons">
+                    <div class="pros">
+                        <strong>✅ Pros:</strong><br>
+                        {"<br>".join([f"• {pro}" for pro in method_info['pros']])}
+                    </div>
+                    <div class="cons">
+                        <strong>❌ Cons:</strong><br>
+                        {"<br>".join([f"• {con}" for con in method_info['cons']])}
+                    </div>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Create hydrostatic analysis dashboard
+            st.markdown("#### 📊 Hydrostatic Analysis Dashboard")
+            
+            fig_hydro_analysis = st.session_state.heatmap_visualizer.create_hydrostatic_analysis_dashboard(
+                result['fields'],
+                result['source_fields'],
+                result.get('hydro_optimization', {}),
+                result['target_angle'],
+                result['target_params']['defect_type']
+            )
+            st.pyplot(fig_hydro_analysis)
+            
+            # Why hydrostatic is challenging
+            with st.expander("🔍 Why Hydrostatic Stress is Challenging for Interpolation", expanded=False):
+                st.markdown("""
+                **Physics-Based Reasons:**
                 
-                # Show comparison between standard and improved method
-                col_h1, col_h2 = st.columns(2)
+                1. **Signed Quantity:** Hydrostatic stress can be positive (tension) or negative (compression), unlike von Mises which is always positive
+                2. **Sign Cancellation:** Linear averaging of opposite signs can cancel out, creating artificial zero regions
+                3. **Sharp Transitions:** Hydrostatic fields often have sharp sign changes near defects
+                4. **Sensitivity to Orientation:** Small angular changes can flip hydrostatic sign patterns
                 
-                with col_h1:
-                    st.markdown("#### 🔬 Standard Linear Interpolation")
-                    st.markdown("What would happen with standard interpolation")
-                    # Clone the result but with standard interpolation
-                    standard_result = result.copy()
-                    if 'sigma_hydro_standard' in standard_result['fields']:
-                        fig_standard = st.session_state.heatmap_visualizer.create_stress_heatmap(
-                            standard_result['fields']['sigma_hydro_standard'],
-                            title="Standard Hydrostatic Stress",
-                            cmap_name='RdBu_r',
-                            target_angle=result['target_angle'],
-                            defect_type=result['target_params']['defect_type'],
-                            figsize=(10, 8),
-                            is_hydrostatic=True
-                        )
-                        st.pyplot(fig_standard)
+                **Interpolation Challenges:**
                 
-                with col_h2:
-                    st.markdown("#### ✅ Improved Interpolation")
-                    st.markdown(f"Using **{result['hydro_interpolation_method']}** method")
-                    fig_improved = st.session_state.heatmap_visualizer.create_stress_heatmap(
-                        result['fields']['sigma_hydro'],
-                        title="Improved Hydrostatic Stress",
-                        cmap_name='RdBu_r',
-                        target_angle=result['target_angle'],
-                        defect_type=result['target_params']['defect_type'],
-                        figsize=(10, 8),
-                        is_hydrostatic=True
-                    )
-                    st.pyplot(fig_improved)
+                1. **Linear vs. Non-linear:** Standard interpolation assumes linearity, but sign flips are non-linear
+                2. **Weight Distribution:** Weights optimized for magnitude may not work well for sign patterns
+                3. **Source Alignment:** Sources with different sign patterns average poorly
                 
-                # Quantitative comparison if available
-                if 'sigma_hydro_standard' in result['fields']:
-                    st.markdown("#### 📈 Quantitative Comparison")
-                    
-                    standard_hydro = result['fields']['sigma_hydro_standard']
-                    improved_hydro = result['fields']['sigma_hydro']
-                    
-                    # Calculate some metrics
-                    standard_range = np.max(standard_hydro) - np.min(standard_hydro)
-                    improved_range = np.max(improved_hydro) - np.min(improved_hydro)
-                    
-                    standard_std = np.std(standard_hydro)
-                    improved_std = np.std(improved_hydro)
-                    
-                    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-                    with col_m1:
-                        st.metric("Standard Range", f"{standard_range:.3f} GPa")
-                    with col_m2:
-                        st.metric("Improved Range", f"{improved_range:.3f} GPa")
-                        if improved_range > standard_range:
-                            st.success("Better preserves extremes")
-                    with col_m3:
-                        st.metric("Standard Std Dev", f"{standard_std:.3f}")
-                    with col_m4:
-                        st.metric("Improved Std Dev", f"{improved_std:.3f}")
-                        if improved_std > standard_std:
-                            st.success("Better preserves variations")
+                **Enhanced Methods Address These By:**
                 
-                # Explanation of the selected method
-                method_explanations = {
-                    'split_channels': """
-                    <div class="info-box">
-                    <strong>How Split Channel Method Works:</strong><br>
-                    1. Split each source's hydrostatic field into two components:
-                       • Tension (positive values): max(hydro, 0)
-                       • Compression (negative values): -min(hydro, 0)<br>
-                    2. Interpolate these components separately using the same weights<br>
-                    3. Recombine them: interpolated_hydro = interpolated_tension - interpolated_compression<br>
-                    4. This prevents sign cancellation and better preserves tension/compression zones
-                    </div>
-                    """,
-                    'sign_preserving': """
-                    <div class="info-box">
-                    <strong>How Sign-Preserving Method Works:</strong><br>
-                    1. For each source, split hydrostatic field into magnitude (abs value) and sign<br>
-                    2. Interpolate the magnitude using weighted average<br>
-                    3. Compute weighted sign by averaging the sign values<br>
-                    4. Apply the final sign to the interpolated magnitude<br>
-                    5. This preserves the dominant sign while allowing smooth magnitude transitions
-                    </div>
-                    """,
-                    'nearest_sign': """
-                    <div class="info-box">
-                    <strong>How Nearest Sign Method Works:</strong><br>
-                    1. For each spatial point, determine which source has the strongest influence (highest weight)<br>
-                    2. Use that source's sign at that location<br>
-                    3. Interpolate the magnitude normally across all sources<br>
-                    4. Apply the dominant sign to the interpolated magnitude<br>
-                    5. This preserves sharp sign transitions that match the dominant source
-                    </div>
-                    """
-                }
+                - **Channel Splitting:** Separates tension/compression to avoid cancellation
+                - **Sign-Aware Weights:** Adjusts weights based on sign agreement
+                - **Angular Filtering:** Uses only physically similar sources
+                - **Magnitude Preservation:** Maintains stress intensity while interpolating sign
+                """)
+            
+            # Method comparison suggestions
+            with st.expander("🔄 Try Different Methods for Comparison", expanded=False):
+                st.markdown("""
+                **For your current parameters, consider trying:**
                 
-                selected_method = result['hydro_interpolation_method']
-                if selected_method in method_explanations:
-                    st.markdown(method_explanations[selected_method], unsafe_allow_html=True)
+                1. **If hydrostatic has mixed signs:** Try **Channel Splitting** or **Sign-Aware** methods
+                2. **If sources are closely spaced in angle:** Try **Angular Filtering** with 5-10° threshold
+                3. **If you want simplest improvement:** **Channel Splitting** usually gives good results
+                4. **For research/comparison:** Try all methods and compare error metrics
+                
+                **Quick comparison workflow:**
+                1. Run interpolation with current method
+                2. Note hydrostatic error metrics from Comparison Dashboard
+                3. Change method in sidebar and re-run
+                4. Compare error metrics (MSE, MAE, correlation)
+                5. Export results for systematic comparison
+                """)
         
-        with tab_objects[tab_indices[":chart_with_upwards_trend: Visualization"]]:
+        with tab3:
             # Visualization tab
-            st.markdown('<h2 class="section-header">📊 Advanced Visualization</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">🎨 Advanced Visualization</h2>', unsafe_allow_html=True)
             
             # Visualization controls
             col_viz1, col_viz2, col_viz3 = st.columns(3)
@@ -2429,12 +2275,9 @@ def main():
                     key="cmap_name"
                 )
             
-            # Show colormap preview
-            if cmap_name:
-                col_preview1, col_preview2, col_preview3 = st.columns([1, 2, 1])
-                with col_preview2:
-                    fig_cmap = st.session_state.heatmap_visualizer.get_colormap_preview(cmap_name)
-                    st.pyplot(fig_cmap)
+            # Auto-select diverging colormap for hydrostatic
+            if component == 'sigma_hydro' and cmap_name not in COLORMAP_OPTIONS['Diverging']:
+                st.info("💡 For hydrostatic stress, consider using a diverging colormap (RdBu, coolwarm, etc.) to better show tension/compression.")
             
             # Visualization type selection
             viz_type = st.radio(
@@ -2445,7 +2288,6 @@ def main():
             
             if component in result['fields']:
                 stress_field = result['fields'][component]
-                is_hydrostatic = (component == 'sigma_hydro')
                 
                 if viz_type == "2D Heatmap":
                     # 2D heatmap
@@ -2455,30 +2297,36 @@ def main():
                         cmap_name=cmap_name,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
-                        figsize=(12, 10),
-                        is_hydrostatic=is_hydrostatic
+                        figsize=(12, 10)
                     )
                     st.pyplot(fig_2d)
                     
-                    # Show statistics
-                    with st.expander("📈 Detailed Statistics", expanded=False):
-                        stats = result['statistics'][component]
-                        for key, value in stats.items():
-                            st.metric(key.replace('_', ' ').title(), f"{value:.4f}")
-                
                 elif viz_type == "3D Surface":
                     # 3D surface plot
-                    fig_3d = st.session_state.heatmap_visualizer.create_3d_surface_plot(
-                        stress_field,
-                        title=f"{component.replace('_', ' ').title()} Stress",
-                        cmap_name=cmap_name,
-                        target_angle=result['target_angle'],
-                        defect_type=result['target_params']['defect_type'],
-                        figsize=(14, 10),
-                        is_hydrostatic=is_hydrostatic
-                    )
+                    from matplotlib import cm
+                    fig_3d, ax_3d = plt.subplots(figsize=(14, 10), subplot_kw={'projection': '3d'})
+                    
+                    # Create meshgrid
+                    x = np.arange(stress_field.shape[1])
+                    y = np.arange(stress_field.shape[0])
+                    X, Y = np.meshgrid(x, y)
+                    
+                    # Plot surface
+                    surf = ax_3d.plot_surface(X, Y, stress_field, cmap=cmap_name,
+                                             linewidth=0, antialiased=True, alpha=0.8)
+                    
+                    # Add colorbar
+                    fig_3d.colorbar(surf, ax=ax_3d, shrink=0.5, aspect=5, label='Stress (GPa)')
+                    
+                    # Labels and title
+                    ax_3d.set_xlabel('X Position')
+                    ax_3d.set_ylabel('Y Position')
+                    ax_3d.set_zlabel('Stress (GPa)')
+                    ax_3d.set_title(f'{component.replace("_", " ").title()} Stress - θ={result["target_angle"]:.1f}°', 
+                                   fontsize=16, fontweight='bold')
+                    
                     st.pyplot(fig_3d)
-                
+                    
                 elif viz_type == "Interactive Heatmap":
                     # Interactive heatmap
                     fig_interactive = st.session_state.heatmap_visualizer.create_interactive_heatmap(
@@ -2488,62 +2336,83 @@ def main():
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
                         width=800,
-                        height=700,
-                        is_hydrostatic=is_hydrostatic
+                        height=700
                     )
                     st.plotly_chart(fig_interactive, use_container_width=True)
                 
-                elif viz_type == "Interactive 3D":
-                    # Interactive 3D surface
-                    fig_3d_interactive = st.session_state.heatmap_visualizer.create_interactive_3d_surface(
-                        stress_field,
-                        title=f"{component.replace('_', ' ').title()} Stress",
-                        cmap_name=cmap_name,
-                        target_angle=result['target_angle'],
-                        defect_type=result['target_params']['defect_type'],
-                        width=900,
-                        height=700,
-                        is_hydrostatic=is_hydrostatic
-                    )
-                    st.plotly_chart(fig_3d_interactive, use_container_width=True)
-                
                 elif viz_type == "Angular Orientation":
                     # Angular orientation plot
-                    fig_angular = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
-                        result['target_angle'],
-                        defect_type=result['target_params']['defect_type'],
-                        figsize=(10, 10),
-                        show_habit_plane=True
-                    )
+                    fig_angular, ax_angular = plt.subplots(figsize=(10, 10), subplot_kw={'projection': 'polar'})
+                    
+                    # Convert target angle to radians
+                    theta_rad = np.radians(result['target_angle'])
+                    
+                    # Plot the defect orientation
+                    ax_angular.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, 
+                                   color='red', alpha=0.8, label=f'Target: {result["target_angle"]:.1f}°')
+                    
+                    # Plot habit plane
+                    habit_plane_rad = np.radians(54.7)
+                    ax_angular.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, 
+                                   color='blue', alpha=0.5, label='Habit Plane (54.7°)')
+                    
+                    # Plot source angles
+                    source_angles = result.get('source_theta_degrees', [])
+                    if source_angles:
+                        source_rad = np.radians(source_angles)
+                        weights = result['weights']['combined']
+                        sizes = 50 + 150 * np.array(weights) / np.max(weights)
+                        ax_angular.scatter(source_rad, [0.5] * len(source_rad), 
+                                         s=sizes, alpha=0.6, c='green', edgecolors='black', label='Sources')
+                    
+                    # Customize plot
+                    ax_angular.set_title(f'Angular Orientation\nθ={result["target_angle"]:.1f}°, {result["target_params"]["defect_type"]}', 
+                                       fontsize=16, fontweight='bold', pad=20)
+                    ax_angular.set_theta_zero_location('N')
+                    ax_angular.set_theta_direction(-1)
+                    ax_angular.set_ylim(0, 1.5)
+                    ax_angular.grid(True, alpha=0.3)
+                    ax_angular.legend(loc='upper right', fontsize=10)
+                    
                     st.pyplot(fig_angular)
             
             # Comparison of all components
             st.markdown("#### 🔄 Component Comparison")
             if st.button("Show All Components Comparison", key="show_all_components"):
-                fig_all = st.session_state.heatmap_visualizer.create_comparison_heatmaps(
-                    result['fields'],
-                    cmap_name=cmap_name,
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type'],
-                    figsize=(18, 6)
-                )
+                fig_all, axes_all = plt.subplots(1, 3, figsize=(18, 6))
+                
+                components = ['von_mises', 'sigma_hydro', 'sigma_mag']
+                titles = ['Von Mises Stress', 'Hydrostatic Stress', 'Stress Magnitude']
+                cmaps = ['viridis', 'RdBu_r', 'plasma']
+                
+                for idx, (comp, title, cmap) in enumerate(zip(components, titles, cmaps)):
+                    ax = axes_all[idx]
+                    field = result['fields'][comp]
+                    
+                    # Determine scaling
+                    if comp == 'sigma_hydro':
+                        vmax = np.max(np.abs(field))
+                        vmin = -vmax
+                    else:
+                        vmax = np.max(field)
+                        vmin = np.min(field)
+                    
+                    im = ax.imshow(field, cmap=cmap, vmin=vmin, vmax=vmax,
+                                  aspect='equal', interpolation='bilinear', origin='lower')
+                    plt.colorbar(im, ax=ax, label='Stress (GPa)')
+                    ax.set_title(title, fontsize=14, fontweight='bold')
+                    ax.set_xlabel('X Position')
+                    ax.set_ylabel('Y Position')
+                    ax.grid(True, alpha=0.2)
+                
+                plt.suptitle(f'Stress Component Comparison - θ={result["target_angle"]:.1f}°, {result["target_params"]["defect_type"]}',
+                           fontsize=16, fontweight='bold', y=1.02)
+                plt.tight_layout()
                 st.pyplot(fig_all)
-            
-            # Comprehensive dashboard
-            st.markdown("#### 📋 Comprehensive Dashboard")
-            if st.button("Show Comprehensive Dashboard", key="show_dashboard"):
-                fig_dashboard = st.session_state.heatmap_visualizer.create_comprehensive_dashboard(
-                    result['fields'],
-                    theta=result['target_angle'],
-                    defect_type=result['target_params']['defect_type'],
-                    cmap_name=cmap_name,
-                    figsize=(24, 16)
-                )
-                st.pyplot(fig_dashboard)
         
-        with tab_objects[tab_indices[":bar_chart: Weights Analysis"]]:
+        with tab4:
             # Weights analysis tab
-            st.markdown('<h2 class="section-header">🔍 Weight Distribution Analysis</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">⚖️ Weight Distribution Analysis</h2>', unsafe_allow_html=True)
             
             if 'weights' in result:
                 weights = result['weights']
@@ -2551,32 +2420,30 @@ def main():
                 # Weight statistics
                 col_w1, col_w2, col_w3, col_w4 = st.columns(4)
                 with col_w1:
-                    st.metric("Transformer Entropy", f"{weights['entropy']['transformer']:.3f}",
-                             help="Lower entropy = more focused attention")
+                    st.metric("Transformer Entropy", f"{weights['entropy']['transformer']:.3f}")
                 with col_w2:
-                    st.metric("Spatial Entropy", f"{weights['entropy']['spatial']:.3f}",
-                             help="Lower entropy = more localized spatial weights")
+                    st.metric("Spatial Entropy", f"{weights['entropy']['spatial']:.3f}")
                 with col_w3:
-                    st.metric("Combined Entropy", f"{weights['entropy']['combined']:.3f}",
-                             help="Balance between focused and distributed weights")
+                    st.metric("Combined Entropy", f"{weights['entropy']['combined']:.3f}")
                 with col_w4:
                     max_weight_idx = np.argmax(weights['combined'])
-                    st.metric("Top Contributor", f"Source {max_weight_idx}",
-                             help=f"θ = {result['source_theta_degrees'][max_weight_idx]:.1f}°")
+                    st.metric("Top Contributor", f"Source {max_weight_idx}")
                 
                 # Weight distribution plot
                 st.markdown("#### 📊 Weight Distribution")
                 fig_weights, ax_weights = plt.subplots(figsize=(12, 6))
+                
                 x = range(len(weights['combined']))
                 width = 0.25
                 
                 # Plot different weight types
-                ax_weights.bar([i - width for i in x], weights['transformer'], width,
+                ax_weights.bar([i - width for i in x], weights['transformer'], width, 
                               label='Transformer Weights', alpha=0.7, color='blue')
-                ax_weights.bar(x, weights['positional'], width,
+                ax_weights.bar(x, weights['positional'], width, 
                               label='Spatial Weights', alpha=0.7, color='green')
-                ax_weights.bar([i + width for i in x], weights['combined'], width,
+                ax_weights.bar([i + width for i in x], weights['combined'], width, 
                               label='Combined Weights', alpha=0.7, color='red')
+                
                 ax_weights.set_xlabel('Source Index')
                 ax_weights.set_ylabel('Weight')
                 ax_weights.set_title('Weight Distribution Across Sources', fontsize=16, fontweight='bold')
@@ -2584,9 +2451,10 @@ def main():
                 ax_weights.grid(True, alpha=0.3)
                 
                 # Add theta labels
-                for i, theta in enumerate(result['source_theta_degrees']):
-                    ax_weights.text(i, max(weights['combined'][i], weights['transformer'][i], weights['positional'][i]) + 0.01,
-                                   f'θ={theta:.0f}°', ha='center', va='bottom', fontsize=8)
+                if 'source_theta_degrees' in result:
+                    for i, theta in enumerate(result['source_theta_degrees']):
+                        ax_weights.text(i, max(weights['combined'][i], weights['transformer'][i], weights['positional'][i]) + 0.01,
+                                      f'θ={theta:.0f}°', ha='center', va='bottom', fontsize=8)
                 
                 st.pyplot(fig_weights)
                 
@@ -2599,8 +2467,8 @@ def main():
                         'Combined Weight': weights['combined'][i],
                         'Transformer Weight': weights['transformer'][i],
                         'Spatial Weight': weights['positional'][i],
-                        'Theta (°)': result['source_theta_degrees'][i],
-                        'Distance (°)': result['source_distances'][i]
+                        'Theta (°)': result['source_theta_degrees'][i] if i < len(result['source_theta_degrees']) else 0,
+                        'Distance (°)': result['source_distances'][i] if i < len(result['source_distances']) else 0
                     })
                 
                 df_weights = pd.DataFrame(weight_data)
@@ -2612,36 +2480,14 @@ def main():
                     'Theta (°)': '{:.1f}',
                     'Distance (°)': '{:.1f}'
                 }))
-                
-                # Angular distribution plot
-                st.markdown("#### 📐 Angular Distribution")
-                st.markdown("""
-                    This plot shows the angular distribution of source solutions. The size of each point represents its weight in the interpolation. The red star marks the target angle, and the green line shows the habit plane at 54.7°.
-                """)
-                fig_polar = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
-                    result['target_angle'],
-                    defect_type=result['target_params']['defect_type'],
-                    figsize=(10, 10),
-                    show_habit_plane=True
-                )
-                st.pyplot(fig_polar)
         
-        with tab_objects[tab_indices[":balance_scale: Comparison Dashboard"]]:
-            # COMPARISON DASHBOARD - Key requested feature
-            st.markdown('<h2 class="section-header">🔍 Comparison Dashboard</h2>', unsafe_allow_html=True)
-            
-            st.markdown("""
-            <div class="info-box">
-            <strong>Compare interpolated results with ground truth sources</strong><br>
-            • Select a source solution as ground truth<br>
-            • Visualize differences between interpolation and ground truth<br>
-            • Calculate error metrics (MSE, MAE, RMSE, correlation)<br>
-            • Analyze spatial correlation patterns
-            </div>
-            """, unsafe_allow_html=True)
+        with tab5:
+            # Comparison dashboard
+            st.markdown('<h2 class="section-header">🔄 Comparison Dashboard</h2>', unsafe_allow_html=True)
             
             # Ground truth selection
             st.markdown("#### 🎯 Select Ground Truth Source")
+            
             if 'source_theta_degrees' in result and result['source_theta_degrees']:
                 # Create dropdown options
                 ground_truth_options = []
@@ -2679,22 +2525,16 @@ def main():
                     st.metric("Contribution Weight", f"{selected_weight:.3f}")
                 
                 # Visualization options for comparison
-                st.markdown("#### 📊 Comparison Visualization")
+                st.markdown("#### 🎨 Comparison Visualization")
                 comp_component = st.selectbox(
                     "Component for Comparison",
                     options=['von_mises', 'sigma_hydro', 'sigma_mag'],
-                    index=1,  # Default to hydrostatic to show the improvement
+                    index=1,  # Default to hydrostatic for comparison
                     key="comp_component"
                 )
                 
-                # For hydrostatic, default to diverging colormap
-                default_cmap = 'RdBu_r' if comp_component == 'sigma_hydro' else 'viridis'
-                comp_cmap = st.selectbox(
-                    "Colormap for Comparison",
-                    options=COLORMAP_OPTIONS['Publication Standard'],
-                    index=COLORMAP_OPTIONS['Publication Standard'].index(default_cmap) if default_cmap in COLORMAP_OPTIONS['Publication Standard'] else 0,
-                    key="comp_cmap"
-                )
+                # Use appropriate colormap for component
+                comp_cmap = 'RdBu_r' if comp_component == 'sigma_hydro' else 'viridis'
                 
                 # Create comparison dashboard
                 if comp_component in result['fields']:
@@ -2702,15 +2542,14 @@ def main():
                     source_info = {
                         'theta_degrees': result['source_theta_degrees'],
                         'distances': result['source_distances'],
-                        'weights': result['weights']
+                        'weights': result['weights'],
+                        'statistics': result['statistics']
                     }
                     
-                    # Automatically detect if we're visualizing hydrostatic stress
-                    is_hydrostatic = (comp_component == 'sigma_hydro')
-                    
+                    # Create the comparison dashboard
                     fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                         interpolated_fields=result['fields'],
-                        source_fields=result['source_fields'],  # FIXED: Use directly without list comprehension
+                        source_fields=result['source_fields'],
                         source_info=source_info,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
@@ -2719,6 +2558,7 @@ def main():
                         figsize=(20, 15),
                         ground_truth_index=selected_index
                     )
+                    
                     st.pyplot(fig_comparison)
                     
                     # Calculate and display detailed error metrics
@@ -2733,10 +2573,14 @@ def main():
                         rmse = np.sqrt(mse)
                         
                         # Calculate correlation
-                        corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
+                        from scipy.stats import pearsonr
+                        try:
+                            corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
+                        except:
+                            corr_coef = 0.0
                         
                         # Display metrics
-                        st.markdown("#### 📈 Error Metrics")
+                        st.markdown("#### 📊 Error Metrics")
                         err_col1, err_col2, err_col3, err_col4 = st.columns(4)
                         with err_col1:
                             st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
@@ -2747,46 +2591,33 @@ def main():
                         with err_col4:
                             st.metric("Pearson Correlation", f"{corr_coef:.4f}")
                         
-                        # Additional analysis
-                        with st.expander("🔍 Detailed Error Analysis", expanded=False):
-                            st.markdown("##### Error Distribution")
-                            fig_err_hist, ax_err_hist = plt.subplots(figsize=(10, 6))
-                            ax_err_hist.hist(error_field.flatten(), bins=50, alpha=0.7, color='red', edgecolor='black')
-                            ax_err_hist.set_xlabel('Error (GPa)')
-                            ax_err_hist.set_ylabel('Frequency')
-                            ax_err_hist.set_title('Error Distribution', fontsize=16, fontweight='bold')
-                            ax_err_hist.grid(True, alpha=0.3)
-                            st.pyplot(fig_err_hist)
-                            
-                            # Spatial error pattern
-                            st.markdown("##### Spatial Error Pattern")
-                            fig_err_spatial, ax_err_spatial = plt.subplots(figsize=(10, 8))
-                            max_abs_error = np.max(np.abs(error_field))
-                            im_err = ax_err_spatial.imshow(error_field, cmap='RdBu_r',
-                                                         vmin=-max_abs_error,
-                                                         vmax=max_abs_error,
-                                                         aspect='equal', interpolation='bilinear', origin='lower')
-                            plt.colorbar(im_err, ax=ax_err_spatial, label='Error (GPa)')
-                            ax_err_spatial.set_title('Spatial Error Distribution', fontsize=16, fontweight='bold')
-                            ax_err_spatial.set_xlabel('X Position')
-                            ax_err_spatial.set_ylabel('Y Position')
-                            st.pyplot(fig_err_spatial)
-            else:
-                st.warning("No source information available for comparison.")
+                        # Hydrostatic-specific analysis
+                        if comp_component == 'sigma_hydro':
+                            with st.expander("💧 Hydrostatic-Specific Analysis", expanded=True):
+                                # Sign agreement analysis
+                                gt_sign = np.sign(ground_truth_field)
+                                interp_sign = np.sign(interpolated_field)
+                                sign_agreement = np.mean(gt_sign == interp_sign)
+                                
+                                # Tension/compression analysis
+                                gt_tension = np.sum(ground_truth_field > 0)
+                                gt_compression = np.sum(ground_truth_field < 0)
+                                interp_tension = np.sum(interpolated_field > 0)
+                                interp_compression = np.sum(interpolated_field < 0)
+                                
+                                col_h1, col_h2, col_h3, col_h4 = st.columns(4)
+                                with col_h1:
+                                    st.metric("Sign Agreement", f"{sign_agreement:.3f}")
+                                with col_h2:
+                                    st.metric("GT Tension Pixels", f"{gt_tension}")
+                                with col_h3:
+                                    st.metric("GT Compression Pixels", f"{gt_compression}")
+                                with col_h4:
+                                    st.metric("Interp Tension Pixels", f"{interp_tension}")
         
-        with tab_objects[tab_indices[":floppy_disk: Export Results"]]:
+        with tab6:
             # Export tab
             st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
-            
-            st.markdown("""
-            <div class="info-box">
-            <strong>Export interpolation results for further analysis</strong><br>
-            • Export full results as JSON with metadata<br>
-            • Export stress field data as CSV for external analysis<br>
-            • Download visualizations as PNG images<br>
-            • Save comparison dashboard for publication
-            </div>
-            """, unsafe_allow_html=True)
             
             # Export options
             export_format = st.radio(
@@ -2802,78 +2633,67 @@ def main():
                     'colormap': cmap_name if 'cmap_name' in locals() else 'viridis',
                     'visualization_type': viz_type if 'viz_type' in locals() else '2D Heatmap'
                 }
+                
                 export_data = st.session_state.results_manager.prepare_export_data(
                     result, visualization_params
                 )
+                
                 json_str, json_filename = st.session_state.results_manager.export_to_json(export_data)
+                
                 st.download_button(
-                    label="💾 Download JSON",
+                    label="📥 Download JSON",
                     data=json_str,
                     file_name=json_filename,
                     mime="application/json",
                     use_container_width=True
                 )
                 
-                # Show preview
-                with st.expander("🔍 JSON Preview", expanded=False):
-                    st.json(export_data)
-            
             elif export_format == "CSV (Field Data)":
                 # CSV export
                 csv_str, csv_filename = st.session_state.results_manager.export_to_csv(result)
+                
                 st.download_button(
-                    label="💾 Download CSV",
+                    label="📥 Download CSV",
                     data=csv_str,
                     file_name=csv_filename,
                     mime="text/csv",
                     use_container_width=True
                 )
                 
-                # Show preview
-                with st.expander("🔍 CSV Preview", expanded=False):
-                    # Create a sample of the data
-                    sample_data = {}
-                    for field_name, field_data in result['fields'].items():
-                        sample_data[field_name] = field_data.flatten()[:100]  # First 100 values
-                    df_sample = pd.DataFrame(sample_data)
-                    st.dataframe(df_sample.head(10))
-            
             elif export_format == "PNG (Visualizations)":
                 # PNG export options
-                st.markdown("#### 🖼️ Select Visualizations to Export")
+                st.markdown("#### 📸 Select Visualizations to Export")
+                
                 export_plots = st.multiselect(
                     "Choose plots to export:",
                     options=[
                         "Von Mises Heatmap",
-                        "Hydrostatic Heatmap",
+                        "Hydrostatic Heatmap", 
                         "Stress Magnitude Heatmap",
-                        "3D Surface Plot",
-                        "Angular Orientation",
+                        "Hydrostatic Analysis Dashboard",
                         "Comparison Dashboard",
                         "Weight Distribution",
-                        "Comprehensive Dashboard"
+                        "All Components Comparison"
                     ],
-                    default=["Von Mises Heatmap", "Hydrostatic Heatmap", "Comparison Dashboard"]
+                    default=["Hydrostatic Analysis Dashboard", "Comparison Dashboard"]
                 )
                 
                 if st.button("🖼️ Generate and Download Visualizations", use_container_width=True):
-                    # Create a zip file with all selected plots
                     import zipfile
                     from io import BytesIO
                     
                     zip_buffer = BytesIO()
                     with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
-                        # Generate and save each selected plot
                         plot_count = 0
                         
+                        # Generate selected plots
                         if "Von Mises Heatmap" in export_plots:
                             fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
                                 result['fields']['von_mises'],
                                 title="Von Mises Stress",
                                 cmap_name='viridis',
                                 target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                is_hydrostatic=False
+                                defect_type=result['target_params']['defect_type']
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
@@ -2887,8 +2707,7 @@ def main():
                                 title="Hydrostatic Stress",
                                 cmap_name='RdBu_r',
                                 target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                is_hydrostatic=True
+                                defect_type=result['target_params']['defect_type']
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
@@ -2902,8 +2721,7 @@ def main():
                                 title="Stress Magnitude",
                                 cmap_name='plasma',
                                 target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                is_hydrostatic=False
+                                defect_type=result['target_params']['defect_type']
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
@@ -2911,30 +2729,17 @@ def main():
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "3D Surface Plot" in export_plots:
-                            fig = st.session_state.heatmap_visualizer.create_3d_surface_plot(
-                                result['fields']['von_mises'],
-                                title="3D Von Mises Stress",
-                                cmap_name='viridis',
-                                target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                is_hydrostatic=False
-                            )
-                            buf = BytesIO()
-                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"3d_surface_theta_{result['target_angle']:.1f}.png", buf.getvalue())
-                            plot_count += 1
-                            plt.close(fig)
-                        
-                        if "Angular Orientation" in export_plots:
-                            fig = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
+                        if "Hydrostatic Analysis Dashboard" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_hydrostatic_analysis_dashboard(
+                                result['fields'],
+                                result['source_fields'],
+                                result.get('hydro_optimization', {}),
                                 result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                show_habit_plane=True
+                                result['target_params']['defect_type']
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"angular_orientation_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            zip_file.writestr(f"hydrostatic_analysis_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                         
@@ -2942,15 +2747,17 @@ def main():
                             source_info = {
                                 'theta_degrees': result['source_theta_degrees'],
                                 'distances': result['source_distances'],
-                                'weights': result['weights']
+                                'weights': result['weights'],
+                                'statistics': result['statistics']
                             }
+                            
                             fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                                 interpolated_fields=result['fields'],
                                 source_fields=result['source_fields'],
                                 source_info=source_info,
                                 target_angle=result['target_angle'],
                                 defect_type=result['target_params']['defect_type'],
-                                component='sigma_hydro',  # Default to hydrostatic to show the improvement
+                                component='sigma_hydro',
                                 cmap_name='RdBu_r',
                                 ground_truth_index=st.session_state.selected_ground_truth
                             )
@@ -2964,34 +2771,57 @@ def main():
                             fig, ax = plt.subplots(figsize=(12, 6))
                             x = range(len(result['weights']['combined']))
                             width = 0.25
-                            ax.bar([i - width for i in x], result['weights']['transformer'], width,
+                            
+                            ax.bar([i - width for i in x], result['weights']['transformer'], width, 
                                   label='Transformer Weights', alpha=0.7, color='blue')
-                            ax.bar(x, result['weights']['positional'], width,
+                            ax.bar(x, result['weights']['positional'], width, 
                                   label='Spatial Weights', alpha=0.7, color='green')
-                            ax.bar([i + width for i in x], result['weights']['combined'], width,
+                            ax.bar([i + width for i in x], result['weights']['combined'], width, 
                                   label='Combined Weights', alpha=0.7, color='red')
+                            
                             ax.set_xlabel('Source Index')
                             ax.set_ylabel('Weight')
                             ax.set_title('Weight Distribution', fontsize=16, fontweight='bold')
                             ax.legend()
                             ax.grid(True, alpha=0.3)
+                            
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
                             zip_file.writestr(f"weight_distribution_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Comprehensive Dashboard" in export_plots:
-                            fig = st.session_state.heatmap_visualizer.create_comprehensive_dashboard(
-                                result['fields'],
-                                theta=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                cmap_name='viridis',
-                                figsize=(24, 16)
-                            )
+                        if "All Components Comparison" in export_plots:
+                            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+                            components = ['von_mises', 'sigma_hydro', 'sigma_mag']
+                            titles = ['Von Mises Stress', 'Hydrostatic Stress', 'Stress Magnitude']
+                            cmaps = ['viridis', 'RdBu_r', 'plasma']
+                            
+                            for idx, (comp, title, cmap) in enumerate(zip(components, titles, cmaps)):
+                                ax = axes[idx]
+                                field = result['fields'][comp]
+                                
+                                if comp == 'sigma_hydro':
+                                    vmax = np.max(np.abs(field))
+                                    vmin = -vmax
+                                else:
+                                    vmax = np.max(field)
+                                    vmin = np.min(field)
+                                
+                                im = ax.imshow(field, cmap=cmap, vmin=vmin, vmax=vmax,
+                                              aspect='equal', interpolation='bilinear', origin='lower')
+                                plt.colorbar(im, ax=ax, label='Stress (GPa)')
+                                ax.set_title(title, fontsize=14, fontweight='bold')
+                                ax.set_xlabel('X Position')
+                                ax.set_ylabel('Y Position')
+                                ax.grid(True, alpha=0.2)
+                            
+                            plt.suptitle(f'Stress Component Comparison - θ={result["target_angle"]:.1f}°', fontsize=16, fontweight='bold', y=1.02)
+                            plt.tight_layout()
+                            
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"comprehensive_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            zip_file.writestr(f"all_components_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                     
@@ -2999,100 +2829,109 @@ def main():
                     
                     # Download button for zip file
                     st.download_button(
-                        label=f"📁 Download {plot_count} Visualization(s) as ZIP",
+                        label=f"📦 Download {plot_count} Visualization(s) as ZIP",
                         data=zip_buffer,
-                        file_name=f"visualizations_theta_{result['target_angle']:.1f}_{result['target_params']['defect_type']}.zip",
+                        file_name=f"enhanced_visualizations_theta_{result['target_angle']:.1f}.zip",
                         mime="application/zip",
                         use_container_width=True
                     )
+                    
                     st.success(f"Generated {plot_count} visualization(s) for download.")
+    
     else:
         # No results yet - show instructions
         st.markdown("""
         <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
-        <h2>✨ Ready to Begin!</h2>
-        <p style="font-size: 1.2rem; margin-bottom: 30px;">
-        Follow these steps to start interpolating stress fields:
-        </p>
-        <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
-        <li>Load simulation files from the sidebar</li>
-        <li>Configure target parameters (angle, defect type, etc.)</li>
-        <li>Adjust transformer and spatial locality parameters</li>
-        <li>Select hydrostatic stress interpolation method</li>
-        <li>Click "Perform Transformer Interpolation"</li>
-        <li>Explore results in the tabs above</li>
-        </ol>
-        <p style="margin-top: 30px; font-size: 1.1rem;">
-        <strong>New Feature:</strong> Multiple specialized methods for hydrostatic stress interpolation to handle sign transitions and prevent cancellation artifacts.
-        </p>
+            <h2>🚀 Ready to Begin Enhanced Interpolation!</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 30px;">
+                Follow these steps to start interpolating stress fields with hydrostatic optimization:
+            </p>
+            <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
+                <li>Load simulation files from the sidebar</li>
+                <li>Configure target parameters (angle, defect type, etc.)</li>
+                <li><strong>NEW:</strong> Select hydrostatic enhancement method from dropdown</li>
+                <li>Adjust transformer and spatial locality parameters</li>
+                <li>Click "Perform Enhanced Interpolation"</li>
+                <li>Explore results in the tabs above</li>
+            </ol>
+            <p style="margin-top: 30px; font-size: 1.1rem;">
+                <strong>Key Feature:</strong> Choose from 6 specialized hydrostatic interpolation methods to improve accuracy for signed stress fields.
+            </p>
         </div>
         """, unsafe_allow_html=True)
-    
-    # Quick start guide
-    st.markdown("### 🚀 Quick Start Guide")
-    col_guide1, col_guide2, col_guide3 = st.columns(3)
-    with col_guide1:
-        st.markdown("""
-        #### 📂 Data Preparation
-        1. Place simulation files in `numerical_solutions/` directory
-        2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
-        3. Files should contain 'params' and 'history' keys
-        4. Stress fields should be in 'stresses' dictionary
-        """)
-    with col_guide2:
-        st.markdown("""
-        #### 🎯 Key Parameters
-        - **Polar Angle (θ):** Target orientation angle (54.7° is habit plane)
-        - **Defect Type:** ISF, ESF, Twin, or No Defect
-        - **Spatial Weight Factor:** Balance between transformer and spatial weights (0-1)
-        - **Kappa:** Material stiffness parameter
-        """)
-    with col_guide3:
-        st.markdown("""
-        #### 💧 Hydrostatic Solutions
-        - **Split Channels:** Best for preserving sign transitions
-        - **Sign Preserving:** Good for maintaining dominant sign regions
-        - **Nearest Sign:** Preserves sharp boundaries from dominant source
-        - **Filter by Angle:** Reduces influence from dissimilar orientations
-        """)
-    
-    # Physics explanation
-    with st.expander("🏛️ Physics Background: Habit Plane at 54.7°", expanded=True):
-        st.markdown("""
-        **Why 54.7° is important for martensitic transformations:**
-        1. **Crystallographic Significance:** The 54.7° angle corresponds to the angle between {111} planes in face-centered cubic (FCC) crystals
-        2. **Transformation Habit Plane:** In martensitic transformations, the habit plane often lies near this angle due to minimal strain energy
-        3. **Stress Concentration:** Defects oriented near the habit plane experience different stress distributions compared to other orientations
-        4. **Interpolation Relevance:** Solutions near 54.7° provide better interpolation quality due to physical similarity
         
-        **Hydrostatic Stress Challenges:**
-        1. **Sign Transitions:** Hydrostatic stress changes sign across defect cores (compression to tension)
-        2. **Linear Interpolation Problems:** Simple averaging causes sign cancellation at transition zones
-        3. **Physical Meaning:** Compressive and tensile regions have different physical implications for material behavior
-        4. **Sharp Gradients:** The transition between compression and tension is often very sharp and needs preservation
+        # Method comparison table
+        st.markdown("### 📊 Hydrostatic Enhancement Methods Comparison")
         
-        The transformer spatial interpolator leverages this physics knowledge through:
-        - **Habit plane proximity feature** in parameter encoding
-        - **Spatial locality regularization** that gives higher weights to physically similar sources
-        - **Angular distance metrics** that properly handle the circular nature of orientations
-        - **Specialized hydrostatic interpolation methods** to preserve sign transitions and physical meaning
-        """)
+        methods_data = []
+        for method_key, method_info in HYDROSTATIC_ENHANCEMENTS.items():
+            methods_data.append({
+                'Method': method_info['name'],
+                'Description': method_info['description'][:100] + "...",
+                'Key Feature': method_info['explanation'].split('•')[1].strip()[:80] + "..." if '•' in method_info['explanation'] else method_info['explanation'][:80] + "...",
+                'Pros': len(method_info['pros']),
+                'Cons': len(method_info['cons']),
+                'Complexity': ['Low', 'Medium', 'High'][min(2, len(method_info['pros']) + len(method_info['cons']) - 2)]
+            })
+        
+        df_methods = pd.DataFrame(methods_data)
+        st.dataframe(df_methods, use_container_width=True)
+        
+        # Quick start guide
+        col_guide1, col_guide2 = st.columns(2)
+        
+        with col_guide1:
+            st.markdown("""
+            #### 🎯 Recommended Starting Points
+            
+            **For general use:**
+            - **Channel Splitting**: Best balance of improvement vs complexity
+            - **Angular Filtering**: Good for closely spaced sources
+            
+            **For research/comparison:**
+            - Try all methods with same parameters
+            - Compare error metrics in Comparison Dashboard
+            - Export results for systematic analysis
+            
+            **For specific cases:**
+            - Mixed signs: Channel Splitting or Sign-Aware
+            - Clustered sources: Angular Filtering
+            - Maximum accuracy: Enhanced Features
+            """)
+        
+        with col_guide2:
+            st.markdown("""
+            #### 🔍 Understanding Hydrostatic Challenges
+            
+            **Why hydrostatic is hard:**
+            1. **Signed quantity**: Can be + (tension) or - (compression)
+            2. **Sign cancellation**: Averaging +5 and -5 gives 0, not realistic
+            3. **Sharp transitions**: Signs change abruptly near defects
+            4. **Orientation sensitivity**: Small angle changes affect sign patterns
+            
+            **Enhanced methods address:**
+            - **Channel Splitting**: Avoids sign cancellation
+            - **Sign-Aware**: Adapts to local sign patterns
+            - **Angular Filtering**: Uses physically similar sources
+            - **Magnitude Preserving**: Maintains stress intensity
+            """)
     
     # Footer
     st.divider()
     col_footer1, col_footer2, col_footer3 = st.columns(3)
     with col_footer1:
-        st.markdown("**🔮 Transformer Stress Interpolator**")
-        st.markdown("Version 2.2.0")
+        st.markdown("**🔬 Enhanced Transformer Interpolator**")
+        st.markdown("Version 3.0.0")
     with col_footer2:
-        st.markdown("**✨ Features:**")
-        st.markdown("• Multiple hydrostatic solutions")
-        st.markdown("• Angular filtering")
-        st.markdown("• Automatic diverging colormaps")
+        st.markdown("**💧 Hydrostatic Optimization:**")
+        st.markdown("• 6 specialized methods")
+        st.markdown("• Detailed analysis dashboard")
+        st.markdown("• Comparative error metrics")
     with col_footer3:
-        st.markdown("**📩 Contact:**")
-        st.markdown("For issues or feature requests")
-        st.markdown("Open an issue on GitHub")
+        st.markdown("**📊 Features:**")
+        st.markdown("• Adjustable spatial locality")
+        st.markdown("• Comprehensive comparison")
+        st.markdown("• Publication-ready plots")
 
 # =============================================
 # RUN THE APPLICATION
