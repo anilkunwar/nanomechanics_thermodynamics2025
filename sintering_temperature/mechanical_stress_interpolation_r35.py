@@ -22,45 +22,165 @@ import seaborn as sns
 from scipy.ndimage import zoom
 import warnings
 warnings.filterwarnings('ignore')
+
 # =============================================
 # GLOBAL STYLING CONFIGURATION
 # =============================================
 # Publication quality styling
 plt.rcParams.update({
-'font.size': 14,
-'axes.titlesize': 20,
-'axes.labelsize': 16,
-'xtick.labelsize': 14,
-'ytick.labelsize': 14,
-'legend.fontsize': 14,
-'figure.dpi': 300,
-'figure.autolayout': True,
-'axes.grid': True,
-'grid.alpha': 0.3,
-'grid.linestyle': '--',
-'image.cmap': 'viridis'
+    'font.size': 14,
+    'axes.titlesize': 20,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    'figure.dpi': 300,
+    'figure.autolayout': True,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linestyle': '--',
+    'image.cmap': 'viridis'
 })
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
+
 # Enhanced colormap options with publication standards
 COLORMAP_OPTIONS = {
-'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
-'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
-'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
-'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
-'gist_ncar', 'hsv'],
-'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
-'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
-'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
-'Paired', 'Accent', 'Dark2'],
-'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
-'turbo'],
-'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
-'coolwarm', 'bwr', 'seismic', 'BrBG']
+    'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
+                   'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
+                   'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
+                   'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
+                   'gist_ncar', 'hsv'],
+    'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
+                  'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+    'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
+                    'Paired', 'Accent', 'Dark2'],
+    'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
+                             'turbo'],
+    'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
+                             'coolwarm', 'bwr', 'seismic', 'BrBG']
 }
+
+# =============================================
+# DEFECT TYPE EIGENSTRAIN WEIGHTING MATRIX
+# =============================================
+class DefectTypeWeighting:
+    """Handles defect type eigenstrain distance weighting"""
+    
+    def __init__(self):
+        # Eigen strain distances for different defect types
+        # From your example: twin=2.12, ESF=1.414, ISF=0.707
+        self.eigenstrain_values = {
+            'ISF': 0.707,
+            'ESF': 1.414,
+            'Twin': 2.12,
+            'No Defect': 0.0
+        }
+        
+        # Defect type similarity matrix (scaled 0-1)
+        # Based on eigenstrain proximity
+        self.similarity_matrix = self._create_similarity_matrix()
+    
+    def _create_similarity_matrix(self):
+        """Create similarity matrix based on eigenstrain distances"""
+        # Normalize eigenstrain values
+        max_eigen = max(self.eigenstrain_values.values())
+        normalized = {k: v/max_eigen for k, v in self.eigenstrain_values.items()}
+        
+        # Compute similarity as 1 - normalized distance
+        matrix = {}
+        defect_types = list(self.eigenstrain_values.keys())
+        
+        for type1 in defect_types:
+            for type2 in defect_types:
+                if type1 == 'No Defect' or type2 == 'No Defect':
+                    matrix[(type1, type2)] = 0.05  # Very low similarity with "No Defect"
+                else:
+                    distance = abs(normalized[type1] - normalized[type2])
+                    # Convert distance to similarity (closer = higher similarity)
+                    # Using exponential decay: similarity = exp(-k * distance)
+                    similarity = np.exp(-3.0 * distance)  # k=3 gives strong decay
+                    matrix[(type1, type2)] = similarity
+        
+        # Manually adjust specific pairs as per your example
+        matrix[('Twin', 'Twin')] = 1.0
+        matrix[('Twin', 'ESF')] = 0.1
+        matrix[('Twin', 'ISF')] = 0.05
+        matrix[('ESF', 'Twin')] = 0.1
+        matrix[('ISF', 'Twin')] = 0.05
+        
+        # Make symmetric
+        for (type1, type2), value in list(matrix.items()):
+            matrix[(type2, type1)] = value
+        
+        return matrix
+    
+    def get_similarity(self, source_type, target_type):
+        """Get similarity weight between two defect types"""
+        return self.similarity_matrix.get((source_type, target_type), 0.1)
+    
+    def get_defect_weight_factor(self, source_params, target_params):
+        """Get defect type weight factor based on eigenstrain similarity"""
+        source_type = source_params.get('defect_type', 'Twin')
+        target_type = target_params.get('defect_type', 'Twin')
+        
+        # Get base similarity
+        similarity = self.get_similarity(source_type, target_type)
+        
+        # Additional penalty for completely different categories
+        if source_type != target_type and source_type != 'No Defect' and target_type != 'No Defect':
+            # Additional penalty for different types
+            similarity *= 0.8
+        
+        return similarity
+    
+    def visualize_similarity_matrix(self, figsize=(10, 8)):
+        """Visualize the defect type similarity matrix"""
+        defect_types = list(self.eigenstrain_values.keys())
+        matrix_data = np.zeros((len(defect_types), len(defect_types)))
+        
+        for i, type1 in enumerate(defect_types):
+            for j, type2 in enumerate(defect_types):
+                matrix_data[i, j] = self.get_similarity(type1, type2)
+        
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        
+        # Heatmap of similarity matrix
+        im1 = ax1.imshow(matrix_data, cmap='YlOrRd', vmin=0, vmax=1)
+        ax1.set_xticks(np.arange(len(defect_types)))
+        ax1.set_yticks(np.arange(len(defect_types)))
+        ax1.set_xticklabels(defect_types, rotation=45)
+        ax1.set_yticklabels(defect_types)
+        ax1.set_title('Defect Type Similarity Matrix')
+        plt.colorbar(im1, ax=ax1, label='Similarity (0-1)')
+        
+        # Add values to heatmap
+        for i in range(len(defect_types)):
+            for j in range(len(defect_types)):
+                ax1.text(j, i, f'{matrix_data[i, j]:.2f}',
+                        ha='center', va='center', color='black',
+                        fontsize=9, fontweight='bold')
+        
+        # Bar plot of eigenstrain values
+        colors = ['blue', 'green', 'red', 'gray']
+        for i, (defect_type, eigen_value) in enumerate(self.eigenstrain_values.items()):
+            ax2.bar(i, eigen_value, color=colors[i], alpha=0.7)
+            ax2.text(i, eigen_value + 0.05, f'{eigen_value:.3f}',
+                    ha='center', va='bottom', fontweight='bold')
+        
+        ax2.set_xticks(np.arange(len(defect_types)))
+        ax2.set_xticklabels(defect_types, rotation=45)
+        ax2.set_ylabel('Eigenstrain Value')
+        ax2.set_title('Eigenstrain by Defect Type')
+        ax2.grid(True, alpha=0.3, axis='y')
+        
+        plt.tight_layout()
+        return fig
+
 # =============================================
 # ENHANCED SOLUTION LOADER
 # =============================================
@@ -124,7 +244,7 @@ class EnhancedSolutionLoader:
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
-    #
+    
     def _standardize_data(self, data, file_path):
         """Standardize simulation data with physics metadata"""
         standardized = {
@@ -169,8 +289,6 @@ class EnhancedSolutionLoader:
             standardized['metadata']['error'] = str(e)
         
         return standardized
-
-   
     
     def _convert_tensors(self, data):
         """Convert PyTorch tensors to numpy arrays recursively"""
@@ -239,26 +357,22 @@ class PositionalEncoding(nn.Module):
         return x + pe.unsqueeze(0)
 
 # =============================================
-# TRANSFORMER SPATIAL INTERPOLATOR WITH ENHANCED SPATIAL LOCALITY
+# TRANSFORMER SPATIAL INTERPOLATOR WITH ENHANCED SPATIAL LOCALITY AND DEFECT TYPE WEIGHTING
 # =============================================
 class TransformerSpatialInterpolator:
-    """Transformer-inspired stress interpolator with enhanced spatial locality regularization"""
-    def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.2, temperature=1.0, locality_weight_factor=0.7):
+    """Transformer-inspired stress interpolator with enhanced spatial locality and defect type weighting"""
+    
+    def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.2, 
+                 temperature=1.0, locality_weight_factor=0.7,
+                 defect_weight_strength=0.3):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
         self.spatial_sigma = spatial_sigma
         self.temperature = temperature
-        self.locality_weight_factor = locality_weight_factor  # Control factor for spatial vs attention weights
-        
-        # Add eigenstrain values mapping for defect type similarity
-        self.defect_eigenstrains = {
-            'Twin': 2.12,    # Higher eigenstrain
-            'ESF': 1.414,    # Medium eigenstrain  
-            'ISF': 0.707,    # Lower eigenstrain
-            'No Defect': 0.0
-        }
-        self.defect_similarity_sigma = 0.8  # Controls decay rate of defect similarity
+        self.locality_weight_factor = locality_weight_factor
+        self.defect_weight_strength = defect_weight_strength  # How strongly defect type affects weights
+        self.defect_weighting = DefectTypeWeighting()  # Add defect type weighting
         
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -270,20 +384,21 @@ class TransformerSpatialInterpolator:
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
-        # Input projection - FIXED: Now expects exactly 15 input features
-        self.input_proj = nn.Linear(15, d_model)
+        # Input projection - Now expects 16 input features (added defect similarity feature)
+        self.input_proj = nn.Linear(16, d_model)  # Changed from 15 to 16
         
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
     
-    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None, defect_similarity_sigma=None):
+    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None,
+                              defect_weight_strength=None):
         """Update spatial parameters dynamically"""
         if spatial_sigma is not None:
             self.spatial_sigma = spatial_sigma
         if locality_weight_factor is not None:
             self.locality_weight_factor = locality_weight_factor
-        if defect_similarity_sigma is not None:
-            self.defect_similarity_sigma = defect_similarity_sigma
+        if defect_weight_strength is not None:
+            self.defect_weight_strength = defect_weight_strength
     
     def debug_feature_dimensions(self, params_list, target_angle_deg):
         """Debug method to check feature dimensions"""
@@ -298,39 +413,14 @@ class TransformerSpatialInterpolator:
         
         return encoded.shape
     
-    def _calculate_defect_similarity(self, src_defect, tgt_defect):
-        """Calculate similarity between defect types based on eigenstrain values"""
-        src_eigen = self.defect_eigenstrains.get(src_defect, 0.0)
-        tgt_eigen = self.defect_eigenstrains.get(tgt_defect, 0.0)
-        
-        # Calculate normalized difference (0 to 1)
-        max_eigen = max(self.defect_eigenstrains.values())
-        min_eigen = min(self.defect_eigenstrains.values())
-        
-        if max_eigen > min_eigen:
-            norm_diff = abs(src_eigen - tgt_eigen) / (max_eigen - min_eigen)
-        else:
-            norm_diff = 0.0
-        
-        # Convert to similarity using Gaussian kernel (0 to 1)
-        similarity = np.exp(-0.5 * (norm_diff / self.defect_similarity_sigma) ** 2)
-        
-        # Special handling for identical defect types (ensure perfect similarity)
-        if src_defect == tgt_defect:
-            similarity = 1.0
-        
-        return similarity
-    
     def compute_positional_weights(self, source_params, target_params):
-        """Compute spatial locality weights with enhanced angular distance weighting and defect type similarity"""
+        """Compute spatial locality weights with enhanced angular distance weighting AND defect type similarity"""
         weights = []
+        defect_similarities = []
         
         # Get target angle in degrees and normalize to [0, 360)
         target_theta = target_params.get('theta', 0.0)
         target_theta_deg = np.degrees(target_theta) % 360
-        
-        # Get target defect type
-        target_defect = target_params.get('defect_type', 'Twin')
         
         # Habit plane angle (54.7° for martensitic transformations)
         habit_plane_angle = 54.7
@@ -339,9 +429,6 @@ class TransformerSpatialInterpolator:
             # Get source angle in degrees and normalize to [0, 360)
             src_theta = src.get('theta', 0.0)
             src_theta_deg = np.degrees(src_theta) % 360
-            
-            # Get source defect type
-            src_defect = src.get('defect_type', 'Twin')
             
             # Calculate angular distance considering cyclic nature
             raw_diff = abs(src_theta_deg - target_theta_deg)
@@ -394,13 +481,13 @@ class TransformerSpatialInterpolator:
                 symmetry_bonus = 0.08
                 angular_weight = min(1.0, angular_weight + symmetry_bonus)
             
-            # Calculate defect type similarity
-            defect_similarity = self._calculate_defect_similarity(src_defect, target_defect)
-            defect_distance = 1.0 - defect_similarity  # Convert to distance (0 to 1)
+            # DEFECT TYPE SIMILARITY WEIGHTING - NEW FEATURE
+            defect_similarity = self.defect_weighting.get_defect_weight_factor(src, target_params)
+            defect_similarities.append(defect_similarity)
             
             # Other parameter distances (with reduced importance compared to angular distance)
-            param_dist = defect_distance  # Start with defect distance
-            key_params = ['eps0', 'kappa', 'shape']
+            param_dist = 0.0
+            key_params = ['eps0', 'kappa', 'shape']  # Removed defect_type from here
             for param in key_params:
                 src_val = src.get(param)
                 tgt_val = target_params.get(param)
@@ -428,9 +515,17 @@ class TransformerSpatialInterpolator:
             else:
                 combined_weight = 0.8 * angular_weight + 0.2 * param_weight
             
-            weights.append(combined_weight)
+            # NOW APPLY DEFECT TYPE WEIGHTING
+            # The defect_weight_strength controls how much defect similarity affects the weight
+            # Higher values give more importance to defect type matching
+            weighted_combined = (
+                (1 - self.defect_weight_strength) * combined_weight +
+                self.defect_weight_strength * defect_similarity
+            )
+            
+            weights.append(weighted_combined)
         
-        return np.array(weights)
+        return np.array(weights), np.array(defect_similarities)
     
     def visualize_angular_weighting(self, target_angle_deg=54.7, figsize=(12, 8)):
         """Visualize the enhanced angular weighting function"""
@@ -501,63 +596,8 @@ class TransformerSpatialInterpolator:
         plt.tight_layout()
         return fig
     
-    def visualize_defect_similarity(self, figsize=(12, 8)):
-        """Visualize defect type similarity based on eigenstrain values"""
-        # Create a matrix of similarities
-        defect_types = list(self.defect_eigenstrains.keys())
-        similarity_matrix = np.zeros((len(defect_types), len(defect_types)))
-        
-        for i, src_defect in enumerate(defect_types):
-            for j, tgt_defect in enumerate(defect_types):
-                similarity_matrix[i, j] = self._calculate_defect_similarity(src_defect, tgt_defect)
-        
-        # Create heatmap
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Create custom colormap
-        cmap = LinearSegmentedColormap.from_list('defect_similarity', 
-                                                ['#ffcccc', '#ff9999', '#ff6666', '#ff3333', '#ff0000'])
-        
-        im = ax.imshow(similarity_matrix, cmap=cmap, vmin=0, vmax=1)
-        
-        # Add colorbar
-        cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label('Similarity', fontsize=14, fontweight='bold')
-        
-        # Set tick labels
-        ax.set_xticks(range(len(defect_types)))
-        ax.set_yticks(range(len(defect_types)))
-        ax.set_xticklabels(defect_types, fontsize=12)
-        ax.set_yticklabels(defect_types, fontsize=12)
-        
-        # Add title
-        ax.set_title('Defect Type Similarity Based on Eigenstrain', 
-                    fontsize=16, fontweight='bold', pad=20)
-        
-        # Add grid lines
-        ax.set_xticks(np.arange(-0.5, len(defect_types), 1), minor=True)
-        ax.set_yticks(np.arange(-0.5, len(defect_types), 1), minor=True)
-        ax.grid(which='minor', color='gray', linestyle='-', linewidth=0.5)
-        
-        # Add text annotations with eigenstrain values
-        eigenstrain_text = "\n".join([f"{dt}: {self.defect_eigenstrains[dt]:.3f}" for dt in defect_types])
-        ax.text(1.02, 0.5, eigenstrain_text, transform=ax.transAxes,
-               fontsize=12, verticalalignment='center',
-               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        # Add similarity values to cells
-        for i in range(len(defect_types)):
-            for j in range(len(defect_types)):
-                color = 'white' if similarity_matrix[i, j] > 0.5 else 'black'
-                ax.text(j, i, f"{similarity_matrix[i, j]:.2f}",
-                       ha='center', va='center', color=color,
-                       fontweight='bold', fontsize=12)
-        
-        plt.tight_layout()
-        return fig
-    
     def encode_parameters(self, params_list, target_angle_deg):
-        """Encode parameters into transformer input - FIXED to return exactly 15 features"""
+        """Encode parameters into transformer input - NOW 16 features with defect similarity"""
         encoded = []
         for params in params_list:
             # Create feature vector
@@ -587,30 +627,35 @@ class TransformerSpatialInterpolator:
             angle_diff = min(angle_diff, 360 - angle_diff)  # Handle cyclic nature
             features.append(np.exp(-angle_diff / 45.0))
             features.append(np.sin(np.radians(2 * theta_deg)))
-            features.append(np.cos(np.radians(2 * theta_deg)))  # FIX: Added this feature
+            features.append(np.cos(np.radians(2 * theta_deg)))
             
             # Habit plane proximity (1 feature)
             habit_distance = abs(theta_deg - 54.7)
             habit_distance = min(habit_distance, 360 - habit_distance)  # Handle cyclic nature
             features.append(np.exp(-habit_distance / 15.0))
             
-            # Verify we have exactly 15 features
-            if len(features) != 15:
-                st.warning(f"Warning: Expected 15 features, got {len(features)}. Padding or truncating.")
+            # NEW: Defect type similarity feature (1 feature)
+            # This feature encodes how similar this defect is to the target
+            # We'll compute this properly in the interpolation method
+            features.append(0.5)  # Placeholder, will be updated
             
-            # Pad with zeros if fewer than 15
-            while len(features) < 15:
+            # Verify we have exactly 16 features
+            if len(features) != 16:
+                st.warning(f"Warning: Expected 16 features, got {len(features)}. Padding or truncating.")
+            
+            # Pad with zeros if fewer than 16
+            while len(features) < 16:
                 features.append(0.0)
             
-            # Truncate if more than 15
-            features = features[:15]
+            # Truncate if more than 16
+            features = features[:16]
             
             encoded.append(features)
         
         return torch.FloatTensor(encoded)
     
     def interpolate_spatial_fields(self, sources, target_angle_deg, target_params):
-        """Interpolate full spatial stress fields using transformer attention with enhanced spatial locality"""
+        """Interpolate full spatial stress fields with defect type weighting"""
         if not sources:
             st.warning("No sources provided for interpolation.")
             return None
@@ -694,24 +739,29 @@ class TransformerSpatialInterpolator:
                     resized_fields.append(resized)
                 source_fields = resized_fields
             
-            # Debug: Check feature dimensions
+            # Compute enhanced positional weights WITH DEFECT TYPE SIMILARITIES
+            pos_weights, defect_similarities = self.compute_positional_weights(source_params, target_params)
+            
+            # Update defect similarity in encoded features
             source_features = self.encode_parameters(source_params, target_angle_deg)
             target_features = self.encode_parameters([target_params], target_angle_deg)
             
-            # Ensure we have exactly 15 features
-            if source_features.shape[1] != 15 or target_features.shape[1] != 15:
+            # Update the defect similarity feature (feature index 15)
+            for i, similarity in enumerate(defect_similarities):
+                source_features[i, 15] = similarity
+            target_features[0, 15] = 1.0  # Target is perfectly similar to itself
+            
+            # Ensure we have exactly 16 features
+            if source_features.shape[1] != 16 or target_features.shape[1] != 16:
                 st.warning(f"Feature dimension mismatch: source_features shape={source_features.shape}, target_features shape={target_features.shape}")
             
-            # Force reshape to 15 features
-            if source_features.shape[1] < 15:
-                padding = torch.zeros(source_features.shape[0], 15 - source_features.shape[1])
+            # Force reshape to 16 features if needed
+            if source_features.shape[1] < 16:
+                padding = torch.zeros(source_features.shape[0], 16 - source_features.shape[1])
                 source_features = torch.cat([source_features, padding], dim=1)
-            if target_features.shape[1] < 15:
-                padding = torch.zeros(target_features.shape[0], 15 - target_features.shape[1])
+            if target_features.shape[1] < 16:
+                padding = torch.zeros(target_features.shape[0], 16 - target_features.shape[1])
                 target_features = torch.cat([target_features, padding], dim=1)
-            
-            # Compute enhanced positional weights with aggressive angular distance weighting
-            pos_weights = self.compute_positional_weights(source_params, target_params)
             
             # Normalize positional weights
             if np.sum(pos_weights) > 0:
@@ -779,6 +829,18 @@ class TransformerSpatialInterpolator:
             max_vm = np.max(interpolated_fields['von_mises'])
             max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
             
+            # Extract source defect types and compute defect-based metrics
+            source_defect_types = []
+            source_eigenstrains = []
+            target_defect_type = target_params.get('defect_type', 'Twin')
+            target_eigenstrain = self.defect_weighting.eigenstrain_values.get(target_defect_type, 0.0)
+            
+            for src in source_params:
+                src_defect = src.get('defect_type', 'Twin')
+                source_defect_types.append(src_defect)
+                src_eigen = self.defect_weighting.eigenstrain_values.get(src_defect, 0.0)
+                source_eigenstrains.append(src_eigen)
+            
             # Extract source theta values for visualization
             source_theta_degrees = []
             source_distances = []  # Store distances to target
@@ -795,6 +857,24 @@ class TransformerSpatialInterpolator:
                 angular_dist = min(angular_dist, 360 - angular_dist)  # Handle circular nature
                 source_distances.append(angular_dist)
             
+            # Compute defect type distribution in weights
+            defect_weight_contributions = {}
+            total_defect_weight = {}
+            
+            for i, src_defect in enumerate(source_defect_types):
+                weight = combined_weights[i]
+                if src_defect not in defect_weight_contributions:
+                    defect_weight_contributions[src_defect] = 0.0
+                    total_defect_weight[src_defect] = 0
+                defect_weight_contributions[src_defect] += weight
+                total_defect_weight[src_defect] += 1
+            
+            # Normalize defect weight contributions
+            total_weight = sum(defect_weight_contributions.values())
+            if total_weight > 0:
+                for defect in defect_weight_contributions:
+                    defect_weight_contributions[defect] /= total_weight
+            
             return {
                 'fields': interpolated_fields,
                 'weights': {
@@ -805,7 +885,17 @@ class TransformerSpatialInterpolator:
                         'transformer': entropy_transformer,
                         'spatial': entropy_spatial,
                         'combined': entropy_combined
-                    }
+                    },
+                    'defect_similarities': defect_similarities.tolist()
+                },
+                'defect_analysis': {
+                    'target_defect_type': target_defect_type,
+                    'target_eigenstrain': target_eigenstrain,
+                    'source_defect_types': source_defect_types,
+                    'source_eigenstrains': source_eigenstrains,
+                    'defect_weight_contributions': defect_weight_contributions,
+                    'defect_type_counts': total_defect_weight,
+                    'avg_defect_similarity': float(np.mean(defect_similarities))
                 },
                 'statistics': {
                     'von_mises': {
@@ -1700,7 +1790,8 @@ class ResultsManager:
                 'num_sources': result.get('num_sources', 0),
                 'source_theta_degrees': result.get('source_theta_degrees', []),
                 'source_distances': result.get('source_distances', []),
-                'source_indices': result.get('source_indices', [])
+                'source_indices': result.get('source_indices', []),
+                'defect_analysis': result.get('defect_analysis', {})
             }
         }
         
@@ -1759,7 +1850,7 @@ class ResultsManager:
 def main():
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Transformer Stress Interpolation with Enhanced Spatial Locality",
+        page_title="Transformer Stress Interpolation with Enhanced Spatial Locality & Defect Type Weighting",
         layout="wide",
         page_icon="🔬",
         initial_sidebar_state="expanded"
@@ -1795,60 +1886,86 @@ def main():
         color: white;
         font-weight: bold;
         text-align: center;
-        margin: 极好的，我将继续提供完整的代码。以下是完整的代码，包含了之前讨论的所有关于缺陷类型相似性权重的升级：
-        
-        [由于篇幅限制，我将只提供修改的部分，而不是整个3000+行的代码。但请放心，这是一个完整的实现，涵盖了所有必要的组件和功能。]
-
-        代码包含了以下关键升级：
-
-        1. 在 TransformerSpatialInterpolator 类中添加了缺陷类型相似性计算：
-           - 添加了 defect_eigenstrains 映射，定义了不同缺陷类型的特征应变值
-           - 创建了 _calculate_defect_similarity 方法，基于特征应变计算缺陷类型之间的相似性
-           - 修改了 compute_positional_weights 方法，将缺陷类型相似性纳入权重计算
-
-        2. 改进了权重计算逻辑：
-           - 将简单的"是否相同"缺陷类型判断替换为基于特征应变的连续相似性度量
-           - 保留了原有角度权重的优先级，但将缺陷类型相似性作为重要参数
-           - 添加了可调节的 defect_similarity_sigma 参数，控制相似性衰减率
-
-        3. 添加了可视化工具：
-           - 新增了 visualize_defect_similarity 方法，展示缺陷类型之间的相似性矩阵
-           - 在UI中添加了相关可视化选项
-
-        4. 优化了用户界面：
-           - 在侧边栏增加了 defect_similarity_sigma 参数调节
-           - 添加了"可视化缺陷相似性"按钮
-           - 在结果分析中包含了缺陷类型相似性信息
-
-        5. 保持了原有功能完整：
-           - 所有原有的角度权重、习惯平面处理等特性都得到保留
-           - 保持了与现有数据格式的兼容性
-           - 确保过渡平滑，无需修改现有数据
-
-        这个实现使代码能够：
-        - 正确区分 Twin-Twin (相似性=1.0)、Twin-ESF (相似性约0.65-0.75)、Twin-ISF (相似性约0.35-0.45) 等不同组合
-        - 将角度接近性和缺陷类型相似性结合起来，为插值提供更物理准确的权重
-        - 允许用户调整参数，平衡角度接近性和缺陷类型相似性的重要性
-        - 通过可视化帮助用户理解权重分配的依据
-
-        该代码已准备好部署，无需进一步修改即可使用。
-        </div>
-        """, unsafe_allow_html=True)
+        margin: 0.5rem;
+        font-size: 1.1rem;
+    }
+    .info-box {
+        background-color: #F0F9FF;
+        border-left: 5px solid #3B82F6;
+        padding: 1.2rem;
+        border-radius: 0.6rem;
+        margin: 1.2rem 0;
+        font-size: 1.1rem;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2.5rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 55px;
+        white-space: pre-wrap;
+        background-color: #F3F4F6;
+        border-radius: 6px 6px 0 0;
+        gap: 1.2rem;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #3B82F6 !important;
+        color: white !important;
+        font-weight: 700;
+    }
+    .param-table {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border: 2px solid #e9ecef;
+    }
+    .param-key {
+        font-weight: 700;
+        color: #1E3A8A;
+        font-size: 1.1rem;
+    }
+    .param-value {
+        font-weight: 600;
+        color: #059669;
+        font-size: 1.1rem;
+    }
+    .angular-weighting-plot {
+        border: 2px solid #3B82F6;
+        border-radius: 10px;
+        padding: 15px;
+        background-color: #F8FAFC;
+        margin: 15px 0;
+    }
+    .defect-matrix-box {
+        border: 3px solid #8B5CF6;
+        border-radius: 12px;
+        padding: 20px;
+        background: linear-gradient(135deg, #F3E8FF 0%, #EDE9FE 100%);
+        margin: 20px 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🔬 Transformer Stress Field Interpolation with Defect Type Awareness</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🔬 Transformer Stress Field Interpolation with Enhanced Spatial Locality & Defect Type Weighting</h1>', unsafe_allow_html=True)
     
-    # Description with updated physics explanation
+    # Description
     st.markdown("""
     <div class="info-box">
-    <strong>🔬 Physics-aware stress interpolation with defect type similarity weighting.</strong><br>
+    <strong>🔬 Physics-aware stress interpolation with aggressive angular proximity weighting AND defect type eigenstrain weighting.</strong><br>
     • Load simulation files from numerical_solutions directory<br>
     • Interpolate stress fields at custom polar angles (default: 54.7°)<br>
-    • <strong>NEW:</strong> Defect type similarity based on eigenstrain values<br>
-    • Twin-Twin similarity = 1.0, Twin-ESF ≈ 0.65-0.75, Twin-ISF ≈ 0.35-0.45<br>
-    • <strong>NEW:</strong> Combined weighting: angular proximity + defect similarity<br>
-    • <strong>NEW:</strong> Visualize defect type similarity matrix<br>
+    • <strong>NEW:</strong> Enhanced spatial locality with aggressive angular distance weighting<br>
+    • <strong>NEW:</strong> Defect type weighting based on eigenstrain distances (Twin=2.12, ESF=1.414, ISF=0.707)<br>
+    • <strong>NEW:</strong> Twin-Twin: 1.0, Twin-ESF: 0.1, Twin-ISF: 0.05 weighting<br>
+    • <strong>NEW:</strong> Habit plane (54.7°) awareness with proximity bonuses<br>
+    • <strong>NEW:</strong> Cyclic angle handling (0° = 360°, 2° distance with 358°)<br>
     • Comprehensive comparison dashboard with ground truth selection<br>
+    • Detailed defect type similarity analysis<br>
     • Choose from 50+ colormaps including jet, turbo, rainbow, inferno<br>
     • Publication-ready visualizations with angular orientation plots<br>
     • Export results in multiple formats
@@ -1861,11 +1978,11 @@ def main():
     if 'loader' not in st.session_state:
         st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
     if 'transformer_interpolator' not in st.session_state:
-        # Initialize with adjustable spatial locality weight factor
+        # Initialize with adjustable spatial locality weight factor and defect weighting
         st.session_state.transformer_interpolator = TransformerSpatialInterpolator(
             spatial_sigma=0.2,
             locality_weight_factor=0.7,  # Default: 70% transformer weights, 30% spatial locality
-            defect_similarity_sigma=0.8  # Default defect similarity sigma
+            defect_weight_strength=0.3  # Default: 30% defect type influence
         )
     if 'heatmap_visualizer' not in st.session_state:
         st.session_state.heatmap_visualizer = HeatMapVisualizer()
@@ -1975,6 +2092,53 @@ def main():
         
         st.divider()
         
+        # NEW: Defect type weighting controls
+        st.markdown('<h2 class="section-header">🧬 Defect Type Weighting</h2>', unsafe_allow_html=True)
+        
+        # Defect weight strength
+        defect_weight_strength = st.slider(
+            "Defect Type Weight Strength",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.3,
+            step=0.05,
+            help="How strongly defect type similarity affects weights (0=ignore, 1=defect type dominates)"
+        )
+        
+        # Visualize defect type similarity matrix
+        if st.button("📊 Visualize Defect Type Similarity", use_container_width=True):
+            if 'transformer_interpolator' in st.session_state:
+                fig_defect_matrix = st.session_state.transformer_interpolator.defect_weighting.visualize_similarity_matrix()
+                st.pyplot(fig_defect_matrix)
+            else:
+                st.warning("Please initialize the transformer interpolator first.")
+        
+        # Custom defect similarity adjustments
+        with st.expander("🔧 Custom Defect Similarities", expanded=False):
+            st.markdown("Adjust defect type similarity weights:")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                twin_twin = st.slider("Twin-Twin", 0.0, 1.0, 1.0, 0.01)
+                twin_esf = st.slider("Twin-ESF", 0.0, 1.0, 0.1, 0.01)
+            with col2:
+                twin_isf = st.slider("Twin-ISF", 0.0, 1.0, 0.05, 0.01)
+                esf_isf = st.slider("ESF-ISF", 0.0, 1.0, 0.1, 0.01)
+            
+            if st.button("Update Defect Similarities", use_container_width=True):
+                if 'transformer_interpolator' in st.session_state:
+                    # Update the similarity matrix
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('Twin', 'Twin')] = twin_twin
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('Twin', 'ESF')] = twin_esf
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('ESF', 'Twin')] = twin_esf
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('Twin', 'ISF')] = twin_isf
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('ISF', 'Twin')] = twin_isf
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('ESF', 'ISF')] = esf_isf
+                    st.session_state.transformer_interpolator.defect_weighting.similarity_matrix[('ISF', 'ESF')] = esf_isf
+                    st.success("Defect similarities updated!")
+        
+        st.divider()
+        
         # Transformer parameters
         st.markdown('<h2 class="section-header">🧠 Enhanced Spatial Locality</h2>', unsafe_allow_html=True)
         
@@ -2013,25 +2177,6 @@ def main():
             help="Balance between transformer attention and spatial locality (0 = pure spatial, 1 = pure transformer)"
         )
         
-        # Defect similarity parameters
-        st.markdown("#### 🔬 Defect Type Similarity")
-        st.info("""
-        **Eigenstrain-based similarity:**
-        - Twin: 2.12
-        - ESF: 1.414 
-        - ISF: 0.707
-        - No Defect: 0.0
-        """)
-        
-        defect_similarity_sigma = st.slider(
-            "Defect Similarity Sigma",
-            min_value=0.1,
-            max_value=2.0,
-            value=0.8,
-            step=0.05,
-            help="Controls decay rate of defect type similarity (lower = sharper distinction)"
-        )
-        
         # Attention temperature
         temperature = st.slider(
             "Attention Temperature",
@@ -2049,17 +2194,12 @@ def main():
             )
             st.pyplot(fig_angular_weights)
         
-        # Visualize defect similarity
-        if st.button("🔬 Visualize Defect Similarity", use_container_width=True):
-            fig_defect_similarity = st.session_state.transformer_interpolator.visualize_defect_similarity()
-            st.pyplot(fig_defect_similarity)
-        
         # Update transformer parameters
         if st.button("🔄 Update Transformer Parameters", use_container_width=True):
             st.session_state.transformer_interpolator.set_spatial_parameters(
                 spatial_sigma=spatial_sigma,
                 locality_weight_factor=spatial_weight_factor,
-                defect_similarity_sigma=defect_similarity_sigma
+                defect_weight_strength=defect_weight_strength  # NEW
             )
             st.session_state.transformer_interpolator.temperature = temperature
             st.success("Transformer parameters updated!")
@@ -2072,7 +2212,7 @@ def main():
             if not st.session_state.solutions:
                 st.error("Please load solutions first!")
             else:
-                with st.spinner("Performing interpolation with enhanced spatial locality..."):
+                with st.spinner("Performing interpolation with enhanced spatial locality and defect type weighting..."):
                     # Setup target parameters
                     target_params = {
                         'defect_type': defect_type,
@@ -2114,29 +2254,25 @@ def main():
         # Display source information
         if st.session_state.solutions:
             source_thetas = []
-            source_defects = []
             for sol in st.session_state.solutions:
                 if 'params' in sol and 'theta' in sol['params']:
                     theta_deg = np.degrees(sol['params']['theta']) % 360  # Normalize to [0, 360)
                     source_thetas.append(theta_deg)
-                if 'params' in sol and 'defect_type' in sol['params']:
-                    source_defects.append(sol['params']['defect_type'])
             if source_thetas:
                 st.markdown(f"**Source Angles Range:** {min(source_thetas):.1f}° to {max(source_thetas):.1f}°")
                 st.markdown(f"**Mean Source Angle:** {np.mean(source_thetas):.1f}°")
-            if source_defects:
-                st.markdown(f"**Source Defect Types:** {', '.join(set(source_defects))}")
     
     # Results display
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
         
         # Tabs for different views
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📈 Results Overview",
             "🎨 Visualization",
             "⚖️ Enhanced Weights Analysis",
             "🔄 Comparison Dashboard",
+            "🧬 Defect Type Analysis",
             "💾 Export Results"
         ])
         
@@ -2216,29 +2352,38 @@ def main():
                     help="Controls non-angular parameter weight decay rate"
                 )
             with locality_col3:
-                st.metric(
-                    "Defect Similarity Sigma",
-                    f"{st.session_state.transformer_interpolator.defect_similarity_sigma:.2f}",
-                    help="Controls defect type similarity decay rate"
-                )
-            
-            # Defect type similarity analysis
-            st.markdown("#### 🔬 Defect Type Similarity Analysis")
-            defect_col1, defect_col2 = st.columns(2)
-            with defect_col1:
-                # Show eigenstrain values
-                st.markdown("**Eigenstrain Values:**")
-                for defect, eigen in st.session_state.transformer_interpolator.defect_eigenstrains.items():
-                    st.markdown(f"- **{defect}**: {eigen:.3f}")
-            with defect_col2:
-                # Calculate and show similarity to target
-                target_defect = result['target_params']['defect_type']
-                st.markdown(f"**Similarity to Target ({target_defect}):**")
-                for defect in sorted(st.session_state.transformer_interpolator.defect_eigenstrains.keys()):
-                    similarity = st.session_state.transformer_interpolator._calculate_defect_similarity(
-                        defect, target_defect
+                # Calculate average angular distance of top contributors
+                if 'weights' in result and 'source_distances' in result:
+                    top_indices = np.argsort(result['weights']['combined'])[-3:]  # Top 3 contributors
+                    avg_angular_dist = np.mean([result['source_distances'][i] for i in top_indices])
+                    st.metric(
+                        "Avg Angular Distance (Top 3)",
+                        f"{avg_angular_dist:.1f}°"
                     )
-                    st.markdown(f"- **{defect}**: {similarity:.3f}")
+            
+            # Defect type weighting configuration
+            st.markdown("#### 🧬 Defect Type Weighting Configuration")
+            defect_col1, defect_col2, defect_col3 = st.columns(3)
+            with defect_col1:
+                st.metric(
+                    "Defect Weight Strength",
+                    f"{st.session_state.transformer_interpolator.defect_weight_strength:.2f}",
+                    help="0 = ignore defect type, 1 = defect type dominates"
+                )
+            with defect_col2:
+                if 'defect_analysis' in result:
+                    st.metric(
+                        "Avg Defect Similarity",
+                        f"{result['defect_analysis']['avg_defect_similarity']:.3f}"
+                    )
+            with defect_col3:
+                if 'defect_analysis' in result:
+                    target_defect = result['defect_analysis']['target_defect_type']
+                    same_type_count = sum(1 for dt in result['defect_analysis']['source_defect_types'] if dt == target_defect)
+                    st.metric(
+                        "Same-Type Sources",
+                        f"{same_type_count}/{result['num_sources']}"
+                    )
             
             # Quick preview of stress fields
             st.markdown("#### 👀 Quick Preview")
@@ -2299,7 +2444,7 @@ def main():
             # Visualization type selection
             viz_type = st.radio(
                 "Visualization Type",
-                options=["2D Heatmap", "3D Surface", "Interactive Heatmap", "Interactive 3D", "Angular Orientation", "Defect Similarity"],
+                options=["2D Heatmap", "3D Surface", "Interactive Heatmap", "Interactive 3D", "Angular Orientation"],
                 horizontal=True
             )
             
@@ -2371,11 +2516,6 @@ def main():
                         show_habit_plane=True
                     )
                     st.pyplot(fig_angular)
-                
-                elif viz_type == "Defect Similarity":
-                    # Defect similarity plot
-                    fig_similarity = st.session_state.transformer_interpolator.visualize_defect_similarity()
-                    st.pyplot(fig_similarity)
             
             # Comparison of all components
             st.markdown("#### 🔄 Component Comparison")
@@ -2407,8 +2547,7 @@ def main():
                 with col_w4:
                     max_weight_idx = np.argmax(weights['combined'])
                     max_theta = result['source_theta_degrees'][max_weight_idx] if max_weight_idx < len(result['source_theta_degrees']) else 0.0
-                    max_defect = st.session_state.solutions[max_weight_idx]['params']['defect_type'] if max_weight_idx < len(st.session_state.solutions) else 'Unknown'
-                    st.metric("Top Contributor", f"θ={max_theta:.1f}°, {max_defect}")
+                    st.metric("Top Contributor", f"θ={max_theta:.1f}°")
                 
                 # Visualize angular weighting function for current target
                 st.markdown("#### 📊 Angular Weighting Function")
@@ -2416,11 +2555,6 @@ def main():
                     target_angle_deg=result['target_angle']
                 )
                 st.pyplot(fig_angular_weights)
-                
-                # Visualize defect similarity
-                st.markdown("#### 🔬 Defect Type Similarity")
-                fig_defect_similarity = st.session_state.transformer_interpolator.visualize_defect_similarity()
-                st.pyplot(fig_defect_similarity)
                 
                 # Weight distribution plot
                 st.markdown("#### 📊 Source Weight Distribution")
@@ -2442,13 +2576,13 @@ def main():
                 ax_weights.legend()
                 ax_weights.grid(True, alpha=0.3)
                 
-                # Add theta labels and defect types
+                # Add theta labels and angular distances
                 for i, theta in enumerate(result['source_theta_degrees']):
-                    if i < len(st.session_state.solutions):
-                        defect_type = st.session_state.solutions[i]['params']['defect_type']
+                    if i < len(result['source_distances']):
+                        dist = result['source_distances'][i]
                         max_height = max(weights['combined'][i], weights['transformer'][i], weights['positional'][i])
                         ax_weights.text(i, max_height + 0.01,
-                                      f'θ={theta:.0f}°\n{defect_type}',
+                                      f'θ={theta:.0f}°\nΔ={dist:.1f}°',
                                       ha='center', va='bottom', fontsize=8)
                 
                 st.pyplot(fig_weights)
@@ -2456,24 +2590,35 @@ def main():
                 # Top contributors table with enhanced information
                 st.markdown("#### 🏆 Top Contributors Analysis")
                 weight_data = []
-                target_defect = result['target_params']['defect_type']
-                
                 for i in range(len(weights['combined'])):
                     angular_diff = result['source_distances'][i] if i < len(result['source_distances']) else 0.0
-                    defect_type = st.session_state.solutions[i]['params']['defect_type'] if i < len(st.session_state.solutions) else 'Unknown'
-                    defect_similarity = st.session_state.transformer_interpolator._calculate_defect_similarity(
-                        defect_type, target_defect
-                    )
+                    angular_weight_category = "Unknown"
+                    
+                    if angular_diff <= 1.0:
+                        angular_weight_category = "Very Very Close (≤1°)"
+                    elif angular_diff <= 2.5:
+                        angular_weight_category = "Very Close (≤2.5°)"
+                    elif angular_diff <= 5.0:
+                        angular_weight_category = "Close (≤5.0°)"
+                    elif angular_diff <= 10.0:
+                        angular_weight_category = "Moderate (≤10.0°)"
+                    elif angular_diff <= 20.0:
+                        angular_weight_category = "Far (≤20.0°)"
+                    elif angular_diff <= 45.0:
+                        angular_weight_category = "Very Far (≤45.0°)"
+                    else:
+                        angular_weight_category = "Extremely Far (>45°)"
                     
                     weight_data.append({
                         'Source': i,
                         'Theta (°)': result['source_theta_degrees'][i] if i < len(result['source_theta_degrees']) else 0.0,
                         'Angular Distance (°)': angular_diff,
-                        'Defect Type': defect_type,
-                        'Defect Similarity': defect_similarity,
+                        'Angular Weight Category': angular_weight_category,
                         'Combined Weight': weights['combined'][i],
                         'Spatial Weight': weights['positional'][i],
-                        'Transformer Weight': weights['transformer'][i]
+                        'Transformer Weight': weights['transformer'][i],
+                        'Defect Similarity': weights['defect_similarities'][i] if i < len(weights['defect_similarities']) else 0.0,
+                        'Defect Type': st.session_state.solutions[i]['params']['defect_type'] if i < len(st.session_state.solutions) else 'Unknown'
                     })
                 
                 df_weights = pd.DataFrame(weight_data)
@@ -2483,11 +2628,12 @@ def main():
                 st.dataframe(df_weights.head(10).style.format({
                     'Theta (°)': '{:.1f}',
                     'Angular Distance (°)': '{:.1f}',
-                    'Defect Similarity': '{:.3f}',
                     'Combined Weight': '{:.4f}',
                     'Spatial Weight': '{:.4f}',
-                    'Transformer Weight': '{:.4f}'
-                }).background_gradient(subset=['Combined Weight'], cmap='YlOrRd'))
+                    'Transformer Weight': '{:.4f}',
+                    'Defect Similarity': '{:.4f}'
+                }).background_gradient(subset=['Combined Weight'], cmap='YlOrRd')
+                .background_gradient(subset=['Defect Similarity'], cmap='RdYlGn'))
                 
                 # Angular distribution plot
                 st.markdown("#### 🧭 Angular Distribution Analysis")
@@ -2504,12 +2650,12 @@ def main():
                 if 'source_distances' in result:
                     fig_corr, ax_corr = plt.subplots(figsize=(10, 6))
                     scatter = ax_corr.scatter(result['source_distances'], weights['combined'],
-                                           alpha=0.6, s=100, c=weights['positional'], cmap='viridis')
+                                           alpha=0.6, s=100, c=weights['defect_similarities'], cmap='RdYlGn')
                     ax_corr.set_xlabel('Angular Distance (°)')
                     ax_corr.set_ylabel('Combined Weight')
                     ax_corr.set_title('Angular Distance vs. Weight Correlation', fontsize=16, fontweight='bold')
                     ax_corr.grid(True, alpha=0.3)
-                    plt.colorbar(scatter, ax=ax_corr, label='Spatial Weight')
+                    plt.colorbar(scatter, ax=ax_corr, label='Defect Similarity')
                     
                     # Add trend line
                     if len(result['source_distances']) > 1:
@@ -2542,9 +2688,9 @@ def main():
                 for i, theta in enumerate(result['source_theta_degrees']):
                     distance = result['source_distances'][i]
                     weight = result['weights']['combined'][i]
-                    defect_type = st.session_state.solutions[i]['params']['defect_type'] if i < len(st.session_state.solutions) else 'Unknown'
+                    defect_type_i = result['defect_analysis']['source_defect_types'][i] if 'defect_analysis' in result and i < len(result['defect_analysis']['source_defect_types']) else 'Unknown'
                     ground_truth_options.append(
-                        f"Source {i}: θ={theta:.1f}°, {defect_type} (Δ={distance:.1f}°, weight={weight:.3f})"
+                        f"Source {i}: θ={theta:.1f}° (Δ={distance:.1f}°, w={weight:.3f}, {defect_type_i})"
                     )
                 
                 selected_option = st.selectbox(
@@ -2562,7 +2708,7 @@ def main():
                 selected_theta = result['source_theta_degrees'][selected_index]
                 selected_distance = result['source_distances'][selected_index]
                 selected_weight = result['weights']['combined'][selected_index]
-                selected_defect = st.session_state.solutions[selected_index]['params']['defect_type'] if selected_index < len(st.session_state.solutions) else 'Unknown'
+                selected_defect = result['defect_analysis']['source_defect_types'][selected_index] if 'defect_analysis' in result and selected_index < len(result['defect_analysis']['source_defect_types']) else 'Unknown'
                 
                 col_gt1, col_gt2, col_gt3, col_gt4 = st.columns(4)
                 with col_gt1:
@@ -2671,6 +2817,166 @@ def main():
                 st.warning("No source information available for comparison.")
         
         with tab5:
+            # Defect Type Analysis tab
+            st.markdown('<h2 class="section-header">🧬 Defect Type Similarity Analysis</h2>', unsafe_allow_html=True)
+            
+            if 'defect_analysis' in result:
+                defect_info = result['defect_analysis']
+                
+                # Key metrics
+                col_d1, col_d2, col_d3, col_d4 = st.columns(4)
+                with col_d1:
+                    st.metric("Target Defect", defect_info['target_defect_type'])
+                with col_d2:
+                    st.metric("Target Eigenstrain", f"{defect_info['target_eigenstrain']:.3f}")
+                with col_d3:
+                    st.metric("Avg Defect Similarity", f"{defect_info['avg_defect_similarity']:.3f}")
+                with col_d4:
+                    st.metric("Defect Types Used", len(defect_info['defect_type_counts']))
+                
+                # Defect type contribution plot
+                st.markdown("#### 📊 Defect Type Weight Contributions")
+                fig_defect_contrib, ax_defect_contrib = plt.subplots(figsize=(12, 6))
+                
+                defect_types = list(defect_info['defect_weight_contributions'].keys())
+                contributions = [defect_info['defect_weight_contributions'][dt] for dt in defect_types]
+                counts = [defect_info['defect_type_counts'][dt] for dt in defect_types]
+                
+                x = np.arange(len(defect_types))
+                width = 0.35
+                
+                # Plot contributions
+                bars1 = ax_defect_contrib.bar(x - width/2, contributions, width, label='Weight Contribution', color='steelblue')
+                # Plot counts
+                bars2 = ax_defect_contrib.bar(x + width/2, np.array(counts)/max(counts), width, label='Source Count (normalized)', color='salmon')
+                
+                ax_defect_contrib.set_xlabel('Defect Type')
+                ax_defect_contrib.set_ylabel('Normalized Value')
+                ax_defect_contrib.set_title('Defect Type Contributions vs Availability', fontsize=16, fontweight='bold')
+                ax_defect_contrib.set_xticks(x)
+                ax_defect_contrib.set_xticklabels(defect_types)
+                ax_defect_contrib.legend()
+                ax_defect_contrib.grid(True, alpha=0.3, axis='y')
+                
+                # Add value labels
+                for bar in bars1:
+                    height = bar.get_height()
+                    ax_defect_contrib.text(bar.get_x() + bar.get_width()/2., height,
+                                          f'{height:.2f}', ha='center', va='bottom')
+                
+                for bar in bars2:
+                    height = bar.get_height()
+                    ax_defect_contrib.text(bar.get_x() + bar.get_width()/2., height,
+                                          f'{height:.2f}', ha='center', va='bottom')
+                
+                st.pyplot(fig_defect_contrib)
+                
+                # Eigenstrain vs Weight scatter plot
+                st.markdown("#### 📈 Eigenstrain Distance vs Weight")
+                if 'source_eigenstrains' in defect_info and 'weights' in result:
+                    eigen_differences = []
+                    for eigen in defect_info['source_eigenstrains']:
+                        diff = abs(eigen - defect_info['target_eigenstrain'])
+                        eigen_differences.append(diff)
+                    
+                    fig_eigen, ax_eigen = plt.subplots(figsize=(10, 6))
+                    scatter = ax_eigen.scatter(eigen_differences, result['weights']['combined'],
+                                              alpha=0.7, s=100, c=result['weights']['defect_similarities'],
+                                              cmap='RdYlGn', edgecolors='black')
+                    
+                    ax_eigen.set_xlabel('Eigenstrain Distance from Target')
+                    ax_eigen.set_ylabel('Combined Weight')
+                    ax_eigen.set_title('Eigenstrain Distance vs Weight Contribution', fontsize=16, fontweight='bold')
+                    ax_eigen.grid(True, alpha=0.3)
+                    
+                    # Add colorbar for defect similarities
+                    cbar = plt.colorbar(scatter, ax=ax_eigen)
+                    cbar.set_label('Defect Type Similarity', fontsize=12)
+                    
+                    # Add trend line
+                    if len(eigen_differences) > 1:
+                        z = np.polyfit(eigen_differences, result['weights']['combined'], 1)
+                        p = np.poly1d(z)
+                        x_range = np.linspace(min(eigen_differences), max(eigen_differences), 100)
+                        ax_eigen.plot(x_range, p(x_range), "r--", alpha=0.8, label='Trend')
+                        ax_eigen.legend()
+                    
+                    st.pyplot(fig_eigen)
+                
+                # Defect similarity matrix for this specific interpolation
+                st.markdown("#### 🔍 Defect Similarity Details")
+                
+                # Create a table of source defect info
+                defect_table_data = []
+                for i, (defect_type_i, eigen, similarity, weight) in enumerate(zip(
+                    defect_info['source_defect_types'],
+                    defect_info['source_eigenstrains'],
+                    result['weights']['defect_similarities'],
+                    result['weights']['combined']
+                )):
+                    angular_dist = result['source_distances'][i] if i < len(result['source_distances']) else 0.0
+                    defect_table_data.append({
+                        'Source': i,
+                        'Defect Type': defect_type_i,
+                        'Eigenstrain': eigen,
+                        'Eigen Distance': abs(eigen - defect_info['target_eigenstrain']),
+                        'Angular Distance (°)': angular_dist,
+                        'Defect Similarity': similarity,
+                        'Combined Weight': weight,
+                        'Is Same Type': 1 if defect_type_i == defect_info['target_defect_type'] else 0
+                    })
+                
+                df_defect = pd.DataFrame(defect_table_data)
+                df_defect = df_defect.sort_values('Combined Weight', ascending=False)
+                
+                # Display with highlighting
+                st.dataframe(
+                    df_defect.style.format({
+                        'Eigenstrain': '{:.3f}',
+                        'Eigen Distance': '{:.3f}',
+                        'Angular Distance (°)': '{:.1f}',
+                        'Defect Similarity': '{:.3f}',
+                        'Combined Weight': '{:.4f}'
+                    }).background_gradient(subset=['Defect Similarity'], cmap='RdYlGn')
+                    .background_gradient(subset=['Combined Weight'], cmap='YlOrRd')
+                    .apply(lambda x: ['background-color: lightgreen' if v == 1 else '' 
+                                     for v in x], subset=['Is Same Type'])
+                )
+                
+                # Summary statistics
+                st.markdown("##### 📊 Summary Statistics")
+                same_type_mask = df_defect['Is Same Type'] == 1
+                
+                if same_type_mask.any():
+                    same_type_avg_weight = df_defect[same_type_mask]['Combined Weight'].mean()
+                    diff_type_avg_weight = df_defect[~same_type_mask]['Combined Weight'].mean()
+                    weight_ratio = same_type_avg_weight / diff_type_avg_weight if diff_type_avg_weight > 0 else float('inf')
+                    
+                    col_s1, col_s2, col_s3 = st.columns(3)
+                    with col_s1:
+                        st.metric("Avg Weight (Same Type)", f"{same_type_avg_weight:.4f}")
+                    with col_s2:
+                        st.metric("Avg Weight (Different Type)", f"{diff_type_avg_weight:.4f}")
+                    with col_s3:
+                        st.metric("Weight Ratio", f"{weight_ratio:.2f}x")
+                
+                # Insights
+                st.markdown("##### 💡 Insights")
+                same_type_count = df_defect['Is Same Type'].sum()
+                total_count = len(df_defect)
+                percent_same_type = (same_type_count / total_count) * 100
+                
+                st.info(f"""
+                - **{percent_same_type:.1f}%** of sources have the same defect type as target
+                - The interpolator gives **{weight_ratio:.1f}x** more weight to same-type defects
+                - Defect type similarity ranges from **{df_defect['Defect Similarity'].min():.3f}** to **{df_defect['Defect Similarity'].max():.3f}**
+                - Highest weighted source is a **{df_defect.iloc[0]['Defect Type']}** defect with **{df_defect.iloc[0]['Defect Similarity']:.3f}** similarity
+                """)
+            
+            else:
+                st.warning("Defect type analysis not available. Please run interpolation first.")
+        
+        with tab6:
             # Export tab
             st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
             st.markdown("""
@@ -2750,11 +3056,11 @@ def main():
                         "3D Surface Plot",
                         "Angular Orientation",
                         "Angular Weighting Function",
-                        "Defect Similarity Matrix",
                         "Weight Distribution",
-                        "Comparison Dashboard"
+                        "Comparison Dashboard",
+                        "Defect Type Similarity Matrix"
                     ],
-                    default=["Von Mises Heatmap", "Defect Similarity Matrix", "Comparison Dashboard"]
+                    default=["Von Mises Heatmap", "Angular Weighting Function", "Defect Type Similarity Matrix", "Comparison Dashboard"]
                 )
                 
                 if st.button("🖼️ Generate and Download Visualizations", use_container_width=True):
@@ -2845,14 +3151,6 @@ def main():
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Defect Similarity Matrix" in export_plots:
-                            fig = st.session_state.transformer_interpolator.visualize_defect_similarity()
-                            buf = BytesIO()
-                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"defect_similarity_theta_{result['target_angle']:.1f}.png", buf.getvalue())
-                            plot_count += 1
-                            plt.close(fig)
-                        
                         if "Weight Distribution" in export_plots:
                             fig, ax = plt.subplots(figsize=(12, 6))
                             x = range(len(result['weights']['combined']))
@@ -2902,6 +3200,14 @@ def main():
                             zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
+                        
+                        if "Defect Type Similarity Matrix" in export_plots:
+                            fig = st.session_state.transformer_interpolator.defect_weighting.visualize_similarity_matrix()
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"defect_similarity_matrix.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
                     
                     zip_buffer.seek(0)
                     
@@ -2922,25 +3228,25 @@ def main():
         <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
             <h2>🚀 Ready to Begin!</h2>
             <p style="font-size: 1.2rem; margin-bottom: 30px;">
-                Follow these steps to start interpolating stress fields with defect type awareness:
+                Follow these steps to start interpolating stress fields with enhanced spatial locality and defect type weighting:
             </p>
             <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
                 <li>Load simulation files from the sidebar</li>
                 <li>Configure target parameters (angle, defect type, etc.)</li>
+                <li>Adjust defect type weighting parameters</li>
                 <li>Adjust enhanced spatial locality parameters</li>
-                <li>Visualize the angular weighting function</li>
-                <li>Visualize defect type similarity matrix</li>
+                <li>Visualize the angular weighting function and defect similarity matrix</li>
                 <li>Click "Perform Transformer Interpolation"</li>
                 <li>Explore results in the tabs above</li>
             </ol>
             <p style="margin-top: 30px; font-size: 1.1rem;">
-                <strong>New Enhanced Features:</strong> Physics-based weighting with:
+                <strong>New Enhanced Features:</strong>
                 <ul style="text-align: left; display: inline-block;">
-                    <li>Angular proximity weighting (0.95 for ≤1°, 0.01 for >45°)</li>
-                    <li>Defect type similarity based on eigenstrain values</li>
-                    <li>Twin-Twin similarity = 1.0, Twin-ESF ≈ 0.65-0.75, Twin-ISF ≈ 0.35-0.45</li>
-                    <li>Habit plane (54.7°) awareness with proximity bonuses</li>
-                    <li>Cyclic angle handling (0° = 360°)</li>
+                    <li><strong>Defect Type Weighting:</strong> Based on eigenstrain distances (Twin=2.12, ESF=1.414, ISF=0.707)</li>
+                    <li><strong>Defect Similarity Matrix:</strong> Twin-Twin: 1.0, Twin-ESF: 0.1, Twin-ISF: 0.05</li>
+                    <li><strong>Enhanced Angular Weighting:</strong> 0.95 for ≤1°, 0.01 for >45°</li>
+                    <li><strong>Cyclic angle handling</strong> (0° = 360°)</li>
+                    <li><strong>Habit plane (54.7°) awareness</strong></li>
                 </ul>
             </p>
         </div>
@@ -2959,77 +3265,61 @@ def main():
             """)
         with col_guide2:
             st.markdown("""
-            #### 🎯 Enhanced Physics Awareness
-            - **Angular Weighting:** Aggressive proximity-based weights
-            - **Defect Type Similarity:** Based on eigenstrain values
-            - **Habit Plane Awareness:** Special handling for 54.7°
-            - **Cyclic Angles:** 0° = 360°, proper distance calculations
-            - **Combined Weighting:** Balance angular and defect similarity
+            #### 🧬 Defect Type Weighting
+            - **Eigenstrain Values:** Twin=2.12, ESF=1.414, ISF=0.707
+            - **Similarity Matrix:** Twin-Twin=1.0, Twin-ESF=0.1, Twin-ISF=0.05
+            - **Weight Strength:** Control how much defect type affects interpolation
+            - **Customizable:** Adjust defect similarities as needed
             """)
         with col_guide3:
             st.markdown("""
             #### 🔍 Advanced Features
-            - Visualize angular weighting function
-            - Visualize defect similarity matrix
-            - Detailed weight distribution analysis
+            - Visualize defect type similarity matrix
+            - Detailed defect type analysis
             - Select any source as ground truth
             - Comprehensive error metrics
             - Export results for publication
             """)
         
         # Physics explanation
-        with st.expander("🧬 Physics Background: Defect Type Similarity Weighting", expanded=True):
+        with st.expander("🧬 Physics Background: Defect Type Eigenstrain Weighting", expanded=True):
             st.markdown("""
-            **Defect Type Similarity Based on Eigenstrains:**
+            **Defect Type Eigenstrain Weighting for Material Science:**
             
-            1. **Eigenstrain Values:**
-               - **Twin:** 2.12 (highest eigenstrain)
-               - **ESF:** 1.414 (medium eigenstrain)
-               - **ISF:** 0.707 (lowest eigenstrain)
-               - **No Defect:** 0.0 (reference state)
+            1. **Eigenstrain Values for Different Defect Types:**
+               - **Twin:** 2.12 - Largest eigenstrain, represents twinning deformation
+               - **ESF (Extended Stacking Fault):** 1.414 - Moderate eigenstrain
+               - **ISF (Intrinsic Stacking Fault):** 0.707 - Smallest eigenstrain
+               - **No Defect:** 0.0 - Reference state
             
-            2. **Similarity Calculation:**
-               - Similarity = exp(-0.5 * (normalized_eigenstrain_difference / sigma)^2)
-               - Normalized difference = |eigenstrain₁ - eigenstrain₂| / max_eigenstrain
-               - Sigma parameter controls decay rate (default: 0.8)
+            2. **Defect Type Similarity Matrix:**
+               - **Twin-Twin:** 1.0 (identical defect types)
+               - **Twin-ESF:** 0.1 (moderately similar)
+               - **Twin-ISF:** 0.05 (less similar)
+               - **ESF-ISF:** 0.1 (both stacking faults)
+               - **No Defect with anything:** 0.05 (very low similarity)
             
-            3. **Expected Similarities:**
-               - **Twin-Twin:** 1.0 (identical)
-               - **Twin-ESF:** ~0.65-0.75 (moderately similar)
-               - **Twin-ISF:** ~0.35-0.45 (less similar)
-               - **ESF-ISF:** ~0.55-0.65 (moderately similar)
-               - **Any defect - No Defect:** ~0.1-0.3 (least similar)
+            3. **Physics-Based Weighting:**
+               - Defects with similar eigenstrains produce similar stress fields
+               - The weight strength parameter (0-1) controls defect type influence
+               - 0: Ignore defect type (pure angular/parameter weighting)
+               - 0.3: Moderate defect type influence (default)
+               - 1.0: Defect type dominates the weighting
             
-            4. **Weighting Integration:**
-               - Defect similarity is combined with angular distance
-               - For very close angles (<5°), angular proximity dominates (90% weight)
-               - For larger angular distances, defect similarity becomes more important
-               - The final weight = angular_weight * defect_similarity * other_parameters
+            4. **Combined Weighting Scheme:**
+               - Angular proximity (aggressive weighting as before)
+               - Parameter similarity (eps0, kappa, shape)
+               - Defect type similarity (based on eigenstrain distances)
+               - Transformer attention weights
+               
+            The enhanced transformer spatial interpolator leverages this physics knowledge through:
+            - **Defect type eigenstrain weighting** that prioritizes physically similar defects
+            - **Aggressive angular weighting** for crystallographic orientation
+            - **Habit plane awareness** with proximity bonuses
+            - **Cyclic distance calculations** that respect crystallographic symmetry
             
-            5. **Physical Justification:**
-               - Materials with similar eigenstrains produce similar stress fields
-               - Twin and ESF both involve significant lattice distortion
-               - ISF represents a smaller distortion
-               - The stress field pattern depends on both orientation AND defect type
-               - This approach provides more physically accurate interpolation
-            
-            **Example:** A Twin source at 55° would be considered much more relevant to a Twin target at 54.7° than an ISF source at 54.8°, even though the ISF source has a slightly closer angular distance, because the defect type similarity (1.0 vs ~0.4) outweighs the small angular difference.
+            This ensures that sources with both the nearest angular orientation AND the most similar defect type (based on eigen strain physics) receive the highest weights, which is physically meaningful for material science simulations.
             """)
-            
-            # Show similarity calculation example
-            st.markdown("#### 📐 Similarity Calculation Example")
-            
-            col_calc1, col_calc2 = st.columns(2)
-            
-            with col_calc1:
-                st.markdown("```\n# Twin-Twin similarity\nsrc_eigen = 2.12\ntgt_eigen = 2.12\nnorm_diff = |2.12-2.12|/2.12 = 0.0\nsimilarity = exp(-0.5*(0.0/0.8)^2) = 1.0\n```")
-                
-                st.markdown("```\n# Twin-ESF similarity\nsrc_eigen = 2.12\ntgt_eigen = 1.414\nnorm_diff = |2.12-1.414|/2.12 = 0.333\nsimilarity = exp(-0.5*(0.333/0.8)^2) = 0.71\n```")
-            
-            with col_calc2:
-                st.markdown("```\n# Twin-ISF similarity\nsrc_eigen = 2.12\ntgt_eigen = 0.707\nnorm_diff = |2.12-0.707|/2.12 = 0.666\nsimilarity = exp(-0.5*(0.666/0.8)^2) = 0.42\n```")
-                
-                st.markdown("```\n# ESF-ISF similarity\nsrc_eigen = 1.414\ntgt_eigen = 0.707\nnorm_diff = |1.414-0.707|/2.12 = 0.333\nsimilarity = exp(-0.5*(0.333/0.8)^2) = 0.71\n```")
 
 # =============================================
 # RUN THE APPLICATION
