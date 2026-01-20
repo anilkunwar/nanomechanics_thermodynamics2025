@@ -2223,10 +2223,11 @@ def main():
                         'weights': result['weights']
                     }
                     
-                    # Create the comparison dashboard
+                    # FIX: Remove the list comprehension that was causing KeyError
+                    # source_fields should be result['source_fields'] directly
                     fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                         interpolated_fields=result['fields'],
-                        source_fields=[f['fields'] for f in result['source_fields']],
+                        source_fields=result['source_fields'],  # FIXED: Use directly without list comprehension
                         source_info=source_info,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
@@ -2240,7 +2241,7 @@ def main():
                     
                     # Calculate and display detailed error metrics
                     if selected_index < len(result['source_fields']):
-                        ground_truth_field = result['source_fields'][selected_index]['fields'][comp_component]
+                        ground_truth_field = result['source_fields'][selected_index][comp_component]
                         interpolated_field = result['fields'][comp_component]
                         
                         # Calculate errors
@@ -2464,7 +2465,7 @@ def main():
                             
                             fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                                 interpolated_fields=result['fields'],
-                                source_fields=[f['fields'] for f in result['source_fields']],
+                                source_fields=result['source_fields'],  # FIXED: Use directly without list comprehension
                                 source_info=source_info,
                                 target_angle=result['target_angle'],
                                 defect_type=result['target_params']['defect_type'],
