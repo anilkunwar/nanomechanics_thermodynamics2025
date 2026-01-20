@@ -238,7 +238,9 @@ Sintering Temperature and Mechanical Stress
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa33-streamlit-red)](https:///mechanicalstress-interpolation-at-theta33.streamlit.app/) (Focus on radar chart and improvement on r20)
 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa34-streamlit-red)](https:///mechanicalstress-interpolation-at-theta34.streamlit.app/) (Focus on radar chart and improvement on r24, with more knowledge on the mechanics and thermodynamics of diffusion)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa34-streamlit-red)](https:///mechanicalstress-interpolation-at-theta34.streamlit.app/) (Focus on radar chart and improvement on r24, with more knowledge on the mechanics and thermodynamics of diffusion; non-negative stresses interpolated perfectly but hydrostatic stress not interpolated well.)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa35-streamlit-red)](https:///mechanicalstress-interpolation-at-theta35.streamlit.app/) (Advanced interpolation scheme for hydrostatic stress)
 
 
 
