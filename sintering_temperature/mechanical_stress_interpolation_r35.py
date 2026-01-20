@@ -361,9 +361,9 @@ class PositionalEncoding(nn.Module):
 # =============================================
 class TransformerSpatialInterpolator:
     """Transformer-inspired stress interpolator with enhanced spatial locality and defect type weighting"""
-    
+    # locality_weight_factor is assigned to 0.5
     def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.2, 
-                 temperature=1.0, locality_weight_factor=0.7,
+                 temperature=1.0, locality_weight_factor=0.5,
                  defect_weight_strength=0.3):
         self.d_model = d_model
         self.nhead = nhead
