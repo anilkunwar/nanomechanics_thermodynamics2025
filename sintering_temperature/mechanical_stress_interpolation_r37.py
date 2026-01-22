@@ -1,3 +1,31 @@
+
+
+You have identified a subtle but critical bug in the data flow logic.
+
+### The Problem: "Weird" Similarity
+The reason the result feels "weird" (where Twin at 60° rotated to 54.7° looks identical to Twin at 30° rotated to 54.7°) is **data contamination**.
+
+In the previous code, the `interpolate_spatial_fields` function:
+1.  Loads source fields (e.g., Twin @ 60°).
+2.  Applies rotation/scaling logic to the loaded field **in place**.
+3.  Appends this *modified* field to the `source_fields` list.
+4.  Returns `source_fields` to the main app for visualization.
+
+**The Result:** The "Ground Truth" visualization receives the **rotated** field (Twin @ 54.7°). The "Interpolated Result" is also Twin @ 54.7° (assuming the angular weight dominates).
+**The Effect:** You are comparing the **Interpolated Result** against a **Fake Ground Truth** that has already been transformed to look exactly like the target. This hides the actual interpolation work (the shift from 60° to 54.7°).
+
+### The Solution
+To fix this, we must preserve the **Original Untransformed** sources for the dashboard visualization while using the **Transformed** sources for the interpolation calculation.
+
+Here is the logic required:
+1.  In `interpolate_spatial_fields`: Create a deep copy (`raw_source_fields`) of the source data *before* rotation/scaling.
+2.  Update the processed fields with rotation/scaling logic as before.
+3.  Return *both* `processed_fields` (for the result) and `raw_source_fields` (for visualization).
+4.  In `main()`: Pass `result['raw_source_fields']` to the Comparison Dashboard so it plots the *actual* source (Twin @ 60°) against the *interpolated* result (Twin @ 54.7°).
+
+Here is the corrected, full code with this specific logic fix implemented.
+
+```python
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -20,6 +48,7 @@ import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
 from scipy.ndimage import zoom
+import copy # Import copy module to preserve original data
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -31,8 +60,8 @@ warnings.filterwarnings('ignore')
 # This controls "Defect type controlling the magnitude of stress".
 # Values are illustrative for FCC crystal defects.
 DEFECT_MAGNITUDE_FACTORS = {
-    'ISF': 1.0,      # Intrinsic Stacking Fault
-    'ESF': 1.3,      # Extrinsic Stacking Fault
+    'ISF':1.0,      # Intrinsic Stacking Fault
+    'ESF':1.3,      # Extrinsic Stacking Fault
     'Twin': 2.5,      # Twin Boundary (High stress concentration)
     'No Defect': 0.5, # Perfect crystal
     'Generic': 1.0
@@ -611,6 +640,8 @@ class TransformerSpatialInterpolator:
         NEW LOGIC ADDED:
         - Angular weights control orientation: Source tensors are rotated to match target angle.
         - Defect type controls magnitude: Stress intensity is scaled based on defect type factors.
+        - FIX: Returns 'processed_fields' (rotated/scaled) AND 'raw_source_fields' (original) 
+               so the dashboard compares the true source orientation to the rotated result.
         """
         if not sources:
             st.warning("No sources provided for interpolation.")
@@ -623,7 +654,8 @@ class TransformerSpatialInterpolator:
         try:
             # Extract source parameters and fields
             source_params = []
-            source_fields = []
+            source_fields = [] # Stores modified (rotated/scaled) fields
+            raw_source_fields = [] # Stores ORIGINAL fields for visualization (The Fix)
             source_indices = []  # Track original indices
             
             # Target parameters needed for rotation/magnitude scaling
@@ -646,7 +678,18 @@ class TransformerSpatialInterpolator:
                     last_frame = history[-1]
                     if 'stresses' in last_frame:
                         # Extract all stress components
-                        stress_fields = last_frame['stresses'].copy() # Copy to avoid mutation issues
+                        # Use copy() to create a shallow copy of the dictionary
+                        stress_fields = last_frame['stresses'].copy()
+                        
+                        # ==============================================
+                        # NEW: PRESERVE ORIGINAL DATA (The Fix)
+                        # ==============================================
+                        # We save a copy BEFORE any modification
+                        raw_source_fields.append(stress_fields.copy())
+                        
+                        # ==============================================
+                        # END NEW LOGIC
+                        # ==============================================
                         
                         # ==============================================
                         # NEW: PHYSICAL ROTATION & MAGNITUDE SCALING
@@ -657,7 +700,7 @@ class TransformerSpatialInterpolator:
                             src_mag = DEFECT_MAGNITUDE_FACTORS.get(src_defect_type, 1.0)
                             
                             # Calculate rotation needed to align source to target
-                            # Delta angle is the difference between target and source
+                            # Delta angle is: difference between target and source
                             delta_angle = target_theta_rad - src_theta_rad
                             
                             # Check if tensor components exist
@@ -684,7 +727,7 @@ class TransformerSpatialInterpolator:
                                 syy_final = syy_rot * target_mag
                                 sxy_final = sxy_rot * target_mag
                                 
-                                # Update the stress_fields dictionary with the physically transformed values
+                                # Update stress_fields dictionary with physically transformed values
                                 stress_fields['sigma_xx'] = sxx_final
                                 stress_fields['sigma_yy'] = syy_final
                                 stress_fields['tau_xy'] = sxy_final
@@ -702,8 +745,7 @@ class TransformerSpatialInterpolator:
                                 stress_fields['sigma_mag'] = np.sqrt(vm**2 + hydro**2)
                             else:
                                 # If tensor components are missing, we can't rotate physically.
-                                # We warn the user. 
-                                # (We fall back to the standard scalar interpolation logic for this source)
+                                # We warn the user.
                                 if i == 0: # Warn only once
                                     st.warning("Tensor components (sigma_xx/yy/xy) missing in data. Rotation logic skipped.")
                         
@@ -729,6 +771,7 @@ class TransformerSpatialInterpolator:
                         else:
                             mag = np.sqrt(vm**2 + hydro**2)
                         
+                        # Append the PROCESSED (rotated/scaled) field to the main list
                         source_fields.append({
                             'von_mises': vm,
                             'sigma_hydro': hydro,
@@ -766,19 +809,30 @@ class TransformerSpatialInterpolator:
                 # Resize to common shape
                 target_shape = shapes[0]  # Use first shape
                 resized_fields = []
-                for fields in source_fields:
+                # Resize raw fields too for consistency
+                resized_raw_fields = []
+                
+                for fields, raw_fields in zip(source_fields, raw_source_fields):
                     resized = {}
+                    resized_raw = {}
                     for key, field in fields.items():
                         if key in ['von_mises', 'sigma_hydro', 'sigma_mag'] and field.shape != target_shape:
                             # Resize using interpolation
                             factors = [t/s for t, s in zip(target_shape, field.shape)]
                             resized[key] = zoom(field, factors, order=1)
+                            # Resize raw too
+                            resized_raw[key] = zoom(raw_fields[key], factors, order=1)
                         elif key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                             resized[key] = field
+                            resized_raw[key] = raw_fields[key]
                         else:
                             resized[key] = field
+                            resized_raw[key] = raw_fields[key]
                     resized_fields.append(resized)
+                    resized_raw_fields.append(resized_raw)
+                
                 source_fields = resized_fields
+                raw_source_fields = resized_raw_fields
             
             # Debug: Check feature dimensions
             source_features = self.encode_parameters(source_params, target_angle_deg, special_angle=self.special_angle)
@@ -850,7 +904,7 @@ class TransformerSpatialInterpolator:
             entropy_spatial = self._calculate_entropy(pos_weights)
             entropy_combined = self._calculate_entropy(combined_weights)
             
-            # Interpolate spatial fields
+            # Interpolate spatial fields using PROCESSED fields
             interpolated_fields = {}
             shape = source_fields[0]['von_mises'].shape
             
@@ -880,7 +934,8 @@ class TransformerSpatialInterpolator:
                 source_distances.append(angular_dist)
             
             return {
-                'fields': interpolated_fields,
+                'fields': interpolated_fields, # The final result
+                'raw_source_fields': raw_source_fields, # THE FIX: Original unrotated sources
                 'weights': {
                     'transformer': transformer_weights.tolist(),
                     'positional': pos_weights.tolist(),
@@ -918,7 +973,7 @@ class TransformerSpatialInterpolator:
                 'source_theta_degrees': source_theta_degrees,
                 'source_distances': source_distances,
                 'source_indices': source_indices,
-                'source_fields': source_fields,  # Store source fields for comparison
+                'source_fields': source_fields,
                 'special_angle_used': self.special_angle,
                 'physics_rotation_enabled': enable_physics_rotation
             }
@@ -1952,8 +2007,9 @@ def main():
     <div class="info-box">
     <strong>🔬 Physics-aware interpolation with Tensor Rotation & Magnitude Scaling.</strong><br>
     • Load simulation files from numerical_solutions directory<br>
-    • <strong>Angular Weights Control Orientation:</strong> Source tensors are physically rotated to match the target angle.<br>
+    • <strong>Angular Weights Control Orientation:</strong> Source tensors are physically rotated to match target angle.<br>
     • <strong>Defect Type Controls Magnitude:</strong> Stress intensity is scaled based on defect type factors (ISF/ESF/Twin).<br>
+    • <strong>FIX:</strong> Ground truth visualization now uses ORIGINAL sources (e.g., Twin 60°) vs rotated result (Twin 54.7°).<br>
     • Optional Habit Plane Bias (54.7°) - Turn off for generic interpolation<br>
     • Enhanced spatial locality with aggressive angular distance weighting<br>
     • Comprehensive comparison dashboard with ground truth selection<br>
@@ -2631,6 +2687,7 @@ def main():
             • Analyze spatial correlation patterns<br>
             • Current Special Angle: {result_special_angle if result_special_angle else "None (Generic)"}
             • Physics Rotation: {result_physics_rotation}
+            • <strong>FIXED:</strong> Dashboard now uses ORIGINAL source fields to show true orientation profiles.
             </div>
             """, unsafe_allow_html=True)
             
@@ -2697,75 +2754,77 @@ def main():
                     'weights': result['weights']
                 }
                 
-                # Get source fields from result
-                source_fields_list = result['source_fields']
-                fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
-                    interpolated_fields=result['fields'],
-                    source_fields=source_fields_list,  # Pass full source field dictionaries
-                    source_info=source_info,
-                    target_angle=result['target_angle'],
-                    defect_type=result['target_params']['defect_type'],
-                    component=comp_component,
-                    cmap_name=comp_cmap,
-                    figsize=(20, 15),
-                    ground_truth_index=selected_index,
-                    special_angle=result_special_angle
-                )
-                st.pyplot(fig_comparison)
+                # THE FIX: Use 'raw_source_fields' instead of processed 'source_fields'
+                raw_source_fields_list = result.get('raw_source_fields', result.get('source_fields', [])
                 
-                # Calculate and display detailed error metrics
-                if selected_index < len(source_fields_list):
-                    ground_truth_field = source_fields_list[selected_index][comp_component]
-                    interpolated_field = result['fields'][comp_component]
+                if len(raw_source_fields_list) > 0:
+                    fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                        interpolated_fields=result['fields'],
+                        source_fields=raw_source_fields_list,  # Pass RAW fields here
+                        source_info=source_info,
+                        target_angle=result['target_angle'],
+                        defect_type=result['target_params']['defect_type'],
+                        component=comp_component,
+                        cmap_name=comp_cmap,
+                        figsize=(20, 15),
+                        ground_truth_index=selected_index,
+                        special_angle=result_special_angle
+                    )
+                    st.pyplot(fig_comparison)
                     
-                    # Calculate errors
-                    error_field = interpolated_field - ground_truth_field
-                    mse = np.mean(error_field**2)
-                    mae = np.mean(np.abs(error_field))
-                    rmse = np.sqrt(mse)
-                    
-                    # Calculate correlation
-                    from scipy.stats import pearsonr
-                    try:
-                        corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
-                    except:
-                        corr_coef = 0.0
-                    
-                    # Display metrics
-                    st.markdown("#### 📊 Error Metrics")
-                    err_col1, err_col2, err_col3, err_col4 = st.columns(4)
-                    with err_col1:
-                        st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
-                    with err_col2:
-                        st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
-                    with err_col3:
-                        st.metric("Root Mean Squared Error (RMSE)", f"{rmse:.6f}")
-                    with err_col4:
-                        st.metric("Pearson Correlation", f"{corr_coef:.4f}")
-                    
-                    # Additional analysis
-                    with st.expander("🔍 Detailed Error Analysis", expanded=False):
-                        st.markdown("##### Error Distribution")
-                        fig_err_hist, ax_err_hist = plt.subplots(figsize=(10, 6))
-                        ax_err_hist.hist(error_field.flatten(), bins=50, alpha=0.7, color='red', edgecolor='black')
-                        ax_err_hist.set_xlabel('Error (GPa)')
-                        ax_err_hist.set_ylabel('Frequency')
-                        ax_err_hist.set_title('Error Distribution', fontsize=16, fontweight='bold')
-                        ax_err_hist.grid(True, alpha=0.3)
-                        st.pyplot(fig_err_hist)
+                    # Calculate and display detailed error metrics
+                    if selected_index < len(raw_source_fields_list):
+                        ground_truth_field = raw_source_fields_list[selected_index].get(component)
+                        interpolated_field = result['fields'][comp_component]
                         
-                        # Spatial error pattern
-                        st.markdown("##### Spatial Error Pattern")
-                        fig_err_spatial, ax_err_spatial = plt.subplots(figsize=(10, 8))
-                        im_err = ax_err_spatial.imshow(error_field, cmap='RdBu_r',
-                                                      vmin=-np.max(np.abs(error_field)),
-                                                      vmax=np.max(np.abs(error_field)),
-                                                      aspect='equal', interpolation='bilinear', origin='lower')
-                        plt.colorbar(im_err, ax=ax_err_spatial, label='Error (GPa)')
-                        ax_err_spatial.set_title('Spatial Error Distribution', fontsize=16, fontweight='bold')
-                        ax_err_spatial.set_xlabel('X Position')
-                        ax_err_spatial.set_ylabel('Y Position')
-                        st.pyplot(fig_err_spatial)
+                        # Calculate errors
+                        error_field = interpolated_field - ground_truth_field
+                        mse = np.mean(error_field**2)
+                        mae = np.mean(np.abs(error_field))
+                        rmse = np.sqrt(mse)
+                        
+                        # Calculate correlation
+                        from scipy.stats import pearsonr
+                        try:
+                            corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
+                        except:
+                            corr_coef = 0.0
+                        
+                        # Display metrics
+                        st.markdown("#### 📊 Error Metrics")
+                        err_col1, err_col2, err_col3, err_col4 = st.columns(4)
+                        with err_col1:
+                            st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
+                        with err_col2:
+                            st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
+                        with err_col3:
+                            st.metric("Root Mean Squared Error (RMSE)", f"{rmse:.6f}")
+                        with err_col4:
+                            st.metric("Pearson Correlation", f"{corr_coef:.4f}")
+                        
+                        # Additional analysis
+                        with st.expander("🔍 Detailed Error Analysis", expanded=False):
+                            st.markdown("##### Error Distribution")
+                            fig_err_hist, ax_err_hist = plt.subplots(figsize=(10, 6))
+                            ax_err_hist.hist(error_field.flatten(), bins=50, alpha=0.7, color='red', edgecolor='black')
+                            ax_err_hist.set_xlabel('Error (GPa)')
+                            ax_err_hist.set_ylabel('Frequency')
+                            ax_err_hist.set_title('Error Distribution', fontsize=16, fontweight='bold')
+                            ax_err_hist.grid(True, alpha=0.3)
+                            st.pyplot(fig_err_hist)
+                            
+                            # Spatial error pattern
+                            st.markdown("##### Spatial Error Pattern")
+                            fig_err_spatial, ax_err_spatial = plt.subplots(figsize=(10, 8))
+                            im_err = ax_err_spatial.imshow(error_field, cmap='RdBu_r',
+                                                          vmin=-np.max(np.abs(error_field)),
+                                                          vmax=np.max(np.abs(error_field)),
+                                                          aspect='equal', interpolation='bilinear', origin='lower')
+                            plt.colorbar(im_err, ax=ax_err_spatial, label='Error (GPa)')
+                            ax_err_spatial.set_title('Spatial Error Distribution', fontsize=16, fontweight='bold')
+                            ax_err_spatial.set_xlabel('X Position')
+                            ax_err_spatial.set_ylabel('Y Position')
+                            st.pyplot(fig_err_spatial)
             else:
                 st.warning("No source information available for comparison.")
         
@@ -2942,11 +3001,11 @@ def main():
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"angular_weighting_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            zip_file.writestr(f"angular_weighting_theta_{result['target_angle']:.1f}.n.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Weight Distribution" in export_plots:
+                        if "Weight Distribution" in export_plots and st.session_state.selected_ground_truth is not None:
                             fig, ax = plt.subplots(figsize=(12, 6))
                             x = range(len(result['weights']['combined']))
                             width = 0.25
@@ -2978,10 +3037,11 @@ def main():
                             }
                             
                             # Get source fields from result
-                            source_fields_list = result['source_fields']
+                            raw_source_fields_list = result.get('raw_source_fields', result.get('source_fields', [])
+                            
                             fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                                 interpolated_fields=result['fields'],
-                                source_fields=source_fields_list,
+                                source_fields=raw_source_fields_list, # Pass RAW fields here
                                 source_info=source_info,
                                 target_angle=result['target_angle'],
                                 defect_type=result['target_params']['defect_type'],
@@ -3051,7 +3111,7 @@ def main():
             st.markdown("""
             #### 📂 Data Preparation
             1. Place simulation files in `numerical_solutions/` directory
-            2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
+            2. supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
             3. Files should contain 'params' and 'history' keys
             4. <strong>Important:</strong> For rotation logic to work, files should contain tensor components (`sigma_xx`, `tau_xy`, etc.).
             """)
@@ -3083,7 +3143,7 @@ def main():
             1. **Orientation Control (Angular Weights):**
                - Instead of simple blending, we use a Rotation Matrix `R` to physically rotate the source stress tensor $\sigma_{source}$ to align with the target angle.
                - $\sigma_{rotated} = R \cdot \sigma_{source} \cdot R^T$.
-               - This effectively removes the orientation discrepancy before the transformer weights are applied.
+               - This effectively removes the orientation discrepancy before transformer weights are applied.
             2. **Magnitude Control (Defect Type):**
                - Source stress is normalized by its inherent defect magnitude (e.g., Twin defects are stronger than ISF).
                - The normalized tensor is then scaled by the Target Defect magnitude.
@@ -3094,6 +3154,11 @@ def main():
             4. **Transformer Role:**
                - After physical rotation and scaling, the Transformer acts as a super-resolution blender.
                - It learns to weigh the "shape" nuances of different sources more than their absolute position.
+            5. **Fix for "Weirdness":**
+               - The dashboard now explicitly uses `raw_source_fields` for visualization. This ensures you see:
+                 - Ground Truth: Twin @ 60° (Actual Source Orientation)
+                 - Interpolated: Twin @ 54.7° (Rotated to Target)
+               - This allows you to verify the shift and magnitude scaling clearly.
             """)
 
 # =============================================
@@ -3101,3 +3166,4 @@ def main():
 # =============================================
 if __name__ == "__main__":
     main()
+```
