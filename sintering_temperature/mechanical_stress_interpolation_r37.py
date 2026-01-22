@@ -1,31 +1,3 @@
-
-
-You have identified a subtle but critical bug in the data flow logic.
-
-### The Problem: "Weird" Similarity
-The reason the result feels "weird" (where Twin at 60° rotated to 54.7° looks identical to Twin at 30° rotated to 54.7°) is **data contamination**.
-
-In the previous code, the `interpolate_spatial_fields` function:
-1.  Loads source fields (e.g., Twin @ 60°).
-2.  Applies rotation/scaling logic to the loaded field **in place**.
-3.  Appends this *modified* field to the `source_fields` list.
-4.  Returns `source_fields` to the main app for visualization.
-
-**The Result:** The "Ground Truth" visualization receives the **rotated** field (Twin @ 54.7°). The "Interpolated Result" is also Twin @ 54.7° (assuming the angular weight dominates).
-**The Effect:** You are comparing the **Interpolated Result** against a **Fake Ground Truth** that has already been transformed to look exactly like the target. This hides the actual interpolation work (the shift from 60° to 54.7°).
-
-### The Solution
-To fix this, we must preserve the **Original Untransformed** sources for the dashboard visualization while using the **Transformed** sources for the interpolation calculation.
-
-Here is the logic required:
-1.  In `interpolate_spatial_fields`: Create a deep copy (`raw_source_fields`) of the source data *before* rotation/scaling.
-2.  Update the processed fields with rotation/scaling logic as before.
-3.  Return *both* `processed_fields` (for the result) and `raw_source_fields` (for visualization).
-4.  In `main()`: Pass `result['raw_source_fields']` to the Comparison Dashboard so it plots the *actual* source (Twin @ 60°) against the *interpolated* result (Twin @ 54.7°).
-
-Here is the corrected, full code with this specific logic fix implemented.
-
-```python
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -3166,4 +3138,4 @@ def main():
 # =============================================
 if __name__ == "__main__":
     main()
-```
+
