@@ -2973,3 +2973,131 @@ def main():
                         if "Comparison Dashboard" in export_plots and st.session_state.selected_ground_truth is not None:
                             source_info = {
                                 'theta_degrees': result['source_theta_degrees'],
+                                'distances': result['source_distances'],
+                                'weights': result['weights']
+                            }
+                            
+                            # Get source fields from result
+                            source_fields_list = result['source_fields']
+                            fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                                interpolated_fields=result['fields'],
+                                source_fields=source_fields_list,
+                                source_info=source_info,
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type'],
+                                component='von_mises',
+                                cmap_name='viridis',
+                                ground_truth_index=st.session_state.selected_ground_truth,
+                                special_angle=result_special_angle
+                            )
+                            
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                    
+                    zip_buffer.seek(0)
+                    
+                    # Download button for zip file
+                    st.download_button(
+                        label=f"📦 Download {plot_count} Visualization(s) as ZIP",
+                        data=zip_buffer,
+                        file_name=f"visualizations_theta_{result['target_angle']:.1f}_{result['target_params']['defect_type']}.zip",
+                        mime="application/zip",
+                        use_container_width=True
+                    )
+                    
+                    st.success(f"Generated {plot_count} visualization(s) for download.")
+    
+    else:
+        # No results yet - show instructions
+        st.markdown("""
+        <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
+            <h2>🚀 Ready to Begin!</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 30px;">
+                Follow these steps to start interpolating stress fields with enhanced spatial locality:
+            </p>
+            <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
+                <li>Load simulation files from the sidebar</li>
+                <li>Configure target parameters (angle, defect type, etc.)</li>
+                <li><strong>Feature:</strong> Toggle "Enable Physics Rotation" to rotate tensors to match target angle.</li>
+                <li><strong>Feature:</strong> Select Target Defect Type to scale magnitudes (ISF vs Twin).</li>
+                <li>Adjust enhanced spatial locality parameters</li>
+                <li>Visualize the angular weighting function</li>
+                <li>Click "Perform Transformer Interpolation"</li>
+                <li>Explore results in the tabs above</li>
+            </ol>
+            <p style="margin-top: 30px; font-size: 1.1rem;">
+                <strong>New Enhanced Feature:</strong> Rotational Tensor Interpolation with:
+                <ul style="text-align: left; display: inline-block;">
+                    <li><strong>Orientation Control:</strong> Source tensors rotated by angle difference.</li>
+                    <li><strong>Magnitude Control:</strong> Stress scaled by defect type factors (Twin=2.5x).</li>
+                    <li>0.95 weight for angles within 1°</li>
+                    <li>0.9 weight for angles within 2.5°</li>
+                    <li>0.8 weight for angles within 5°</li>
+                    <li>0.01 weight for angles beyond 45°</li>
+                    <li>Cyclic angle handling (0° = 360°)</li>
+                    <li>Optional Habit Plane (54.7°) awareness</li>
+                </ul>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Quick start guide
+        st.markdown("### 📚 Quick Start Guide")
+        col_guide1, col_guide2, col_guide3 = st.columns(3)
+        with col_guide1:
+            st.markdown("""
+            #### 📂 Data Preparation
+            1. Place simulation files in `numerical_solutions/` directory
+            2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
+            3. Files should contain 'params' and 'history' keys
+            4. <strong>Important:</strong> For rotation logic to work, files should contain tensor components (`sigma_xx`, `tau_xy`, etc.).
+            """)
+        with col_guide2:
+            st.markdown("""
+            #### 🎯 Enhanced Spatial Locality
+            - **Angular Weighting:** Aggressive proximity-based weights
+            - **Physics Toggle:** Enable/Disable 54.7° bias
+            - **Physics Rotation:** Enable/Disable tensor rotation logic
+            - **Defect Scaling:** Automatic scaling based on selected defect type
+            - **Cyclic Angles:** 0° = 360°, proper distance calculations
+            - **Spatial Weight Factor:** Balance spatial vs transformer weights
+            - **Parameter Decay:** Controls non-angular parameter influence
+            """)
+        with col_guide3:
+            st.markdown("""
+            #### 🔍 Advanced Features
+            - Visualize angular weighting function
+            - Detailed weight distribution analysis
+            - Select any source as ground truth
+            - Comprehensive error metrics
+            - Export results for publication
+            """)
+        
+        # Physics explanation
+        with st.expander("🧬 Physics Background: Rotational Tensor Interpolation", expanded=True):
+            st.markdown("""
+            **Rotational Tensor Interpolation & Magnitude Scaling:**
+            1. **Orientation Control (Angular Weights):**
+               - Instead of simple blending, we use a Rotation Matrix `R` to physically rotate the source stress tensor $\sigma_{source}$ to align with the target angle.
+               - $\sigma_{rotated} = R \cdot \sigma_{source} \cdot R^T$.
+               - This effectively removes the orientation discrepancy before the transformer weights are applied.
+            2. **Magnitude Control (Defect Type):**
+               - Source stress is normalized by its inherent defect magnitude (e.g., Twin defects are stronger than ISF).
+               - The normalized tensor is then scaled by the Target Defect magnitude.
+               - $\sigma_{final} = (\sigma_{rotated} / M_{source}) \times M_{target}$.
+            3. **Cyclic Angle Mathematics:**
+               - Proper handling of 0° = 360° equivalence.
+               - Delta angle calculation $\Delta \theta = \theta_{target} - \theta_{source}$.
+            4. **Transformer Role:**
+               - After physical rotation and scaling, the Transformer acts as a super-resolution blender.
+               - It learns to weigh the "shape" nuances of different sources more than their absolute position.
+            """)
+
+# =============================================
+# RUN THE APPLICATION
+# =============================================
+if __name__ == "__main__":
+    main()
