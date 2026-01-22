@@ -20,43 +20,28 @@ import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
 from scipy.ndimage import zoom
-import copy # Import copy module to preserve original data
 import warnings
 warnings.filterwarnings('ignore')
-
-# =============================================
-# NEW: PHYSICS CONSTANTS & MAGNITUDE MAPS
-# =============================================
-
-# Map defect types to a relative magnitude factor.
-# This controls "Defect type controlling the magnitude of stress".
-# Values are illustrative for FCC crystal defects.
-DEFECT_MAGNITUDE_FACTORS = {
-    'ISF':1.0,      # Intrinsic Stacking Fault
-    'ESF':1.3,      # Extrinsic Stacking Fault
-    'Twin': 2.5,      # Twin Boundary (High stress concentration)
-    'No Defect': 0.5, # Perfect crystal
-    'Generic': 1.0
-}
 
 # =============================================
 # GLOBAL STYLING CONFIGURATION
 # =============================================
 # Publication quality styling
 plt.rcParams.update({
-'font.size': 14,
-'axes.titlesize': 20,
-'axes.labelsize': 16,
-'xtick.labelsize': 14,
-'ytick.labelsize': 14,
-'legend.fontsize': 14,
-'figure.dpi': 300,
-'figure.autolayout': True,
-'axes.grid': True,
-'grid.alpha': 0.3,
-'grid.linestyle': '--',
-'image.cmap': 'viridis'
+    'font.size': 14,
+    'axes.titlesize': 20,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    'figure.dpi': 300,
+    'figure.autolayout': True,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linestyle': '--',
+    'image.cmap': 'viridis'
 })
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
@@ -65,74 +50,20 @@ os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 
 # Enhanced colormap options with publication standards
 COLORMAP_OPTIONS = {
-'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
-'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
-'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
-'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
-'gist_ncar', 'hsv'],
-'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
-'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
-'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
-'Paired', 'Accent', 'Dark2'],
-'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
-'turbo'],
-'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
-'coolwarm', 'bwr', 'seismic', 'BrBG']
+    'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
+                  'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
+                  'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
+                  'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
+                  'gist_ncar', 'hsv'],
+    'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
+                 'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+    'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
+                   'Paired', 'Accent', 'Dark2'],
+    'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
+                            'turbo'],
+    'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
+                            'coolwarm', 'bwr', 'seismic', 'BrBG']
 }
-
-# =============================================
-# NEW: TENSOR ROTATION ENGINE
-# =============================================
-
-class TensorFieldRotator:
-    """
-    Handles rotation of 2D Stress Tensor fields.
-    This enables 'Angular weights controlling orientation' by physically rotating
-    stress tensor components (Sxx, Syy, Sxy) to a new angle.
-    """
-    
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def rotate_tensor_field(sxx, syy, sxy, angle_rad):
-        """
-        Rotates a 2D stress tensor field by a specific angle.
-        
-        Args:
-            sxx, syy, sxy: 2D numpy arrays of stress components.
-            angle_rad: Rotation angle in radians.
-            
-        Returns:
-            Rotated sxx, syy, sxy arrays.
-        """
-        c = np.cos(angle_rad)
-        s = np.sin(angle_rad)
-        c2 = c * c
-        s2 = s * s
-        cs = c * s
-        
-        # Rotation formulas for 2D plane stress:
-        # sxx' = sxx*c^2 + syy*s^2 + 2*sxy*s*c
-        # syy' = sxx*s^2 + syy*c^2 - 2*sxy*s*c
-        # sxy' = (syy - sxx)*s*c + sxy*(c^2 - s^2)
-        
-        sxx_rot = sxx * c2 + syy * s2 + 2 * sxy * cs
-        syy_rot = sxx * s2 + syy * c2 - 2 * sxy * cs
-        sxy_rot = (syy - sxx) * cs + sxy * (c2 - s2)
-        
-        return sxx_rot, syy_rot, sxy_rot
-
-    @staticmethod
-    def compute_von_mises(sxx, syy, sxy):
-        """Computes Von Mises stress from components."""
-        # For plane stress: sigma_vm = sqrt(sxx^2 - sxx*syy + syy^2 + 3*sxy^2)
-        return np.sqrt(sxx**2 - sxx * syy + syy**2 + 3 * sxy**2)
-
-    @staticmethod
-    def compute_hydrostatic(sxx, syy):
-        """Computes hydrostatic stress (Mean normal stress)."""
-        return (sxx + syy) / 2.0
 
 # =============================================
 # ENHANCED SOLUTION LOADER
@@ -143,7 +74,7 @@ class EnhancedSolutionLoader:
         self.solutions_dir = solutions_dir
         self._ensure_directory()
         self.cache = {}
-    
+        
     def _ensure_directory(self):
         """Create solutions directory if it doesn't exist"""
         if not os.path.exists(self.solutions_dir):
@@ -194,6 +125,7 @@ class EnhancedSolutionLoader:
             # Standardize data structure
             standardized = self._standardize_data(data, file_path)
             return standardized
+            
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
@@ -237,6 +169,7 @@ class EnhancedSolutionLoader:
                 
                 # Convert tensors to numpy arrays
                 self._convert_tensors(standardized)
+                
         except Exception as e:
             st.error(f"Standardization error: {e}")
             standardized['metadata']['error'] = str(e)
@@ -299,8 +232,8 @@ class PositionalEncoding(nn.Module):
         position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
         
         # Compute divisor term
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
-                           (-np.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
+                            (-np.log(10000.0) / d_model))
         
         # Create positional encoding
         pe = torch.zeros(seq_len, d_model)
@@ -310,21 +243,17 @@ class PositionalEncoding(nn.Module):
         return x + pe.unsqueeze(0)
 
 # =============================================
-# TRANSFORMER SPATIAL INTERPOLATOR WITH ROTATION LOGIC
+# TRANSFORMER SPATIAL INTERPOLATOR WITH ENHANCED SPATIAL LOCALITY
 # =============================================
 class TransformerSpatialInterpolator:
-    """Transformer-inspired stress interpolator with enhanced spatial locality and tensor rotation"""
-    def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.2, temperature=1.0, locality_weight_factor=0.7, special_angle=None):
+    """Transformer-inspired stress interpolator with spatial locality regularization and adjustable weight factor"""
+    def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=0.1, temperature=1.0, locality_weight_factor=0.35):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
         self.spatial_sigma = spatial_sigma
         self.temperature = temperature
-        self.locality_weight_factor = locality_weight_factor
-        self.special_angle = special_angle # Optional: Default None means no specific physics bias
-        
-        # Initialize Tensor Rotator
-        self.rotator = TensorFieldRotator()
+        self.locality_weight_factor = locality_weight_factor  # Lower default to emphasize spatial proximity
         
         # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -337,21 +266,18 @@ class TransformerSpatialInterpolator:
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         # Input projection - FIXED: Now expects exactly 15 input features
-        # Even if special angle is not used, we pad to 15 to keep model architecture stable
         self.input_proj = nn.Linear(15, d_model)
         
         # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
     
-    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None, special_angle=None):
+    def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None):
         """Update spatial parameters dynamically"""
         if spatial_sigma is not None:
             self.spatial_sigma = spatial_sigma
         if locality_weight_factor is not None:
             self.locality_weight_factor = locality_weight_factor
-        if special_angle is not None:
-            self.special_angle = special_angle
-            
+    
     def debug_feature_dimensions(self, params_list, target_angle_deg):
         """Debug method to check feature dimensions"""
         encoded = self.encode_parameters(params_list, target_angle_deg)
@@ -366,275 +292,133 @@ class TransformerSpatialInterpolator:
         return encoded.shape
     
     def compute_positional_weights(self, source_params, target_params):
-        """Compute spatial locality weights with enhanced angular distance weighting"""
+        """ENHANCED: Compute spatial locality weights with STRONG emphasis on angular proximity"""
         weights = []
         
-        # Get target angle in degrees and normalize to [0, 360)
-        target_theta = target_params.get('theta', 0.0)
-        target_theta_deg = np.degrees(target_theta) % 360
-        
-        # Habit plane angle is now dynamic based on configuration
-        habit_plane_angle = self.special_angle
+        # Extract target angle
+        target_theta_rad = target_params.get('theta', 0.0)
+        target_theta_deg = np.degrees(target_theta_rad)
+        target_defect = target_params.get('defect_type', 'Twin')
         
         for src in source_params:
-            # Get source angle in degrees and normalize to [0, 360)
-            src_theta = src.get('theta', 0.0)
-            src_theta_deg = np.degrees(src_theta) % 360
+            # PRIMARY FACTOR: Angular proximity (most important)
+            src_theta_rad = src.get('theta', 0.0)
+            src_theta_deg = np.degrees(src_theta_rad)
             
-            # Calculate angular distance considering cyclic nature
-            raw_diff = abs(src_theta_deg - target_theta_deg)
-            angular_diff = min(raw_diff, 360 - raw_diff)
+            # Calculate angular distance (handling circular nature)
+            angular_diff = abs(src_theta_deg - target_theta_deg)
+            angular_diff = min(angular_diff, 360 - angular_diff)
             
-            # Enhanced angular distance weighting with aggressive prioritization of proximal angles
-            if angular_diff <= 1.0:  # Very very close (within 1 degree)
-                angular_weight = 0.95
-            elif angular_diff <= 2.5:  # Very close (within 2.5 degrees)
-                angular_weight = 0.9
-            elif angular_diff <= 5.0:  # Close (within 5 degrees)
-                angular_weight = 0.8
-            elif angular_diff <= 7.5:  # Moderately close (within 7.5 degrees)
-                angular_weight = 0.7
-            elif angular_diff <= 10.0:  # Somewhat close (within 10 degrees)
-                angular_weight = 0.5
-            elif angular_diff <= 15.0:  # Medium distance
-                angular_weight = 0.3
-            elif angular_diff <= 20.0:  # Somewhat far
-                angular_weight = 0.15
-            elif angular_diff <= 30.0:  # Far
-                angular_weight = 0.08
-            elif angular_diff <= 45.0:  # Very far
-                angular_weight = 0.04
-            else:  # Extremely far
-                angular_weight = 0.01
+            # Strong Gaussian decay for angular difference (sigma = 10°)
+            angular_similarity = np.exp(-0.5 * (angular_diff / 10.0) ** 2)
             
-            # Special handling for habit plane (e.g., 54.7°) proximity
-            # ONLY if a special angle is defined
-            habit_proximity_bonus = 0.0
-            
-            if habit_plane_angle is not None:
-                # Check if either source or target is near habit plane
-                # Distance from source to habit plane
-                src_to_habit = abs(src_theta_deg - habit_plane_angle)
-                src_to_habit = min(src_to_habit, 360 - src_to_habit)
-                
-                # Distance from target to habit plane
-                tgt_to_habit = abs(target_theta_deg - habit_plane_angle)
-                tgt_to_habit = min(tgt_to_habit, 360 - tgt_to_habit)
-                
-                # If both are near habit plane, give extra bonus
-                if src_to_habit <= 10.0 and tgt_to_habit <= 10.0:
-                    habit_proximity_bonus = 0.15 * (1.0 - max(src_to_habit, tgt_to_habit) / 10.0)
-                
-                # Apply habit plane proximity bonus
-                angular_weight = min(1.0, angular_weight + habit_proximity_bonus)
-                
-                # Consider symmetry relationships (some angles may be equivalent)
-                # Check if source and target are symmetric about habit plane
-                if abs((src_theta_deg + target_theta_deg) / 2.0 - habit_plane_angle) <= 5.0:
-                    symmetry_bonus = 0.08
-                    angular_weight = min(1.0, angular_weight + symmetry_bonus)
-            
-            # Other parameter distances (with reduced importance compared to angular distance)
-            param_dist = 0.0
-            key_params = ['eps0', 'kappa', 'defect_type', 'shape']
-            for param in key_params:
-                src_val = src.get(param)
-                tgt_val = target_params.get(param)
-                if src_val is not None and tgt_val is not None:
-                    if param == 'defect_type':
-                        if src_val != tgt_val:
-                            param_dist += 0.1  # Small penalty for different defect types
-                    elif param == 'shape':
-                        if src_val != tgt_val:
-                            param_dist += 0.1  # Small penalty for different shapes
-                    elif param == 'eps0':
-                        eps0_diff = abs(src_val - tgt_val)
-                        param_dist += eps0_diff / 3.0 * 0.1  # Reduced weight
-                    elif param == 'kappa':
-                        kappa_diff = abs(src_val - tgt_val)
-                        param_dist += kappa_diff / 2.0 * 0.1  # Reduced weight
-            
-            # Combine with Gaussian kernel for smooth transitions
-            param_weight = np.exp(-0.5 * (param_dist / self.spatial_sigma) ** 2)
-            
-            # Final combination: Angular weight dominates (85-90%), parameters contribute (10-15%)
-            # Give even more weight to angular proximity for very close angles
-            if angular_diff <= 5.0:
-                # For very close angles, give more weight to angular proximity
-                combined_weight = 0.9 * angular_weight + 0.1 * param_weight
-            elif angular_diff <= 10.0:
-                combined_weight = 0.85 * angular_weight + 0.15 * param_weight
+            # SECONDARY FACTOR: Defect type similarity
+            src_defect = src.get('defect_type', 'Twin')
+            if src_defect == target_defect:
+                defect_similarity = 1.0  # Same defect type
             else:
-                combined_weight = 0.8 * angular_weight + 0.2 * param_weight
+                # Reduced similarity for different defect types but similar ones get higher
+                if (src_defect, target_defect) in [('ISF', 'ESF'), ('ESF', 'ISF')]:
+                    defect_similarity = 0.5  # ISF and ESF are similar
+                elif (src_defect == 'No Defect' or target_defect == 'No Defect'):
+                    defect_similarity = 0.1  # No defect is very different
+                else:
+                    defect_similarity = 0.3  # Different defect types
+            
+            # TERTIARY FACTOR: Eigenstrain similarity
+            src_eps0 = src.get('eps0', 0.707)
+            tgt_eps0 = target_params.get('eps0', 0.707)
+            eps0_similarity = np.exp(-abs(src_eps0 - tgt_eps0) / 0.5)
+            
+            # TERTIARY FACTOR: Kappa similarity
+            src_kappa = src.get('kappa', 0.6)
+            tgt_kappa = target_params.get('kappa', 0.6)
+            kappa_similarity = np.exp(-abs(src_kappa - tgt_kappa) / 0.3)
+            
+            # COMBINE with emphasis on angular proximity
+            # Weight formula: angular (60%), defect type (30%), eps0 (5%), kappa (5%)
+            combined_weight = (
+                0.6 * angular_similarity +
+                0.3 * defect_similarity +
+                0.05 * eps0_similarity +
+                0.05 * kappa_similarity
+            )
+            
+            # Ensure weight is positive
+            combined_weight = max(combined_weight, 0.001)
             
             weights.append(combined_weight)
         
-        return np.array(weights)
+        # Normalize weights
+        weights = np.array(weights)
+        if np.sum(weights) > 0:
+            weights = weights / np.sum(weights)
+        else:
+            weights = np.ones_like(weights) / len(weights)
+        
+        return weights
     
-    def visualize_angular_weighting(self, target_angle_deg=54.7, figsize=(12, 8), special_angle=None):
-        """Visualize the enhanced angular weighting function"""
-        angles = np.linspace(0, 180, 361)
-        weights = []
-        # Use the passed special angle or instance special angle
-        eff_special_angle = special_angle if special_angle is not None else self.special_angle
-        
-        for angle in angles:
-            # Calculate angular distance
-            angular_diff = abs(angle - target_angle_deg)
-            angular_diff = min(angular_diff, 360 - angular_diff)
-            
-            # Apply enhanced weighting function
-            if angular_diff <= 1.0:
-                weight = 0.95
-            elif angular_diff <= 2.5:
-                weight = 0.9
-            elif angular_diff <= 5.0:
-                weight = 0.8
-            elif angular_diff <= 7.5:
-                weight = 0.7
-            elif angular_diff <= 10.0:
-                weight = 0.5
-            elif angular_diff <= 15.0:
-                weight = 0.3
-            elif angular_diff <= 20.0:
-                weight = 0.15
-            elif angular_diff <= 30.0:
-                weight = 0.08
-            elif angular_diff <= 45.0:
-                weight = 0.04
-            else:
-                weight = 0.01
-            
-            weights.append(weight)
-        
-        fig, ax = plt.subplots(figsize=figsize)
-        ax.plot(angles, weights, 'b-', linewidth=3, label='Spatial Weight')
-        ax.axvline(x=target_angle_deg, color='r', linestyle='--', linewidth=2,
-                  label=f'Target: {target_angle_deg}°')
-        
-        # Only plot habit plane if it is defined
-        if eff_special_angle is not None:
-            ax.axvline(x=eff_special_angle, color='g', linestyle='-.', linewidth=2,
-                      label=f'Habit Plane: {eff_special_angle}°')
-        
-        ax.set_xlabel('Angle (degrees)', fontsize=14, fontweight='bold')
-        ax.set_ylabel('Spatial Weight', fontsize=14, fontweight='bold')
-        ax.set_title(f'Enhanced Angular Weighting Function\nTarget Angle: {target_angle_deg}°',
-                    fontsize=16, fontweight='bold')
-        
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=12)
-        ax.set_xlim([0, 180])
-        ax.set_ylim([0, 1.0])
-        
-        # Add annotations for weight regions
-        regions = [
-            (1.0, 0.95, 'Very Very Close (≤1°)'),
-            (2.5, 0.9, 'Very Close (≤2.5°)'),
-            (5.0, 0.8, 'Close (≤5.0°)'),
-            (10.0, 0.5, 'Moderate (≤10.0°)'),
-            (20.0, 0.15, 'Far (≤20.0°)'),
-            (45.0, 0.04, 'Very Far (≤45.0°)')
-        ]
-        
-        for x, y, label in regions:
-            ax.annotate(label, xy=(target_angle_deg + x, y),
-                       xytext=(target_angle_deg + x + 5, y + 0.05),
-                       arrowprops=dict(arrowstyle='->', color='gray'),
-                       fontsize=10, fontweight='bold')
-        
-        plt.tight_layout()
-        return fig
-    
-    def encode_parameters(self, params_list, target_angle_deg, special_angle=None):
-        """Encode parameters into transformer input - FIXED to return exactly 15 features"""
-        # Use passed special angle or instance default
-        eff_special_angle = special_angle if special_angle is not None else self.special_angle
-        
+    def encode_parameters(self, params_list, target_angle_deg):
+        """ENHANCED: Encode parameters with STRONG angular proximity features"""
         encoded = []
         for params in params_list:
-            # Create feature vector
             features = []
             
-            # Numeric features (3 features)
+            # 1. Enhanced angular proximity features (4 features)
+            theta_deg = np.degrees(params.get('theta', 0.0))
+            angle_diff = abs(theta_deg - target_angle_deg)
+            
+            # Multiple resolutions of angular similarity
+            features.append(np.exp(-angle_diff / 10.0))   # Fine resolution
+            features.append(np.exp(-angle_diff / 30.0))   # Medium resolution
+            features.append(np.sin(np.radians(angle_diff / 2.0)))  # Angular sine
+            features.append(np.cos(np.radians(angle_diff / 2.0)))  # Angular cosine
+            
+            # 2. Habit plane proximity features (2 features)
+            habit_distance = abs(theta_deg - 54.7)
+            features.append(np.exp(-habit_distance / 8.0))  # Tight decay near habit plane
+            features.append(1.0 if habit_distance < 5.0 else 0.0)  # Binary near habit
+            
+            # 3. Original numeric parameters (3 features)
             features.append(params.get('eps0', 0.707) / 3.0)
             features.append(params.get('kappa', 0.6) / 2.0)
-            theta = params.get('theta', 0.0)
-            features.append(theta / np.pi)
+            features.append(theta_deg / 180.0)  # Normalized angle
             
-            # One-hot encoding for defect type (4 features)
+            # 4. One-hot encoding for defect type (4 features)
             defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
             defect = params.get('defect_type', 'Twin')
             for dt in defect_types:
                 features.append(1.0 if dt == defect else 0.0)
             
-            # Shape encoding (4 features)
-            shapes = ['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle']
+            # 5. Shape encoding (2 features instead of 4 to keep total at 15)
+            # Keep only the most important shapes
             shape = params.get('shape', 'Square')
-            for s in shapes:
-                features.append(1.0 if s == shape else 0.0)
-            
-            # Orientation features (3 features)
-            theta_deg = np.degrees(theta) if theta is not None else 0.0
-            angle_diff = abs(theta_deg - target_angle_deg)
-            angle_diff = min(angle_diff, 360 - angle_diff)  # Handle cyclic nature
-            features.append(np.exp(-angle_diff / 45.0))
-            features.append(np.sin(np.radians(2 * theta_deg)))
-            features.append(np.cos(np.radians(2 * theta_deg)))  # FIX: Added this feature
-            
-            # Habit plane proximity (1 feature) - NOW OPTIONAL
-            if eff_special_angle is not None:
-                habit_distance = abs(theta_deg - eff_special_angle)
-                habit_distance = min(habit_distance, 360 - habit_distance)  # Handle cyclic nature
-                features.append(np.exp(-habit_distance / 15.0))
-            else:
-                features.append(0.0) # Pad with zero to keep 15 dimensions
+            features.append(1.0 if shape == 'Square' else 0.0)
+            features.append(1.0 if shape in ['Horizontal Fault', 'Vertical Fault'] else 0.0)
             
             # Verify we have exactly 15 features
             if len(features) != 15:
-                st.warning(f"Warning: Expected 15 features, got {len(features)}. Padding or truncating.")
-            
-            # Pad with zeros if fewer than 15 (safety)
-            while len(features) < 15:
-                features.append(0.0)
-            
-            # Truncate if more than 15 (safety)
-            features = features[:15]
+                # Pad with zeros if fewer than 15
+                while len(features) < 15:
+                    features.append(0.0)
+                # Truncate if more than 15
+                features = features[:15]
             
             encoded.append(features)
         
         return torch.FloatTensor(encoded)
     
-    def interpolate_spatial_fields(self, sources, target_angle_deg, target_params, special_angle=None, enable_physics_rotation=False):
-        """
-        Interpolate full spatial stress fields using transformer attention with enhanced spatial locality.
-        
-        NEW LOGIC ADDED:
-        - Angular weights control orientation: Source tensors are rotated to match target angle.
-        - Defect type controls magnitude: Stress intensity is scaled based on defect type factors.
-        - FIX: Returns 'processed_fields' (rotated/scaled) AND 'raw_source_fields' (original) 
-               so the dashboard compares the true source orientation to the rotated result.
-        """
+    def interpolate_spatial_fields(self, sources, target_angle_deg, target_params):
+        """Interpolate full spatial stress fields using transformer attention with enhanced spatial locality"""
         if not sources:
             st.warning("No sources provided for interpolation.")
             return None
         
-        # Update instance special angle for this run
-        if special_angle is not None:
-            self.special_angle = special_angle
-        
         try:
             # Extract source parameters and fields
             source_params = []
-            source_fields = [] # Stores modified (rotated/scaled) fields
-            raw_source_fields = [] # Stores ORIGINAL fields for visualization (The Fix)
+            source_fields = []
             source_indices = []  # Track original indices
-            
-            # Target parameters needed for rotation/magnitude scaling
-            target_theta_rad = target_params.get('theta', 0.0)
-            target_theta_deg = np.degrees(target_theta_rad) % 360
-            target_defect_type = target_params.get('defect_type', 'Twin')
-            target_mag = DEFECT_MAGNITUDE_FACTORS.get(target_defect_type, 1.0)
             
             for i, src in enumerate(sources):
                 if 'params' not in src or 'history' not in src:
@@ -650,85 +434,13 @@ class TransformerSpatialInterpolator:
                     last_frame = history[-1]
                     if 'stresses' in last_frame:
                         # Extract all stress components
-                        # Use copy() to create a shallow copy of the dictionary
-                        stress_fields = last_frame['stresses'].copy()
+                        stress_fields = last_frame['stresses']
                         
-                        # ==============================================
-                        # NEW: PRESERVE ORIGINAL DATA (The Fix)
-                        # ==============================================
-                        # We save a copy BEFORE any modification
-                        raw_source_fields.append(stress_fields.copy())
-                        
-                        # ==============================================
-                        # END NEW LOGIC
-                        # ==============================================
-                        
-                        # ==============================================
-                        # NEW: PHYSICAL ROTATION & MAGNITUDE SCALING
-                        # ==============================================
-                        if enable_physics_rotation:
-                            src_theta_rad = src['params'].get('theta', 0.0)
-                            src_defect_type = src['params'].get('defect_type', 'Twin')
-                            src_mag = DEFECT_MAGNITUDE_FACTORS.get(src_defect_type, 1.0)
-                            
-                            # Calculate rotation needed to align source to target
-                            # Delta angle is: difference between target and source
-                            delta_angle = target_theta_rad - src_theta_rad
-                            
-                            # Check if tensor components exist
-                            has_tensor = all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'tau_xy'])
-                            
-                            if has_tensor:
-                                # 1. Normalize Source (Isolate Geometry)
-                                sxx = stress_fields['sigma_xx']
-                                syy = stress_fields['sigma_yy']
-                                sxy = stress_fields['tau_xy']
-                                
-                                norm_factor = 1.0 / src_mag
-                                sxx_norm = sxx * norm_factor
-                                syy_norm = syy * norm_factor
-                                sxy_norm = sxy * norm_factor
-                                
-                                # 2. Rotate Tensor (Apply Orientation Control)
-                                sxx_rot, syy_rot, sxy_rot = self.rotator.rotate_tensor_field(
-                                    sxx_norm, syy_norm, sxy_norm, delta_angle
-                                )
-                                
-                                # 3. Scale to Target Magnitude (Apply Defect Type Control)
-                                sxx_final = sxx_rot * target_mag
-                                syy_final = syy_rot * target_mag
-                                sxy_final = sxy_rot * target_mag
-                                
-                                # Update stress_fields dictionary with physically transformed values
-                                stress_fields['sigma_xx'] = sxx_final
-                                stress_fields['sigma_yy'] = syy_final
-                                stress_fields['tau_xy'] = sxy_final
-                                
-                                # Re-compute Von Mises from the rotated tensor components
-                                # This ensures the scalar map reflects the physics of rotation
-                                vm = self.rotator.compute_von_mises(sxx_final, syy_final, sxy_final)
-                                stress_fields['von_mises'] = vm
-                                
-                                # Recompute Hydrostatic
-                                hydro = self.rotator.compute_hydrostatic(sxx_final, syy_final)
-                                stress_fields['sigma_hydro'] = hydro
-                                
-                                # Update magnitude
-                                stress_fields['sigma_mag'] = np.sqrt(vm**2 + hydro**2)
-                            else:
-                                # If tensor components are missing, we can't rotate physically.
-                                # We warn the user.
-                                if i == 0: # Warn only once
-                                    st.warning("Tensor components (sigma_xx/yy/xy) missing in data. Rotation logic skipped.")
-                        
-                        # ==============================================
-                        # END NEW LOGIC
-                        # ==============================================
-                        
-                        # Get von Mises if available (or computed from new tensor logic above)
+                        # Get von Mises if available, otherwise compute
                         if 'von_mises' in stress_fields:
                             vm = stress_fields['von_mises']
                         else:
+                            # Compute von Mises from components
                             vm = self.compute_von_mises(stress_fields)
                         
                         # Get hydrostatic stress
@@ -743,7 +455,6 @@ class TransformerSpatialInterpolator:
                         else:
                             mag = np.sqrt(vm**2 + hydro**2)
                         
-                        # Append the PROCESSED (rotated/scaled) field to the main list
                         source_fields.append({
                             'von_mises': vm,
                             'sigma_hydro': hydro,
@@ -762,59 +473,35 @@ class TransformerSpatialInterpolator:
                 st.error("No valid sources with stress fields found.")
                 return None
             
-            # ROBUSTNESS CHECK: Check for sparse sources near target
-            close_sources_count = 0
-            
-            for sp in source_params:
-                src_theta = np.degrees(sp.get('theta', 0.0)) % 360
-                diff = abs(src_theta - target_theta_deg)
-                diff = min(diff, 360 - diff)
-                if diff < 10.0:
-                    close_sources_count += 1
-            
-            if close_sources_count < 2:
-                st.warning(f"⚠️ Low Source Density: Only {close_sources_count} sources found within 10° of target {target_theta_deg:.1f}°. Interpolation accuracy may be reduced.")
-            
             # Check if all fields have same shape
             shapes = [f['von_mises'].shape for f in source_fields]
             if len(set(shapes)) > 1:
                 # Resize to common shape
                 target_shape = shapes[0]  # Use first shape
                 resized_fields = []
-                # Resize raw fields too for consistency
-                resized_raw_fields = []
-                
-                for fields, raw_fields in zip(source_fields, raw_source_fields):
+                for fields in source_fields:
                     resized = {}
-                    resized_raw = {}
                     for key, field in fields.items():
                         if key in ['von_mises', 'sigma_hydro', 'sigma_mag'] and field.shape != target_shape:
                             # Resize using interpolation
                             factors = [t/s for t, s in zip(target_shape, field.shape)]
                             resized[key] = zoom(field, factors, order=1)
-                            # Resize raw too
-                            resized_raw[key] = zoom(raw_fields[key], factors, order=1)
                         elif key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                             resized[key] = field
-                            resized_raw[key] = raw_fields[key]
                         else:
                             resized[key] = field
-                            resized_raw[key] = raw_fields[key]
                     resized_fields.append(resized)
-                    resized_raw_fields.append(resized_raw)
-                
                 source_fields = resized_fields
-                raw_source_fields = resized_raw_fields
             
             # Debug: Check feature dimensions
-            source_features = self.encode_parameters(source_params, target_angle_deg, special_angle=self.special_angle)
-            target_features = self.encode_parameters([target_params], target_angle_deg, special_angle=self.special_angle)
+            source_features = self.encode_parameters(source_params, target_angle_deg)
+            target_features = self.encode_parameters([target_params], target_angle_deg)
             
             # Ensure we have exactly 15 features
             if source_features.shape[1] != 15 or target_features.shape[1] != 15:
                 st.warning(f"Feature dimension mismatch: source_features shape={source_features.shape}, target_features shape={target_features.shape}")
             
-            # Force reshape to 15 features (safety)
+            # Force reshape to 15 features
             if source_features.shape[1] < 15:
                 padding = torch.zeros(source_features.shape[0], 15 - source_features.shape[1])
                 source_features = torch.cat([source_features, padding], dim=1)
@@ -822,14 +509,8 @@ class TransformerSpatialInterpolator:
                 padding = torch.zeros(target_features.shape[0], 15 - target_features.shape[1])
                 target_features = torch.cat([target_features, padding], dim=1)
             
-            # Compute enhanced positional weights with aggressive angular distance weighting
+            # Compute positional weights with enhanced angular emphasis
             pos_weights = self.compute_positional_weights(source_params, target_params)
-            
-            # Normalize positional weights
-            if np.sum(pos_weights) > 0:
-                pos_weights = pos_weights / np.sum(pos_weights)
-            else:
-                pos_weights = np.ones_like(pos_weights) / len(pos_weights)
             
             # Prepare transformer input
             batch_size = 1
@@ -860,11 +541,10 @@ class TransformerSpatialInterpolator:
             # Apply softmax to get attention weights
             transformer_weights = torch.softmax(attn_scores, dim=-1).squeeze().detach().numpy()
             
-            # Apply locality weight factor to balance spatial and transformer weights
-            # locality_weight_factor = 0.7 means 70% transformer weights, 30% spatial weights
-            # This can be adjusted to give more emphasis to spatial locality
+            # Apply locality weight factor (0.35 = 35% transformer, 65% spatial)
+            # This ensures angular proximity dominates
             combined_weights = (
-                self.locality_weight_factor * transformer_weights +
+                self.locality_weight_factor * transformer_weights + 
                 (1 - self.locality_weight_factor) * pos_weights
             )
             
@@ -876,7 +556,7 @@ class TransformerSpatialInterpolator:
             entropy_spatial = self._calculate_entropy(pos_weights)
             entropy_combined = self._calculate_entropy(combined_weights)
             
-            # Interpolate spatial fields using PROCESSED fields
+            # Interpolate spatial fields
             interpolated_fields = {}
             shape = source_fields[0]['von_mises'].shape
             
@@ -894,20 +574,37 @@ class TransformerSpatialInterpolator:
             # Extract source theta values for visualization
             source_theta_degrees = []
             source_distances = []  # Store distances to target
+            source_defect_types = []  # Store defect types
+            
+            target_theta_rad = target_params.get('theta', 0.0)
+            target_theta_deg = np.degrees(target_theta_rad)
+            target_defect = target_params.get('defect_type', 'Twin')
             
             for src in source_params:
                 theta_rad = src.get('theta', 0.0)
-                theta_deg = np.degrees(theta_rad) % 360  # Normalize to [0, 360)
+                theta_deg = np.degrees(theta_rad)
                 source_theta_degrees.append(theta_deg)
                 
-                # Calculate angular distance (considering cyclic nature)
+                # Calculate angular distance
                 angular_dist = abs(theta_deg - target_theta_deg)
                 angular_dist = min(angular_dist, 360 - angular_dist)  # Handle circular nature
                 source_distances.append(angular_dist)
+                
+                # Get defect type
+                defect = src.get('defect_type', 'Twin')
+                source_defect_types.append(defect)
+            
+            # Sort sources by angular distance for analysis
+            sorted_indices = np.argsort(source_distances)
+            
+            # Calculate weight statistics by angular distance
+            angular_weight_correlation = np.corrcoef(source_distances, combined_weights)[0, 1]
+            
+            # Find top 3 contributors
+            top_contributors = np.argsort(combined_weights)[-3:][::-1]
             
             return {
-                'fields': interpolated_fields, # The final result
-                'raw_source_fields': raw_source_fields, # THE FIX: Original unrotated sources
+                'fields': interpolated_fields,
                 'weights': {
                     'transformer': transformer_weights.tolist(),
                     'positional': pos_weights.tolist(),
@@ -944,12 +641,21 @@ class TransformerSpatialInterpolator:
                 'num_sources': len(source_fields),
                 'source_theta_degrees': source_theta_degrees,
                 'source_distances': source_distances,
+                'source_defect_types': source_defect_types,
                 'source_indices': source_indices,
-                'source_fields': source_fields,
-                'special_angle_used': self.special_angle,
-                'physics_rotation_enabled': enable_physics_rotation
+                'source_fields': source_fields,  # Store source fields for comparison
+                'analysis': {
+                    'angular_weight_correlation': angular_weight_correlation,
+                    'top_contributors': top_contributors.tolist(),
+                    'nearest_source_idx': sorted_indices[0] if len(sorted_indices) > 0 else -1,
+                    'nearest_source_distance': source_distances[sorted_indices[0]] if len(sorted_indices) > 0 else -1,
+                    'weight_distribution_by_distance': {
+                        'avg_weight_near': np.mean([combined_weights[i] for i in sorted_indices[:3]]),
+                        'avg_weight_far': np.mean([combined_weights[i] for i in sorted_indices[-3:]])
+                    }
+                }
             }
-        
+            
         except Exception as e:
             st.error(f"Error during interpolation: {str(e)}")
             import traceback
@@ -967,8 +673,9 @@ class TransformerSpatialInterpolator:
             tzx = stress_fields.get('tau_zx', np.zeros_like(sxx))
             
             von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
-                                    6*(txy**2 + tyz**2 + tzx**2)))
+                                     6*(txy**2 + tyz**2 + tzx**2)))
             return von_mises
+        
         return np.zeros((100, 100))  # Default shape
     
     def compute_hydrostatic(self, stress_fields):
@@ -978,16 +685,15 @@ class TransformerSpatialInterpolator:
             syy = stress_fields['sigma_yy']
             szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
             return (sxx + syy + szz) / 3
+        
         return np.zeros((100, 100))  # Default shape
     
     def _calculate_entropy(self, weights):
         """Calculate entropy of weight distribution"""
         weights = np.array(weights)
         weights = weights[weights > 0]  # Remove zeros
-        
         if len(weights) == 0:
             return 0.0
-        
         weights = weights / weights.sum()
         return -np.sum(weights * np.log(weights + 1e-10))  # Add small epsilon to avoid log(0)
 
@@ -996,7 +702,6 @@ class TransformerSpatialInterpolator:
 # =============================================
 class HeatMapVisualizer:
     """Enhanced heat map visualizer with comparison dashboard and publication styling"""
-    
     def __init__(self):
         self.colormaps = COLORMAP_OPTIONS
     
@@ -1006,7 +711,6 @@ class HeatMapVisualizer:
                             show_stats=True, target_angle=None, defect_type=None,
                             show_colorbar=True, aspect_ratio='equal'):
         """Create enhanced heat map with chosen colormap and publication styling"""
-        
         # Create figure
         fig, ax = plt.subplots(figsize=figsize)
         
@@ -1036,7 +740,6 @@ class HeatMapVisualizer:
         title_str = title
         if target_angle is not None and defect_type is not None:
             title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
-        
         ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
         ax.set_xlabel('X Position', fontsize=16, fontweight='bold')
         ax.set_ylabel('Y Position', fontsize=16, fontweight='bold')
@@ -1056,7 +759,6 @@ class HeatMapVisualizer:
         
         # Set tick parameters
         ax.tick_params(axis='both', which='major', labelsize=14)
-        
         plt.tight_layout()
         return fig
     
@@ -1144,9 +846,7 @@ class HeatMapVisualizer:
                 scaleanchor="x",
                 scaleratio=1,
             )
-            
             return fig
-        
         except Exception as e:
             st.error(f"Error creating interactive heatmap: {e}")
             # Return a simple figure as fallback
@@ -1154,10 +854,10 @@ class HeatMapVisualizer:
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
     
-    def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info,
+    def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info, 
                                    target_angle, defect_type, component='von_mises',
                                    cmap_name='viridis', figsize=(20, 15),
-                                   ground_truth_index=None, special_angle=None):
+                                   ground_truth_index=None):
         """
         Create comprehensive comparison dashboard showing:
         1. Interpolated result
@@ -1166,25 +866,23 @@ class HeatMapVisualizer:
         4. Weight distribution analysis
         5. Angular distribution of sources
         """
-        
         fig = plt.figure(figsize=figsize)
         gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
         
         # Determine vmin and vmax for consistent scaling
         all_values = [interpolated_fields[component]]
-        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
-            gt_field = source_fields[ground_truth_index].get(component)
-            if gt_field is not None:
-                all_values.append(gt_field)
-        vmin = min(np.nanmin(field) for field in all_values)
-        vmax = max(np.nanmax(field) for field in all_values)
+        if ground_truth_index is not None and ground_truth_index < len(source_fields):
+            all_values.append(source_fields[ground_truth_index]['fields'][component])
+        
+        vmin = min(np.min(field) for field in all_values)
+        vmax = max(np.max(field) for field in all_values)
         
         # 1. Interpolated result (top left)
         ax1 = fig.add_subplot(gs[0, 0])
-        im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name,
+        im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name, 
                         vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
         plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}',
+        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}', 
                      fontsize=16, fontweight='bold')
         ax1.set_xlabel('X Position')
         ax1.set_ylabel('Y Position')
@@ -1192,62 +890,55 @@ class HeatMapVisualizer:
         
         # 2. Ground truth comparison (top center)
         ax2 = fig.add_subplot(gs[0, 1])
-        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
-            gt_field = source_fields[ground_truth_index].get(component)
-            if gt_field is not None:
-                gt_theta = source_info['theta_degrees'][ground_truth_index]
-                gt_distance = source_info['distances'][ground_truth_index]
-                im2 = ax2.imshow(gt_field, cmap=cmap_name,
-                                vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
-                plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-                ax2.set_title(f'Ground Truth\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°)',
-                             fontsize=16, fontweight='bold')
-                ax2.set_xlabel('X Position')
-                ax2.set_ylabel('Y Position')
-                ax2.grid(True, alpha=0.2)
-            else:
-                ax2.text(0.5, 0.5, f'Component "{component}"\nmissing in ground truth',
-                        ha='center', va='center', fontsize=14, fontweight='bold')
-                ax2.set_axis_off()
+        if ground_truth_index is not None and ground_truth_index < len(source_fields):
+            gt_field = source_fields[ground_truth_index]['fields'][component]
+            gt_theta = source_info['theta_degrees'][ground_truth_index]
+            gt_distance = source_info['distances'][ground_truth_index]
+            gt_defect = source_info.get('defect_types', ['Unknown'])[ground_truth_index]
+            
+            im2 = ax2.imshow(gt_field, cmap=cmap_name, 
+                            vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
+            plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
+            ax2.set_title(f'Ground Truth\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°)\n{gt_defect}', 
+                         fontsize=16, fontweight='bold')
+            ax2.set_xlabel('X Position')
+            ax2.set_ylabel('Y Position')
+            ax2.grid(True, alpha=0.2)
         else:
-            ax2.text(0.5, 0.5, 'Select Ground Truth Source',
+            ax2.text(0.5, 0.5, 'Select Ground Truth Source', 
                     ha='center', va='center', fontsize=14, fontweight='bold')
             ax2.set_title('Ground Truth Selection', fontsize=16, fontweight='bold')
             ax2.set_axis_off()
         
         # 3. Difference plot (top right)
         ax3 = fig.add_subplot(gs[0, 2])
-        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
-            gt_field = source_fields[ground_truth_index].get(component)
-            if gt_field is not None:
-                diff_field = interpolated_fields[component] - gt_field
-                max_diff = np.max(np.abs(diff_field))
-                im3 = ax3.imshow(diff_field, cmap='RdBu_r',
-                                vmin=-max_diff, vmax=max_diff, aspect='equal',
-                                interpolation='bilinear', origin='lower')
-                plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04, label='Difference (GPa)')
-                ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa',
-                             fontsize=16, fontweight='bold')
-                ax3.set_xlabel('X Position')
-                ax3.set_ylabel('Y Position')
-                ax3.grid(True, alpha=0.2)
-                
-                # Calculate and display error metrics
-                mse = np.mean(diff_field**2)
-                mae = np.mean(np.abs(diff_field))
-                rmse = np.sqrt(mse)
-                error_text = (f"MSE: {mse:.4f}\n"
-                             f"MAE: {mae:.4f}\n"
-                             f"RMSE: {rmse:.4f}")
-                ax3.text(0.05, 0.95, error_text, transform=ax3.transAxes,
-                        fontsize=12, fontweight='bold', verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
-            else:
-                ax3.text(0.5, 0.5, 'Ground truth missing\nfor difference plot',
-                        ha='center', va='center', fontsize=14, fontweight='bold')
-                ax3.set_axis_off()
+        if ground_truth_index is not None and ground_truth_index < len(source_fields):
+            diff_field = interpolated_fields[component] - source_fields[ground_truth_index]['fields'][component]
+            max_diff = np.max(np.abs(diff_field))
+            
+            im3 = ax3.imshow(diff_field, cmap='RdBu_r', 
+                            vmin=-max_diff, vmax=max_diff, aspect='equal', 
+                            interpolation='bilinear', origin='lower')
+            plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04, label='Difference (GPa)')
+            ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa', 
+                         fontsize=16, fontweight='bold')
+            ax3.set_xlabel('X Position')
+            ax3.set_ylabel('Y Position')
+            ax3.grid(True, alpha=0.2)
+            
+            # Calculate and display error metrics
+            mse = np.mean(diff_field**2)
+            mae = np.mean(np.abs(diff_field))
+            rmse = np.sqrt(mse)
+            
+            error_text = (f"MSE: {mse:.4f}\n"
+                         f"MAE: {mae:.4f}\n"
+                         f"RMSE: {rmse:.4f}")
+            ax3.text(0.05, 0.95, error_text, transform=ax3.transAxes,
+                    fontsize=12, fontweight='bold', verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
         else:
-            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected',
+            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected', 
                     ha='center', va='center', fontsize=14, fontweight='bold')
             ax3.set_title('Difference Analysis', fontsize=16, fontweight='bold')
             ax3.set_axis_off()
@@ -1257,6 +948,7 @@ class HeatMapVisualizer:
         if 'weights' in source_info:
             weights = source_info['weights']['combined']
             x = range(len(weights))
+            
             bars = ax4.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
             ax4.set_xlabel('Source Index')
             ax4.set_ylabel('Weight')
@@ -1267,14 +959,17 @@ class HeatMapVisualizer:
             for i, bar in enumerate(bars):
                 if i < len(source_info['theta_degrees']):
                     theta = source_info['theta_degrees'][i]
+                    distance = source_info['distances'][i]
+                    defect = source_info.get('defect_types', ['Unknown'])[i]
                     height = bar.get_height()
                     if height > 0.01:  # Only label significant bars
                         ax4.text(bar.get_x() + bar.get_width()/2., height + 0.005,
-                                f'θ={theta:.0f}°', ha='center', va='bottom',
-                                fontsize=8, rotation=90)
+                                f'θ={theta:.0f}°\nΔ={distance:.0f}°\n{defect}', 
+                                ha='center', va='bottom',
+                                fontsize=6, rotation=45)
             
             # Highlight the selected ground truth if applicable
-            if ground_truth_index is not None and 0 <= ground_truth_index < len(weights):
+            if ground_truth_index is not None and ground_truth_index < len(weights):
                 bars[ground_truth_index].set_color('red')
                 bars[ground_truth_index].set_alpha(0.9)
         
@@ -1288,21 +983,36 @@ class HeatMapVisualizer:
             # Plot sources as points with size proportional to weight
             if 'weights' in source_info:
                 weights = source_info['weights']['combined']
-                sizes = 100 * np.array(weights) / (np.max(weights) + 1e-8)  # Normalize sizes
+                sizes = 100 * np.array(weights) / np.max(weights)  # Normalize sizes
             else:
                 sizes = 50 * np.ones(len(angles_rad))
             
-            scatter = ax5.scatter(angles_rad, distances,
-                                s=sizes, alpha=0.7, c='blue', edgecolors='black')
+            # Color by defect type
+            colors = []
+            if 'defect_types' in source_info:
+                for defect in source_info['defect_types']:
+                    if defect == 'Twin':
+                        colors.append('red')
+                    elif defect == 'ISF':
+                        colors.append('blue')
+                    elif defect == 'ESF':
+                        colors.append('green')
+                    else:
+                        colors.append('gray')
+            else:
+                colors = 'blue'
+            
+            scatter = ax5.scatter(angles_rad, distances, 
+                                 s=sizes, alpha=0.7, c=colors, edgecolors='black')
             
             # Plot target angle
             target_rad = np.radians(target_angle)
-            ax5.scatter(target_rad, 0, s=200, c='red', marker='*', edgecolors='black', label='Target')
+            ax5.scatter(target_rad, 0, s=200, c='yellow', marker='*', edgecolors='black', 
+                       linewidth=2, label='Target')
             
-            # Plot habit plane (special_angle) ONLY if defined
-            if special_angle is not None:
-                habit_rad = np.radians(special_angle)
-                ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label=f'Special Angle ({special_angle}°)')
+            # Plot habit plane (54.7°)
+            habit_rad = np.radians(54.7)
+            ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label='Habit Plane (54.7°)')
             
             ax5.set_title('Angular Distribution of Sources', fontsize=16, fontweight='bold', pad=20)
             ax5.set_theta_zero_location('N')  # 0° at top
@@ -1353,44 +1063,45 @@ class HeatMapVisualizer:
         
         # 7. Local spatial correlation analysis (bottom row)
         ax7 = fig.add_subplot(gs[2, :])
-        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
-            gt_field = source_fields[ground_truth_index].get(component)
-            if gt_field is not None:
-                interp_flat = interpolated_fields[component].flatten()
-                gt_flat = gt_field.flatten()
-                
-                # Create scatter plot
-                ax7.scatter(gt_flat, interp_flat, alpha=0.5, s=10)
-                
-                # Add correlation line
-                min_val = min(np.min(gt_flat), np.min(interp_flat))
-                max_val = max(np.max(gt_flat), np.max(interp_flat))
-                ax7.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Correlation')
-                
-                # Calculate correlation coefficient
-                from scipy.stats import pearsonr
-                corr_coef, _ = pearsonr(gt_flat, interp_flat)
-                
-                ax7.set_xlabel(f'Ground Truth {component.replace("_", " ").title()} (GPa)')
-                ax7.set_ylabel(f'Interpolated {component.replace("_", " ").title()} (GPa)')
-                ax7.set_title(f'Spatial Correlation Analysis\nPearson Correlation: {corr_coef:.3f}',
-                             fontsize=16, fontweight='bold')
-                ax7.grid(True, alpha=0.3)
-                ax7.legend()
-                
-                # Add statistics text box
-                mse = np.mean((interp_flat - gt_flat)**2)
-                mae = np.mean(np.abs(interp_flat - gt_flat))
-                stats_text = (f'Correlation: {corr_coef:.3f}\n'
-                             f'MSE: {mse:.4f}\n'
-                             f'MAE: {mae:.4f}')
-                ax7.text(0.05, 0.95, stats_text, transform=ax7.transAxes,
-                        fontsize=12, fontweight='bold', verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        if ground_truth_index is not None and ground_truth_index < len(source_fields):
+            # Calculate spatial correlation between interpolated and ground truth
+            interp_flat = interpolated_fields[component].flatten()
+            gt_flat = source_fields[ground_truth_index]['fields'][component].flatten()
+            
+            # Create scatter plot
+            ax7.scatter(gt_flat, interp_flat, alpha=0.5, s=10)
+            
+            # Add correlation line
+            min_val = min(np.min(gt_flat), np.min(interp_flat))
+            max_val = max(np.max(gt_flat), np.max(interp_flat))
+            ax7.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Correlation')
+            
+            # Calculate correlation coefficient
+            from scipy.stats import pearsonr
+            corr_coef, _ = pearsonr(gt_flat, interp_flat)
+            
+            ax7.set_xlabel(f'Ground Truth {component.replace("_", " ").title()} (GPa)')
+            ax7.set_ylabel(f'Interpolated {component.replace("_", " ").title()} (GPa)')
+            ax7.set_title(f'Spatial Correlation Analysis\nPearson Correlation: {corr_coef:.3f}', 
+                         fontsize=16, fontweight='bold')
+            ax7.grid(True, alpha=0.3)
+            ax7.legend()
+            
+            # Add statistics text box
+            mse = np.mean((interp_flat - gt_flat)**2)
+            mae = np.mean(np.abs(interp_flat - gt_flat))
+            stats_text = (f'Correlation: {corr_coef:.3f}\n'
+                         f'MSE: {mse:.4f}\n'
+                         f'MAE: {mae:.4f}')
+            ax7.text(0.05, 0.95, stats_text, transform=ax7.transAxes,
+                    fontsize=12, fontweight='bold', verticalalignment='top',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         
         plt.suptitle(f'Comprehensive Stress Field Analysis - Target θ={target_angle:.1f}°, {defect_type}',
                     fontsize=24, fontweight='bold', y=0.98)
         plt.tight_layout()
+        
         return fig
     
     def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
@@ -1474,9 +1185,7 @@ class HeatMapVisualizer:
                 paper_bgcolor='white',
                 margin=dict(l=0, r=0, t=100, b=0)
             )
-            
             return fig
-        
         except Exception as e:
             st.error(f"Error creating 3D surface: {e}")
             fig = go.Figure()
@@ -1484,7 +1193,7 @@ class HeatMapVisualizer:
             return fig
     
     def create_angular_orientation_plot(self, target_angle_deg, defect_type="Unknown",
-                                       figsize=(8, 8), special_angle=None):
+                                       figsize=(8, 8), show_habit_plane=True):
         """Create polar plot showing angular orientation"""
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection='polar')
@@ -1493,21 +1202,21 @@ class HeatMapVisualizer:
         theta_rad = np.radians(target_angle_deg)
         
         # Plot the defect orientation as a red arrow
-        ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02,
+        ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, 
                 color='red', alpha=0.8, label=f'Defect Orientation: {target_angle_deg:.1f}°')
         
-        # Plot special angle (habit plane) if provided
-        if special_angle is not None:
-            habit_plane_rad = np.radians(special_angle)
-            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02,
-                    color='blue', alpha=0.5, label=f'Special Angle: {special_angle}°')
+        # Plot habit plane orientation (54.7°) if requested
+        if show_habit_plane:
+            habit_plane_rad = np.radians(54.7)
+            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, 
+                    color='blue', alpha=0.5, label='Habit Plane (54.7°)')
         
         # Plot cardinal directions
         for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
             ax.axvline(np.radians(angle), color='gray', linestyle='--', alpha=0.3)
         
         # Customize plot
-        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}',
+        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}', 
                     fontsize=20, fontweight='bold', pad=20)
         ax.set_theta_zero_location('N')  # 0° at top
         ax.set_theta_direction(-1)  # Clockwise
@@ -1515,11 +1224,10 @@ class HeatMapVisualizer:
         ax.grid(True, alpha=0.3)
         ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
         
-        # Add annotation for angular difference from special angle if applicable
-        if special_angle is not None:
-            angular_diff = abs(target_angle_deg - special_angle)
-            angular_diff = min(angular_diff, 360 - angular_diff)  # Handle cyclic nature
-            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom {special_angle}°',
+        # Add annotation for angular difference from habit plane
+        if show_habit_plane:
+            angular_diff = abs(target_angle_deg - 54.7)
+            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom habit plane',
                        xy=(theta_rad, 1.2), xytext=(theta_rad, 1.4),
                        arrowprops=dict(arrowstyle='->', color='green', alpha=0.7),
                        fontsize=12, fontweight='bold',
@@ -1530,7 +1238,7 @@ class HeatMapVisualizer:
         return fig
     
     def create_comparison_heatmaps(self, stress_fields_dict, cmap_name='viridis',
-                                 figsize=(18, 6), titles=None, target_angle=None, defect_type=None):
+                                  figsize=(18, 6), titles=None, target_angle=None, defect_type=None):
         """Create comparison heatmaps for multiple stress components"""
         n_components = len(stress_fields_dict)
         fig, axes = plt.subplots(1, n_components, figsize=figsize)
@@ -1573,8 +1281,8 @@ class HeatMapVisualizer:
         suptitle = "Stress Component Comparison"
         if target_angle is not None and defect_type is not None:
             suptitle = f"Stress Component Comparison - θ = {target_angle:.1f}°, {defect_type}"
-        plt.suptitle(suptitle, fontsize=22, fontweight='bold', y=1.02)
         
+        plt.suptitle(suptitle, fontsize=22, fontweight='bold', y=1.02)
         plt.tight_layout()
         return fig
     
@@ -1625,7 +1333,6 @@ class HeatMapVisualizer:
         
         # Adjust view angle
         ax.view_init(elev=30, azim=45)
-        
         plt.tight_layout()
         return fig
     
@@ -1650,12 +1357,11 @@ class HeatMapVisualizer:
         ax.set_xticks([0, 128, 255])
         ax.set_xticklabels(['0.0', '0.5', '1.0'], fontsize=12)
         ax.xaxis.set_ticks_position('bottom')
-        
         plt.tight_layout()
         return fig
     
     def create_comprehensive_dashboard(self, stress_fields, theta, defect_type,
-                                      cmap_name='viridis', figsize=(24, 16), special_angle=None):
+                                      cmap_name='viridis', figsize=(24, 16)):
         """Create comprehensive dashboard with all stress components and angular orientation"""
         fig = plt.figure(figsize=figsize)
         
@@ -1667,10 +1373,9 @@ class HeatMapVisualizer:
         theta_rad = np.radians(theta)
         ax0.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, color='red', alpha=0.8)
         
-        # Plot special angle (habit plane) if provided
-        if special_angle is not None:
-            habit_plane_rad = np.radians(special_angle)
-            ax0.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, color='blue', alpha=0.5)
+        # Plot habit plane
+        habit_plane_rad = np.radians(54.7)
+        ax0.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02, color='blue', alpha=0.5)
         
         # Customize polar plot
         ax0.set_title(f'Defect Orientation\nθ = {theta:.1f}°', fontsize=16, fontweight='bold', pad=15)
@@ -1684,13 +1389,14 @@ class HeatMapVisualizer:
         im1 = ax1.imshow(stress_fields['von_mises'], cmap=cmap_name, aspect='equal', interpolation='bilinear', origin='lower')
         plt.colorbar(im1, ax=ax1, label='Von Mises Stress (GPa)')
         ax1.set_title(f'Von Mises Stress at θ={theta}°\nDefect: {defect_type}',
-                     fontsize=18, fontweight='bold')
+                    fontsize=18, fontweight='bold')
         ax1.set_xlabel('X Position', fontsize=14)
         ax1.set_ylabel('Y Position', fontsize=14)
         ax1.grid(True, alpha=0.2)
         
         # 2. Hydrostatic stress
         ax2 = fig.add_subplot(gs[0, 3])
+        
         # Use diverging colormap for hydrostatic
         hydro_cmap = 'RdBu_r' if cmap_name in ['viridis', 'plasma', 'inferno'] else cmap_name
         im2 = ax2.imshow(stress_fields['sigma_hydro'], cmap=hydro_cmap, aspect='equal', interpolation='bilinear', origin='lower')
@@ -1727,9 +1433,11 @@ class HeatMapVisualizer:
         ax6 = fig.add_subplot(gs[1, 3])
         middle_row = stress_fields['von_mises'].shape[0] // 2
         middle_col = stress_fields['von_mises'].shape[1] // 2
+        
         ax6.plot(stress_fields['von_mises'][middle_row, :], label='Von Mises', linewidth=2)
         ax6.plot(stress_fields['sigma_hydro'][middle_row, :], label='Hydrostatic', linewidth=2)
         ax6.plot(stress_fields['sigma_mag'][middle_row, :], label='Magnitude', linewidth=2)
+        
         ax6.set_xlabel('X Position', fontsize=14)
         ax6.set_ylabel('Stress (GPa)', fontsize=14)
         ax6.set_title(f'Line Profile at Row {middle_row}', fontsize=16, fontweight='bold')
@@ -1743,20 +1451,20 @@ class HeatMapVisualizer:
         # Prepare statistics with enhanced formatting
         stats_text = (
             f"Von Mises Stress:\n"
-            f" Max: {np.max(stress_fields['von_mises']):.3f} GPa\n"
-            f" Min: {np.min(stress_fields['von_mises']):.3f} GPa\n"
-            f" Mean: {np.mean(stress_fields['von_mises']):.3f} GPa\n"
-            f" Std: {np.std(stress_fields['von_mises']):.3f} GPa\n\n"
+            f"  Max: {np.max(stress_fields['von_mises']):.3f} GPa\n"
+            f"  Min: {np.min(stress_fields['von_mises']):.3f} GPa\n"
+            f"  Mean: {np.mean(stress_fields['von_mises']):.3f} GPa\n"
+            f"  Std: {np.std(stress_fields['von_mises']):.3f} GPa\n\n"
             f"Hydrostatic Stress:\n"
-            f" Max Tension: {np.max(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f" Max Compression: {np.min(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f" Mean: {np.mean(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f" Std: {np.std(stress_fields['sigma_hydro']):.3f} GPa\n\n"
+            f"  Max Tension: {np.max(stress_fields['sigma_hydro']):.3f} GPa\n"
+            f"  Max Compression: {np.min(stress_fields['sigma_hydro']):.3f} GPa\n"
+            f"  Mean: {np.mean(stress_fields['sigma_hydro']):.3f} GPa\n"
+            f"  Std: {np.std(stress_fields['sigma_hydro']):.3f} GPa\n\n"
             f"Stress Magnitude:\n"
-            f" Max: {np.max(stress_fields['sigma_mag']):.3f} GPa\n"
-            f" Min: {np.min(stress_fields['sigma_mag']):.3f} GPa\n"
-            f" Mean: {np.mean(stress_fields['sigma_mag']):.3f} GPa\n"
-            f" Std: {np.std(stress_fields['sigma_mag']):.3f} GPa"
+            f"  Max: {np.max(stress_fields['sigma_mag']):.3f} GPa\n"
+            f"  Min: {np.min(stress_fields['sigma_mag']):.3f} GPa\n"
+            f"  Mean: {np.mean(stress_fields['sigma_mag']):.3f} GPa\n"
+            f"  Std: {np.std(stress_fields['sigma_mag']):.3f} GPa"
         )
         
         ax7.text(0.1, 0.5, stats_text, fontsize=13, family='monospace', fontweight='bold',
@@ -1768,16 +1476,14 @@ class HeatMapVisualizer:
         ax8 = fig.add_subplot(gs[2, 2:])
         ax8.axis('off')
         
-        special_angle_text = f"Special Angle: {special_angle}°" if special_angle is not None else "Special Angle: None (Generic)"
-        
         params_text = (
             f"Target Parameters:\n"
-            f" Polar Angle (θ): {theta:.1f}°\n"
-            f" Defect Type: {defect_type}\n"
-            f" Shape: Square (default)\n"
-            f" Simulation Grid: {stress_fields['von_mises'].shape[0]} × {stress_fields['von_mises'].shape[1]}\n"
-            f" {special_angle_text}\n"
-            f" Angular Deviation: {abs(theta - 54.7):.1f}°"
+            f"  Polar Angle (θ): {theta:.1f}°\n"
+            f"  Defect Type: {defect_type}\n"
+            f"  Shape: Square (default)\n"
+            f"  Simulation Grid: {stress_fields['von_mises'].shape[0]} × {stress_fields['von_mises'].shape[1]}\n"
+            f"  Habit Plane: 54.7°\n"
+            f"  Angular Deviation: {abs(theta - 54.7):.1f}°"
         )
         
         ax8.text(0.1, 0.5, params_text, fontsize=13, family='monospace', fontweight='bold',
@@ -1795,7 +1501,6 @@ class HeatMapVisualizer:
 # =============================================
 class ResultsManager:
     """Manager for exporting interpolation results"""
-    
     def __init__(self):
         pass
     
@@ -1817,9 +1522,9 @@ class ResultsManager:
                 'num_sources': result.get('num_sources', 0),
                 'source_theta_degrees': result.get('source_theta_degrees', []),
                 'source_distances': result.get('source_distances', []),
+                'source_defect_types': result.get('source_defect_types', []),
                 'source_indices': result.get('source_indices', []),
-                'special_angle_used': result.get('special_angle_used'),
-                'physics_rotation_enabled': result.get('physics_rotation_enabled')
+                'analysis': result.get('analysis', {})
             }
         }
         
@@ -1878,7 +1583,7 @@ class ResultsManager:
 def main():
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Rotational Tensor Stress Interpolation",
+        page_title="Transformer Stress Interpolation with Enhanced Angular Proximity",
         layout="wide",
         page_icon="🔬",
         initial_sidebar_state="expanded"
@@ -1961,31 +1666,26 @@ def main():
         color: #059669;
         font-size: 1.1rem;
     }
-    .angular-weighting-plot {
-        border: 2px solid #3B82F6;
-        border-radius: 10px;
-        padding: 15px;
-        background-color: #F8FAFC;
-        margin: 15px 0;
-    }
     </style>
     """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🔄 Rotational Tensor Interpolation & Magnitude Scaling</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🔬 Transformer Stress Field Interpolation with Enhanced Angular Proximity</h1>', unsafe_allow_html=True)
     
     # Description
     st.markdown("""
     <div class="info-box">
-    <strong>🔬 Physics-aware interpolation with Tensor Rotation & Magnitude Scaling.</strong><br>
-    • Load simulation files from numerical_solutions directory<br>
-    • <strong>Angular Weights Control Orientation:</strong> Source tensors are physically rotated to match target angle.<br>
-    • <strong>Defect Type Controls Magnitude:</strong> Stress intensity is scaled based on defect type factors (ISF/ESF/Twin).<br>
-    • <strong>FIX:</strong> Ground truth visualization now uses ORIGINAL sources (e.g., Twin 60°) vs rotated result (Twin 54.7°).<br>
-    • Optional Habit Plane Bias (54.7°) - Turn off for generic interpolation<br>
-    • Enhanced spatial locality with aggressive angular distance weighting<br>
-    • Comprehensive comparison dashboard with ground truth selection<br>
-    • Export results in multiple formats
+        <strong>🔬 Physics-aware stress interpolation with STRONG emphasis on angular proximity.</strong><br>
+        • Load simulation files from numerical_solutions directory<br>
+        • Interpolate stress fields at custom polar angles (default: 54.7°)<br>
+        • <strong>KEY FEATURE:</strong> Angular proximity dominates weighting (60% weight)<br>
+        • <strong>KEY FEATURE:</strong> Same defect type gets 30% additional weight<br>
+        • <strong>KEY FEATURE:</strong> Default locality_weight_factor = 0.35 (65% spatial, 35% transformer)<br>
+        • Visualize von Mises, hydrostatic, and stress magnitude fields<br>
+        • Comprehensive comparison dashboard with ground truth selection<br>
+        • Choose from 50+ colormaps including jet, turbo, rainbow, inferno<br>
+        • Publication-ready visualizations with angular orientation plots<br>
+        • Export results in multiple formats
     </div>
     """, unsafe_allow_html=True)
     
@@ -1995,11 +1695,10 @@ def main():
     if 'loader' not in st.session_state:
         st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
     if 'transformer_interpolator' not in st.session_state:
-        # Initialize with adjustable spatial locality weight factor
+        # Initialize with ENHANCED spatial locality weight factor (0.35)
         st.session_state.transformer_interpolator = TransformerSpatialInterpolator(
-            spatial_sigma=0.2,
-            locality_weight_factor=0.7,  # Default: 70% transformer weights, 30% spatial locality
-            special_angle=54.7 # Default to physics-aware, but controllable
+            spatial_sigma=0.1,  # Tighter decay
+            locality_weight_factor=0.35  # 65% spatial weights, 35% transformer weights
         )
     if 'heatmap_visualizer' not in st.session_state:
         st.session_state.heatmap_visualizer = HeatMapVisualizer()
@@ -2025,7 +1724,6 @@ def main():
                     st.success(f"Loaded {len(st.session_state.solutions)} solutions")
                 else:
                     st.warning("No solutions found in directory")
-        
         with col2:
             if st.button("🧹 Clear Cache", use_container_width=True):
                 st.session_state.solutions = []
@@ -2049,9 +1747,9 @@ def main():
         
         # Custom polar angle
         custom_theta = st.slider(
-            "Polar Angle θ (degrees)",
-            min_value=0.0,
-            max_value=180.0,
+            "Polar Angle θ (degrees)", 
+            min_value=0.0, 
+            max_value=180.0, 
             value=54.7,
             step=0.1,
             help="Angle in degrees (0° to 180°). Default habit plane is 54.7°"
@@ -2059,30 +1757,25 @@ def main():
         
         # Defect type
         defect_type = st.selectbox(
-            "Target Defect Type",
+            "Defect Type",
             options=['ISF', 'ESF', 'Twin', 'No Defect'],
             index=2,
             help="Type of crystal defect to simulate"
         )
-        
-        # Magnitude Factors Display
-        st.markdown("**Defect Magnitude Factors (Applied):**")
-        for d_type, factor in DEFECT_MAGNITUDE_FACTORS.items():
-            st.write(f"• **{d_type}**: {factor}x")
         
         # Shape selection
         shape = st.selectbox(
             "Shape",
             options=['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle'],
             index=0,
-            help="Geometry of defect region"
+            help="Geometry of the defect region"
         )
         
         # Kappa parameter
         kappa = st.slider(
-            "Kappa (material property)",
-            min_value=0.1,
-            max_value=2.0,
+            "Kappa (material property)", 
+            min_value=0.1, 
+            max_value=2.0, 
             value=0.6,
             step=0.01,
             help="Material stiffness parameter"
@@ -2105,9 +1798,9 @@ def main():
                 st.metric("Eigenstrain ε₀", f"{eigen_strain:.3f}")
             else:
                 eigen_strain = st.slider(
-                    "Eigenstrain ε₀",
-                    min_value=0.0,
-                    max_value=3.0,
+                    "Eigenstrain ε₀", 
+                    min_value=0.0, 
+                    max_value=3.0, 
                     value=0.707,
                     step=0.001
                 )
@@ -2115,84 +1808,44 @@ def main():
         st.divider()
         
         # Transformer parameters
-        st.markdown('<h2 class="section-header">🧠 Enhanced Spatial Locality</h2>', unsafe_allow_html=True)
-        
-        # IMPORTANT TOGGLE: PHYSICS ROTATION ENABLE/DISABLE
-        enable_physics_rotation = st.checkbox(
-            "Enable Physics Rotation & Magnitude Scaling",
-            value=True,
-            help="If checked, source tensors are rotated to target angle and scaled by defect type. If unchecked, uses standard blending."
-        )
-        
-        # IMPORTANT TOGGLE FOR GENERIC VS PHYSICS INTERPOLATION
-        enable_habit_bias = st.checkbox(
-            "Enable Physics Bias (54.7° Habit Plane)", 
-            value=True,
-            help="If unchecked, interpolation is purely geometric (generic). If checked, special handling for 54.7° is applied."
-        )
+        st.markdown('<h2 class="section-header">🧠 Transformer Parameters</h2>', unsafe_allow_html=True)
         
         # Spatial locality parameters
-        st.markdown("#### 📍 Angular Distance Weighting")
-        st.info("""
-        **Enhanced Weighting Scheme:**
-        - ≤1°: 0.95 weight
-        - ≤2.5°: 0.9 weight
-        - ≤5°: 0.8 weight
-        - ≤7.5°: 0.7 weight
-        - ≤10°: 0.5 weight
-        - ≤15°: 0.3 weight
-        - ≤20°: 0.15 weight
-        - ≤30°: 0.08 weight
-        - ≤45°: 0.04 weight
-        - >45°: 0.01 weight
-        """)
-        
+        st.markdown("#### 📍 Spatial Locality Controls")
         spatial_sigma = st.slider(
-            "Spatial Sigma",
-            min_value=0.01,
-            max_value=1.0,
-            value=0.2,
+            "Spatial Sigma", 
+            min_value=0.01, 
+            max_value=1.0, 
+            value=0.1,
             step=0.01,
-            help="Controls the decay rate of non-angular parameter weights"
+            help="Controls the decay rate of spatial weights (lower = faster decay, more localized)"
         )
         
         # KEY FEATURE: Adjustable spatial locality weight factor
         spatial_weight_factor = st.slider(
-            "Spatial Locality Weight Factor",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.7,
+            "Spatial Locality Weight Factor", 
+            min_value=0.0, 
+            max_value=1.0, 
+            value=0.35,
             step=0.01,
-            help="Balance between transformer attention and spatial locality (0 = pure spatial, 1 = pure transformer)"
+            help="Balance between transformer attention and spatial locality (0 = pure spatial, 1 = pure transformer). Default 0.35 gives 65% weight to spatial proximity."
         )
         
         # Attention temperature
         temperature = st.slider(
-            "Attention Temperature",
-            min_value=0.1,
-            max_value=10.0,
+            "Attention Temperature", 
+            min_value=0.1, 
+            max_value=10.0, 
             value=1.0,
             step=0.1,
             help="Softmax temperature for attention weights (lower = sharper distribution)"
         )
         
-        # Visualize angular weighting function
-        if st.button("📊 Visualize Angular Weighting", use_container_width=True):
-            # Pass the current special angle to the visualizer
-            curr_special = 54.7 if enable_habit_bias else None
-            fig_angular_weights = st.session_state.transformer_interpolator.visualize_angular_weighting(
-                target_angle_deg=custom_theta,
-                special_angle=curr_special
-            )
-            st.pyplot(fig_angular_weights)
-        
         # Update transformer parameters
         if st.button("🔄 Update Transformer Parameters", use_container_width=True):
-            curr_special = 54.7 if enable_habit_bias else None
             st.session_state.transformer_interpolator.set_spatial_parameters(
                 spatial_sigma=spatial_sigma,
-                locality_weight_factor=spatial_weight_factor,
-                special_angle=curr_special
+                locality_weight_factor=spatial_weight_factor
             )
             st.session_state.transformer_interpolator.temperature = temperature
             st.success("Transformer parameters updated!")
@@ -2205,7 +1858,7 @@ def main():
             if not st.session_state.solutions:
                 st.error("Please load solutions first!")
             else:
-                with st.spinner("Performing interpolation with enhanced spatial locality..."):
+                with st.spinner("Performing interpolation with enhanced angular proximity weighting..."):
                     # Setup target parameters
                     target_params = {
                         'defect_type': defect_type,
@@ -2215,25 +1868,26 @@ def main():
                         'shape': shape
                     }
                     
-                    # Determine special angle for this run
-                    current_special_angle = 54.7 if enable_habit_bias else None
-                    
-                    # Perform interpolation with new physics flags
+                    # Perform interpolation
                     result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
                         st.session_state.solutions,
                         custom_theta,
-                        target_params,
-                        special_angle=current_special_angle,
-                        enable_physics_rotation=enable_physics_rotation # Pass the flag
+                        target_params
                     )
                     
                     if result:
                         st.session_state.interpolation_result = result
-                        mode_str = "Physics-Aware (Rotation + Scaling)" if enable_physics_rotation else "Standard (Blending)"
-                        st.success(f"Interpolation successful! Mode: {mode_str}. Used {result['num_sources']} source solutions.")
+                        st.success(f"Interpolation successful! Used {result['num_sources']} source solutions.")
                         st.session_state.selected_ground_truth = None
+                        
+                        # Display weight analysis
+                        if 'analysis' in result:
+                            analysis = result['analysis']
+                            st.info(f"**Weight Analysis:**")
+                            st.info(f"• Angular-weight correlation: {analysis['angular_weight_correlation']:.3f}")
+                            st.info(f"• Nearest source: θ={result['source_theta_degrees'][analysis['nearest_source_idx']]:.1f}° (Δ={analysis['nearest_source_distance']:.1f}°)")
                     else:
-                        st.error("Interpolation failed. Check console for errors.")
+                        st.error("Interpolation failed. Check the console for errors.")
     
     # Main content area
     if st.session_state.solutions:
@@ -2253,27 +1907,33 @@ def main():
         # Display source information
         if st.session_state.solutions:
             source_thetas = []
+            source_defects = []
             for sol in st.session_state.solutions:
-                if 'params' in sol and 'theta' in sol['params']:
-                    theta_deg = np.degrees(sol['params']['theta']) % 360  # Normalize to [0, 360)
-                    source_thetas.append(theta_deg)
+                if 'params' in sol:
+                    if 'theta' in sol['params']:
+                        theta_deg = np.degrees(sol['params']['theta'])
+                        source_thetas.append(theta_deg)
+                    if 'defect_type' in sol['params']:
+                        source_defects.append(sol['params']['defect_type'])
+            
             if source_thetas:
+                # Calculate statistics
+                unique_defects = set(source_defects)
+                defect_counts = {defect: source_defects.count(defect) for defect in unique_defects}
+                
                 st.markdown(f"**Source Angles Range:** {min(source_thetas):.1f}° to {max(source_thetas):.1f}°")
                 st.markdown(f"**Mean Source Angle:** {np.mean(source_thetas):.1f}°")
+                st.markdown(f"**Defect Distribution:** {', '.join([f'{k}: {v}' for k, v in defect_counts.items()])}")
     
     # Results display
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
         
-        # Retrieve the special angle used for this specific result
-        result_special_angle = result.get('special_angle_used')
-        result_physics_rotation = result.get('physics_rotation_enabled')
-        
         # Tabs for different views
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📈 Results Overview",
-            "🎨 Visualization",
-            "⚖️ Enhanced Weights Analysis",
+            "📈 Results Overview", 
+            "🎨 Visualization", 
+            "⚖️ Weights Analysis",
             "🔄 Comparison Dashboard",
             "💾 Export Results"
         ])
@@ -2286,23 +1946,23 @@ def main():
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric(
-                    "Max Von Mises",
+                    "Max Von Mises", 
                     f"{result['statistics']['von_mises']['max']:.3f} GPa",
                     delta=f"±{result['statistics']['von_mises']['std']:.3f}"
                 )
             with col2:
                 st.metric(
-                    "Hydrostatic Range",
+                    "Hydrostatic Range", 
                     f"{result['statistics']['sigma_hydro']['max_tension']:.3f}/{result['statistics']['sigma_hydro']['max_compression']:.3f} GPa"
                 )
             with col3:
                 st.metric(
-                    "Mean Stress Magnitude",
+                    "Mean Stress Magnitude", 
                     f"{result['statistics']['sigma_mag']['mean']:.3f} GPa"
                 )
             with col4:
                 st.metric(
-                    "Number of Sources",
+                    "Number of Sources", 
                     result['num_sources'],
                     delta=f"Entropy: {result['weights']['entropy']['combined']:.3f}"
                 )
@@ -2329,43 +1989,49 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
             with param_col3:
-                mode_display = f"{result_special_angle}° (Physics)" if result_special_angle else "None (Generic)"
-                rot_display = "Enabled" if result_physics_rotation else "Disabled"
                 st.markdown(f"""
                 <div class="param-table">
                     <div class="param-key">Shape</div>
                     <div class="param-value">{result['target_params'].get('shape', 'Square')}</div>
-                    <div class="param-key">Special Angle</div>
-                    <div class="param-value">{mode_display}</div>
-                    <div class="param-key">Physics Rotation</div>
-                    <div class="param-value">{rot_display}</div>
+                    <div class="param-key">Grid Size</div>
+                    <div class="param-value">{result['shape'][0]}×{result['shape'][1]}</div>
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Enhanced spatial locality configuration
-            st.markdown("#### 📍 Enhanced Spatial Locality Configuration")
+            # Spatial locality factor display
+            st.markdown("#### 📍 Spatial Locality Configuration")
             locality_col1, locality_col2, locality_col3 = st.columns(3)
             with locality_col1:
                 st.metric(
-                    "Spatial Weight Factor",
+                    "Spatial Weight Factor", 
                     f"{st.session_state.transformer_interpolator.locality_weight_factor:.2f}",
                     help="0 = pure spatial weights, 1 = pure transformer weights"
                 )
             with locality_col2:
                 st.metric(
-                    "Spatial Sigma",
+                    "Spatial Sigma", 
                     f"{st.session_state.transformer_interpolator.spatial_sigma:.2f}",
-                    help="Controls non-angular parameter weight decay rate"
+                    help="Controls spatial weight decay rate"
                 )
             with locality_col3:
-                # Calculate average angular distance of top contributors
-                if 'weights' in result and 'source_distances' in result:
-                    top_indices = np.argsort(result['weights']['combined'])[-3:]  # Top 3 contributors
-                    avg_angular_dist = np.mean([result['source_distances'][i] for i in top_indices])
+                if 'analysis' in result:
                     st.metric(
-                        "Avg Angular Distance (Top 3)",
-                        f"{avg_angular_dist:.1f}°"
+                        "Angular-Weight Correlation", 
+                        f"{result['analysis']['angular_weight_correlation']:.3f}",
+                        help="Correlation between angular distance and weight (should be negative)"
                     )
+            
+            # Weighting strategy info
+            st.markdown("#### ⚖️ Weighting Strategy")
+            st.info(f"""
+            **Enhanced Angular Proximity Weighting:**
+            - **60% weight** given to angular proximity (primary factor)
+            - **30% weight** given to defect type similarity
+            - **5% weight** given to eigenstrain (ε₀) similarity
+            - **5% weight** given to kappa (κ) similarity
+            
+            **Result:** Sources with similar angles and same defect type receive highest weights.
+            """)
             
             # Quick preview of stress fields
             st.markdown("#### 👀 Quick Preview")
@@ -2495,7 +2161,7 @@ def main():
                         result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
                         figsize=(10, 10),
-                        special_angle=result_special_angle
+                        show_habit_plane=True
                     )
                     st.pyplot(fig_angular)
             
@@ -2512,8 +2178,8 @@ def main():
                 st.pyplot(fig_all)
         
         with tab3:
-            # Enhanced Weights analysis tab
-            st.markdown('<h2 class="section-header">⚖️ Enhanced Weight Distribution Analysis</h2>', unsafe_allow_html=True)
+            # Weights analysis tab
+            st.markdown('<h2 class="section-header">⚖️ Weight Distribution Analysis</h2>', unsafe_allow_html=True)
             
             if 'weights' in result:
                 weights = result['weights']
@@ -2528,29 +2194,23 @@ def main():
                     st.metric("Combined Entropy", f"{weights['entropy']['combined']:.3f}")
                 with col_w4:
                     max_weight_idx = np.argmax(weights['combined'])
-                    max_theta = result['source_theta_degrees'][max_weight_idx] if max_weight_idx < len(result['source_theta_degrees']) else 0.0
-                    st.metric("Top Contributor", f"θ={max_theta:.1f}°")
-                
-                # Visualize angular weighting function for current target
-                st.markdown("#### 📊 Angular Weighting Function")
-                fig_angular_weights = st.session_state.transformer_interpolator.visualize_angular_weighting(
-                    target_angle_deg=result['target_angle'],
-                    special_angle=result_special_angle
-                )
-                st.pyplot(fig_angular_weights)
+                    max_theta = result['source_theta_degrees'][max_weight_idx]
+                    max_distance = result['source_distances'][max_weight_idx]
+                    st.metric("Top Contributor", f"Source {max_weight_idx}", delta=f"θ={max_theta:.1f}°, Δ={max_distance:.1f}°")
                 
                 # Weight distribution plot
-                st.markdown("#### 📊 Source Weight Distribution")
+                st.markdown("#### 📊 Weight Distribution")
                 fig_weights, ax_weights = plt.subplots(figsize=(14, 6))
+                
                 x = range(len(weights['combined']))
                 width = 0.25
                 
                 # Plot different weight types
-                ax_weights.bar([i - width for i in x], weights['transformer'], width,
+                ax_weights.bar([i - width for i in x], weights['transformer'], width, 
                               label='Transformer Weights', alpha=0.7, color='blue')
-                ax_weights.bar(x, weights['positional'], width,
+                ax_weights.bar(x, weights['positional'], width, 
                               label='Spatial Weights', alpha=0.7, color='green')
-                ax_weights.bar([i + width for i in x], weights['combined'], width,
+                ax_weights.bar([i + width for i in x], weights['combined'], width, 
                               label='Combined Weights', alpha=0.7, color='red')
                 
                 ax_weights.set_xlabel('Source Index')
@@ -2559,120 +2219,134 @@ def main():
                 ax_weights.legend()
                 ax_weights.grid(True, alpha=0.3)
                 
-                # Add theta labels and angular distances
-                for i, theta in enumerate(result['source_theta_degrees']):
-                    if i < len(result['source_distances']):
-                        dist = result['source_distances'][i]
-                        max_height = max(weights['combined'][i], weights['transformer'][i], weights['positional'][i])
-                        ax_weights.text(i, max_height + 0.01,
-                                      f'θ={theta:.0f}°\nΔ={dist:.1f}°',
-                                      ha='center', va='bottom', fontsize=8)
+                # Add detailed labels
+                for i, (theta, dist, defect, weight) in enumerate(zip(
+                    result['source_theta_degrees'],
+                    result['source_distances'],
+                    result['source_defect_types'],
+                    weights['combined']
+                )):
+                    if weight > 0.05:  # Only label significant contributors
+                        ax_weights.text(i, weight + 0.01,
+                                      f'θ={theta:.0f}°\nΔ={dist:.0f}°\n{defect}\n{weight:.3f}', 
+                                      ha='center', va='bottom',
+                                      fontsize=6, rotation=45)
                 
                 st.pyplot(fig_weights)
                 
-                # Top contributors table with enhanced information
-                st.markdown("#### 🏆 Top Contributors Analysis")
+                # Top contributors table
+                st.markdown("#### 🏆 Top 5 Contributors")
                 weight_data = []
                 for i in range(len(weights['combined'])):
-                    angular_diff = result['source_distances'][i] if i < len(result['source_distances']) else 0.0
-                    angular_weight_category = "Unknown"
-                    
-                    if angular_diff <= 1.0:
-                        angular_weight_category = "Very Very Close (≤1°)"
-                    elif angular_diff <= 2.5:
-                        angular_weight_category = "Very Close (≤2.5°)"
-                    elif angular_diff <= 5.0:
-                        angular_weight_category = "Close (≤5.0°)"
-                    elif angular_diff <= 10.0:
-                        angular_weight_category = "Moderate (≤10.0°)"
-                    elif angular_diff <= 20.0:
-                        angular_weight_category = "Far (≤20.0°)"
-                    elif angular_diff <= 45.0:
-                        angular_weight_category = "Very Far (≤45.0°)"
-                    else:
-                        angular_weight_category = "Extremely Far (>45°)"
-                    
                     weight_data.append({
                         'Source': i,
-                        'Theta (°)': result['source_theta_degrees'][i] if i < len(result['source_theta_degrees']) else 0.0,
-                        'Angular Distance (°)': angular_diff,
-                        'Angular Weight Category': angular_weight_category,
                         'Combined Weight': weights['combined'][i],
-                        'Spatial Weight': weights['positional'][i],
                         'Transformer Weight': weights['transformer'][i],
-                        'Defect Type': st.session_state.solutions[i]['params']['defect_type'] if i < len(st.session_state.solutions) else 'Unknown'
+                        'Spatial Weight': weights['positional'][i],
+                        'Theta (°)': result['source_theta_degrees'][i],
+                        'Distance (°)': result['source_distances'][i],
+                        'Defect Type': result['source_defect_types'][i]
                     })
                 
                 df_weights = pd.DataFrame(weight_data)
-                df_weights = df_weights.sort_values('Combined Weight', ascending=False)
-                
-                # Display top 10 contributors
-                st.dataframe(df_weights.head(10).style.format({
-                    'Theta (°)': '{:.1f}',
-                    'Angular Distance (°)': '{:.1f}',
+                df_weights = df_weights.sort_values('Combined Weight', ascending=False).head(10)
+                st.dataframe(df_weights.style.format({
                     'Combined Weight': '{:.4f}',
+                    'Transformer Weight': '{:.4f}',
                     'Spatial Weight': '{:.4f}',
-                    'Transformer Weight': '{:.4f}'
+                    'Theta (°)': '{:.1f}',
+                    'Distance (°)': '{:.1f}'
                 }).background_gradient(subset=['Combined Weight'], cmap='YlOrRd'))
                 
+                # Analysis of weight distribution
+                st.markdown("#### 📈 Weight Distribution Analysis")
+                analysis_col1, analysis_col2 = st.columns(2)
+                with analysis_col1:
+                    # Calculate weight concentration
+                    sorted_weights = np.sort(weights['combined'])[::-1]
+                    cumulative = np.cumsum(sorted_weights)
+                    
+                    fig_cumulative, ax_cumulative = plt.subplots(figsize=(8, 5))
+                    ax_cumulative.plot(range(1, len(cumulative) + 1), cumulative, 'b-', linewidth=2)
+                    ax_cumulative.axhline(y=0.8, color='r', linestyle='--', alpha=0.5, label='80% threshold')
+                    ax_cumulative.set_xlabel('Number of Sources')
+                    ax_cumulative.set_ylabel('Cumulative Weight')
+                    ax_cumulative.set_title('Cumulative Weight Distribution', fontsize=14, fontweight='bold')
+                    ax_cumulative.grid(True, alpha=0.3)
+                    ax_cumulative.legend()
+                    st.pyplot(fig_cumulative)
+                    
+                    # Find how many sources give 80% of weight
+                    idx_80 = np.where(cumulative >= 0.8)[0][0] + 1
+                    st.info(f"**{idx_80} sources provide 80% of total weight**")
+                
+                with analysis_col2:
+                    # Scatter plot: weight vs angular distance
+                    fig_scatter, ax_scatter = plt.subplots(figsize=(8, 5))
+                    scatter = ax_scatter.scatter(result['source_distances'], weights['combined'], 
+                                                c=range(len(weights['combined'])), cmap='viridis', 
+                                                alpha=0.6, s=100, edgecolors='black')
+                    
+                    # Color by defect type
+                    for i, defect in enumerate(result['source_defect_types']):
+                        color = 'red' if defect == 'Twin' else ('blue' if defect == 'ISF' else 
+                                                               ('green' if defect == 'ESF' else 'gray'))
+                        ax_scatter.scatter(result['source_distances'][i], weights['combined'][i], 
+                                          color=color, alpha=0.7, s=100, edgecolors='black')
+                    
+                    ax_scatter.set_xlabel('Angular Distance from Target (°)')
+                    ax_scatter.set_ylabel('Weight')
+                    ax_scatter.set_title('Weight vs Angular Distance', fontsize=14, fontweight='bold')
+                    ax_scatter.grid(True, alpha=0.3)
+                    
+                    # Add legend for defect types
+                    import matplotlib.patches as mpatches
+                    patches = [
+                        mpatches.Patch(color='red', alpha=0.7, label='Twin'),
+                        mpatches.Patch(color='blue', alpha=0.7, label='ISF'),
+                        mpatches.Patch(color='green', alpha=0.7, label='ESF'),
+                        mpatches.Patch(color='gray', alpha=0.7, label='Other')
+                    ]
+                    ax_scatter.legend(handles=patches)
+                    
+                    st.pyplot(fig_scatter)
+                
                 # Angular distribution plot
-                st.markdown("#### 🧭 Angular Distribution Analysis")
+                st.markdown("#### 🧭 Angular Distribution of Sources")
                 fig_polar = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
                     result['target_angle'],
                     defect_type=result['target_params']['defect_type'],
                     figsize=(10, 10),
-                    special_angle=result_special_angle
+                    show_habit_plane=True
                 )
                 st.pyplot(fig_polar)
-                
-                # Correlation between angular distance and weights
-                st.markdown("#### 📈 Angular Distance vs. Weight Correlation")
-                if 'source_distances' in result:
-                    fig_corr, ax_corr = plt.subplots(figsize=(10, 6))
-                    scatter = ax_corr.scatter(result['source_distances'], weights['combined'],
-                                           alpha=0.6, s=100, c=weights['positional'], cmap='viridis')
-                    ax_corr.set_xlabel('Angular Distance (°)')
-                    ax_corr.set_ylabel('Combined Weight')
-                    ax_corr.set_title('Angular Distance vs. Weight Correlation', fontsize=16, fontweight='bold')
-                    ax_corr.grid(True, alpha=0.3)
-                    plt.colorbar(scatter, ax=ax_corr, label='Spatial Weight')
-                    
-                    # Add trend line
-                    if len(result['source_distances']) > 1:
-                        z = np.polyfit(result['source_distances'], weights['combined'], 1)
-                        p = np.poly1d(z)
-                        x_range = np.linspace(min(result['source_distances']), max(result['source_distances']), 100)
-                        ax_corr.plot(x_range, p(x_range), "r--", alpha=0.8, label='Trend')
-                        ax_corr.legend()
-                    
-                    st.pyplot(fig_corr)
         
         with tab4:
             # COMPARISON DASHBOARD
             st.markdown('<h2 class="section-header">🔄 Comparison Dashboard</h2>', unsafe_allow_html=True)
-            st.markdown(f"""
+            
+            st.markdown("""
             <div class="info-box">
-            <strong>Compare interpolated results with ground truth sources</strong><br>
-            • Select a source solution as ground truth<br>
-            • Visualize differences between interpolation and ground truth<br>
-            • Calculate error metrics (MSE, MAE, RMSE, correlation)<br>
-            • Analyze spatial correlation patterns<br>
-            • Current Special Angle: {result_special_angle if result_special_angle else "None (Generic)"}
-            • Physics Rotation: {result_physics_rotation}
-            • <strong>FIXED:</strong> Dashboard now uses ORIGINAL source fields to show true orientation profiles.
+                <strong>Compare interpolated results with ground truth sources</strong><br>
+                • Select a source solution as ground truth<br>
+                • Visualize differences between interpolation and ground truth<br>
+                • Calculate error metrics (MSE, MAE, RMSE, correlation)<br>
+                • Analyze spatial correlation patterns
             </div>
             """, unsafe_allow_html=True)
             
             # Ground truth selection
             st.markdown("#### 🎯 Select Ground Truth Source")
+            
             if 'source_theta_degrees' in result and result['source_theta_degrees']:
                 # Create dropdown options
                 ground_truth_options = []
                 for i, theta in enumerate(result['source_theta_degrees']):
                     distance = result['source_distances'][i]
                     weight = result['weights']['combined'][i]
+                    defect = result['source_defect_types'][i]
                     ground_truth_options.append(
-                        f"Source {i}: θ={theta:.1f}° (Δ={distance:.1f}°, weight={weight:.3f})"
+                        f"Source {i}: θ={theta:.1f}° (Δ={distance:.1f}°, {defect}, weight={weight:.3f})"
                     )
                 
                 selected_option = st.selectbox(
@@ -2690,6 +2364,7 @@ def main():
                 selected_theta = result['source_theta_degrees'][selected_index]
                 selected_distance = result['source_distances'][selected_index]
                 selected_weight = result['weights']['combined'][selected_index]
+                selected_defect = result['source_defect_types'][selected_index]
                 
                 col_gt1, col_gt2, col_gt3, col_gt4 = st.columns(4)
                 with col_gt1:
@@ -2699,54 +2374,53 @@ def main():
                 with col_gt3:
                     st.metric("Angular Distance", f"{selected_distance:.1f}°")
                 with col_gt4:
-                    st.metric("Contribution Weight", f"{selected_weight:.3f}")
-            
-            # Visualization options for comparison
-            st.markdown("#### 🎨 Comparison Visualization")
-            comp_component = st.selectbox(
-                "Component for Comparison",
-                options=['von_mises', 'sigma_hydro', 'sigma_mag'],
-                index=0,
-                key="comp_component"
-            )
-            
-            comp_cmap = st.selectbox(
-                "Colormap for Comparison",
-                options=COLORMAP_OPTIONS['Publication Standard'],
-                index=0,
-                key="comp_cmap"
-            )
-            
-            # Create comparison dashboard
-            if comp_component in result['fields']:
-                # Prepare source info for dashboard
-                source_info = {
-                    'theta_degrees': result['source_theta_degrees'],
-                    'distances': result['source_distances'],
-                    'weights': result['weights']
-                }
+                    st.metric("Defect Type", selected_defect)
                 
-                # THE FIX: Use 'raw_source_fields' instead of processed 'source_fields'
-                raw_source_fields_list = result.get('raw_source_fields', result.get('source_fields', [])
+                # Visualization options for comparison
+                st.markdown("#### 🎨 Comparison Visualization")
+                comp_component = st.selectbox(
+                    "Component for Comparison",
+                    options=['von_mises', 'sigma_hydro', 'sigma_mag'],
+                    index=0,
+                    key="comp_component"
+                )
                 
-                if len(raw_source_fields_list) > 0:
+                comp_cmap = st.selectbox(
+                    "Colormap for Comparison",
+                    options=COLORMAP_OPTIONS['Publication Standard'],
+                    index=0,
+                    key="comp_cmap"
+                )
+                
+                # Create comparison dashboard
+                if comp_component in result['fields']:
+                    # Prepare source info for dashboard
+                    source_info = {
+                        'theta_degrees': result['source_theta_degrees'],
+                        'distances': result['source_distances'],
+                        'defect_types': result['source_defect_types'],
+                        'weights': result['weights'],
+                        'statistics': result['statistics']
+                    }
+                    
+                    # Create the comparison dashboard
                     fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                         interpolated_fields=result['fields'],
-                        source_fields=raw_source_fields_list,  # Pass RAW fields here
+                        source_fields=result['source_fields'],
                         source_info=source_info,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
                         component=comp_component,
                         cmap_name=comp_cmap,
                         figsize=(20, 15),
-                        ground_truth_index=selected_index,
-                        special_angle=result_special_angle
+                        ground_truth_index=selected_index
                     )
+                    
                     st.pyplot(fig_comparison)
                     
                     # Calculate and display detailed error metrics
-                    if selected_index < len(raw_source_fields_list):
-                        ground_truth_field = raw_source_fields_list[selected_index].get(component)
+                    if selected_index < len(result['source_fields']):
+                        ground_truth_field = result['source_fields'][selected_index]['fields'][comp_component]
                         interpolated_field = result['fields'][comp_component]
                         
                         # Calculate errors
@@ -2757,10 +2431,7 @@ def main():
                         
                         # Calculate correlation
                         from scipy.stats import pearsonr
-                        try:
-                            corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
-                        except:
-                            corr_coef = 0.0
+                        corr_coef, _ = pearsonr(ground_truth_field.flatten(), interpolated_field.flatten())
                         
                         # Display metrics
                         st.markdown("#### 📊 Error Metrics")
@@ -2788,10 +2459,10 @@ def main():
                             # Spatial error pattern
                             st.markdown("##### Spatial Error Pattern")
                             fig_err_spatial, ax_err_spatial = plt.subplots(figsize=(10, 8))
-                            im_err = ax_err_spatial.imshow(error_field, cmap='RdBu_r',
-                                                          vmin=-np.max(np.abs(error_field)),
-                                                          vmax=np.max(np.abs(error_field)),
-                                                          aspect='equal', interpolation='bilinear', origin='lower')
+                            im_err = ax_err_spatial.imshow(error_field, cmap='RdBu_r', 
+                                                         vmin=-np.max(np.abs(error_field)), 
+                                                         vmax=np.max(np.abs(error_field)),
+                                                         aspect='equal', interpolation='bilinear', origin='lower')
                             plt.colorbar(im_err, ax=ax_err_spatial, label='Error (GPa)')
                             ax_err_spatial.set_title('Spatial Error Distribution', fontsize=16, fontweight='bold')
                             ax_err_spatial.set_xlabel('X Position')
@@ -2803,13 +2474,14 @@ def main():
         with tab5:
             # Export tab
             st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
-            st.markdown(f"""
+            
+            st.markdown("""
             <div class="info-box">
-            <strong>Export interpolation results for further analysis</strong><br>
-            • Export full results as JSON with metadata<br>
-            • Export stress field data as CSV for external analysis<br>
-            • Download visualizations as PNG images<br>
-            • Save comparison dashboard for publication
+                <strong>Export interpolation results for further analysis</strong><br>
+                • Export full results as JSON with metadata<br>
+                • Export stress field data as CSV for external analysis<br>
+                • Download visualizations as PNG images<br>
+                • Save comparison dashboard for publication
             </div>
             """, unsafe_allow_html=True)
             
@@ -2825,9 +2497,7 @@ def main():
                 visualization_params = {
                     'component': component if 'component' in locals() else 'von_mises',
                     'colormap': cmap_name if 'cmap_name' in locals() else 'viridis',
-                    'visualization_type': viz_type if 'viz_type' in locals() else '2D Heatmap',
-                    'special_angle': result_special_angle,
-                    'physics_rotation_enabled': result_physics_rotation
+                    'visualization_type': viz_type if 'viz_type' in locals() else '2D Heatmap'
                 }
                 
                 export_data = st.session_state.results_manager.prepare_export_data(
@@ -2866,26 +2536,25 @@ def main():
                     sample_data = {}
                     for field_name, field_data in result['fields'].items():
                         sample_data[field_name] = field_data.flatten()[:100]  # First 100 values
-                    
                     df_sample = pd.DataFrame(sample_data)
                     st.dataframe(df_sample.head(10))
             
             elif export_format == "PNG (Visualizations)":
                 # PNG export options
                 st.markdown("#### 📸 Select Visualizations to Export")
+                
                 export_plots = st.multiselect(
                     "Choose plots to export:",
                     options=[
                         "Von Mises Heatmap",
-                        "Hydrostatic Heatmap",
+                        "Hydrostatic Heatmap", 
                         "Stress Magnitude Heatmap",
                         "3D Surface Plot",
                         "Angular Orientation",
-                        "Angular Weighting Function",
-                        "Weight Distribution",
-                        "Comparison Dashboard"
+                        "Comparison Dashboard",
+                        "Weight Distribution"
                     ],
-                    default=["Von Mises Heatmap", "Angular Weighting Function", "Comparison Dashboard"]
+                    default=["Von Mises Heatmap", "Comparison Dashboard"]
                 )
                 
                 if st.button("🖼️ Generate and Download Visualizations", use_container_width=True):
@@ -2958,7 +2627,7 @@ def main():
                             fig = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
                                 result['target_angle'],
                                 defect_type=result['target_params']['defect_type'],
-                                special_angle=result_special_angle
+                                show_habit_plane=True
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
@@ -2966,27 +2635,41 @@ def main():
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Angular Weighting Function" in export_plots:
-                            fig = st.session_state.transformer_interpolator.visualize_angular_weighting(
-                                target_angle_deg=result['target_angle'],
-                                special_angle=result_special_angle
+                        if "Comparison Dashboard" in export_plots and st.session_state.selected_ground_truth is not None:
+                            source_info = {
+                                'theta_degrees': result['source_theta_degrees'],
+                                'distances': result['source_distances'],
+                                'defect_types': result['source_defect_types'],
+                                'weights': result['weights'],
+                                'statistics': result['statistics']
+                            }
+                            
+                            fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                                interpolated_fields=result['fields'],
+                                source_fields=result['source_fields'],
+                                source_info=source_info,
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type'],
+                                component='von_mises',
+                                cmap_name='viridis',
+                                ground_truth_index=st.session_state.selected_ground_truth
                             )
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"angular_weighting_theta_{result['target_angle']:.1f}.n.png", buf.getvalue())
+                            zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Weight Distribution" in export_plots and st.session_state.selected_ground_truth is not None:
+                        if "Weight Distribution" in export_plots:
                             fig, ax = plt.subplots(figsize=(12, 6))
                             x = range(len(result['weights']['combined']))
                             width = 0.25
                             
-                            ax.bar([i - width for i in x], result['weights']['transformer'], width,
+                            ax.bar([i - width for i in x], result['weights']['transformer'], width, 
                                   label='Transformer Weights', alpha=0.7, color='blue')
-                            ax.bar(x, result['weights']['positional'], width,
+                            ax.bar(x, result['weights']['positional'], width, 
                                   label='Spatial Weights', alpha=0.7, color='green')
-                            ax.bar([i + width for i in x], result['weights']['combined'], width,
+                            ax.bar([i + width for i in x], result['weights']['combined'], width, 
                                   label='Combined Weights', alpha=0.7, color='red')
                             
                             ax.set_xlabel('Source Index')
@@ -2998,34 +2681,6 @@ def main():
                             buf = BytesIO()
                             fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
                             zip_file.writestr(f"weight_distribution_theta_{result['target_angle']:.1f}.png", buf.getvalue())
-                            plot_count += 1
-                            plt.close(fig)
-                        
-                        if "Comparison Dashboard" in export_plots and st.session_state.selected_ground_truth is not None:
-                            source_info = {
-                                'theta_degrees': result['source_theta_degrees'],
-                                'distances': result['source_distances'],
-                                'weights': result['weights']
-                            }
-                            
-                            # Get source fields from result
-                            raw_source_fields_list = result.get('raw_source_fields', result.get('source_fields', [])
-                            
-                            fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
-                                interpolated_fields=result['fields'],
-                                source_fields=raw_source_fields_list, # Pass RAW fields here
-                                source_info=source_info,
-                                target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                component='von_mises',
-                                cmap_name='viridis',
-                                ground_truth_index=st.session_state.selected_ground_truth,
-                                special_angle=result_special_angle
-                            )
-                            
-                            buf = BytesIO()
-                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                            zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                     
@@ -3048,94 +2703,101 @@ def main():
         <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
             <h2>🚀 Ready to Begin!</h2>
             <p style="font-size: 1.2rem; margin-bottom: 30px;">
-                Follow these steps to start interpolating stress fields with enhanced spatial locality:
+                Follow these steps to start interpolating stress fields with enhanced angular proximity:
             </p>
             <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
                 <li>Load simulation files from the sidebar</li>
                 <li>Configure target parameters (angle, defect type, etc.)</li>
-                <li><strong>Feature:</strong> Toggle "Enable Physics Rotation" to rotate tensors to match target angle.</li>
-                <li><strong>Feature:</strong> Select Target Defect Type to scale magnitudes (ISF vs Twin).</li>
-                <li>Adjust enhanced spatial locality parameters</li>
-                <li>Visualize the angular weighting function</li>
+                <li><strong>Key:</strong> Angular proximity gets 60% weight in interpolation</li>
+                <li><strong>Key:</strong> Same defect type gets 30% additional weight</li>
                 <li>Click "Perform Transformer Interpolation"</li>
                 <li>Explore results in the tabs above</li>
             </ol>
             <p style="margin-top: 30px; font-size: 1.1rem;">
-                <strong>New Enhanced Feature:</strong> Rotational Tensor Interpolation with:
-                <ul style="text-align: left; display: inline-block;">
-                    <li><strong>Orientation Control:</strong> Source tensors rotated by angle difference.</li>
-                    <li><strong>Magnitude Control:</strong> Stress scaled by defect type factors (Twin=2.5x).</li>
-                    <li>0.95 weight for angles within 1°</li>
-                    <li>0.9 weight for angles within 2.5°</li>
-                    <li>0.8 weight for angles within 5°</li>
-                    <li>0.01 weight for angles beyond 45°</li>
-                    <li>Cyclic angle handling (0° = 360°)</li>
-                    <li>Optional Habit Plane (54.7°) awareness</li>
-                </ul>
+                <strong>Enhanced Feature:</strong> The interpolator now gives higher weights to sources with similar angles and same defect type.
+                For a target at 54.7° (twin), twin at 60° will get much higher weight than twin at 30°.
             </p>
         </div>
         """, unsafe_allow_html=True)
         
         # Quick start guide
         st.markdown("### 📚 Quick Start Guide")
+        
         col_guide1, col_guide2, col_guide3 = st.columns(3)
+        
         with col_guide1:
             st.markdown("""
             #### 📂 Data Preparation
             1. Place simulation files in `numerical_solutions/` directory
-            2. supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
+            2. Supported formats: `.pkl`, `.pickle`, `.pt`, `.pth`
             3. Files should contain 'params' and 'history' keys
-            4. <strong>Important:</strong> For rotation logic to work, files should contain tensor components (`sigma_xx`, `tau_xy`, etc.).
+            4. Stress fields should be in 'stresses' dictionary
             """)
+        
         with col_guide2:
             st.markdown("""
-            #### 🎯 Enhanced Spatial Locality
-            - **Angular Weighting:** Aggressive proximity-based weights
-            - **Physics Toggle:** Enable/Disable 54.7° bias
-            - **Physics Rotation:** Enable/Disable tensor rotation logic
-            - **Defect Scaling:** Automatic scaling based on selected defect type
-            - **Cyclic Angles:** 0° = 360°, proper distance calculations
-            - **Spatial Weight Factor:** Balance spatial vs transformer weights
-            - **Parameter Decay:** Controls non-angular parameter influence
+            #### 🎯 Key Parameters
+            - **Polar Angle (θ):** Target orientation angle (54.7° is habit plane)
+            - **Defect Type:** ISF, ESF, Twin, or No Defect
+            - **Spatial Weight Factor:** 0.35 default (65% spatial weights, 35% transformer)
+            - **Angular Weight:** 60% of spatial weight calculation
+            - **Defect Type Weight:** 30% of spatial weight calculation
             """)
+        
         with col_guide3:
             st.markdown("""
-            #### 🔍 Advanced Features
-            - Visualize angular weighting function
-            - Detailed weight distribution analysis
-            - Select any source as ground truth
-            - Comprehensive error metrics
-            - Export results for publication
+            #### 🔍 Weighting Strategy
+            - **60%:** Angular proximity (closest angles get highest weight)
+            - **30%:** Defect type similarity (same defect gets full weight)
+            - **5%:** Eigenstrain (ε₀) similarity
+            - **5%:** Kappa (κ) similarity
+            - **Result:** Twin at 60° > Twin at 30° for target at 54.7°
             """)
         
         # Physics explanation
-        with st.expander("🧬 Physics Background: Rotational Tensor Interpolation", expanded=True):
+        with st.expander("🧬 Enhanced Angular Proximity Weighting", expanded=True):
             st.markdown("""
-            **Rotational Tensor Interpolation & Magnitude Scaling:**
-            1. **Orientation Control (Angular Weights):**
-               - Instead of simple blending, we use a Rotation Matrix `R` to physically rotate the source stress tensor $\sigma_{source}$ to align with the target angle.
-               - $\sigma_{rotated} = R \cdot \sigma_{source} \cdot R^T$.
-               - This effectively removes the orientation discrepancy before transformer weights are applied.
-            2. **Magnitude Control (Defect Type):**
-               - Source stress is normalized by its inherent defect magnitude (e.g., Twin defects are stronger than ISF).
-               - The normalized tensor is then scaled by the Target Defect magnitude.
-               - $\sigma_{final} = (\sigma_{rotated} / M_{source}) \times M_{target}$.
-            3. **Cyclic Angle Mathematics:**
-               - Proper handling of 0° = 360° equivalence.
-               - Delta angle calculation $\Delta \theta = \theta_{target} - \theta_{source}$.
-            4. **Transformer Role:**
-               - After physical rotation and scaling, the Transformer acts as a super-resolution blender.
-               - It learns to weigh the "shape" nuances of different sources more than their absolute position.
-            5. **Fix for "Weirdness":**
-               - The dashboard now explicitly uses `raw_source_fields` for visualization. This ensures you see:
-                 - Ground Truth: Twin @ 60° (Actual Source Orientation)
-                 - Interpolated: Twin @ 54.7° (Rotated to Target)
-               - This allows you to verify the shift and magnitude scaling clearly.
+            **Why angular proximity dominates for stress field interpolation:**
+            
+            1. **Pattern Similarity:** Stress field patterns are primarily determined by orientation (θ)
+            - Similar angles produce similar stress distributions
+            - Different angles produce rotated/stretched patterns
+            
+            2. **Magnitude Scaling:** Defect type mainly affects magnitude through eigenstrain (ε₀)
+            - Twin (ε₀=0.707), ESF (ε₀=0.333), ISF (ε₀=0.289)
+            - Same defect type at similar angle → similar magnitude scaling
+            
+            3. **Enhanced Weighting Strategy:**
+            - **60% weight to angular proximity:** Gaussian decay with σ=10°
+            - **30% weight to defect type:** Same type=1.0, similar types=0.5, different=0.3
+            - **10% weight to material parameters:** ε₀ and κ similarity
+            
+            4. **Example:** For target at 54.7° (twin):
+            - Twin at 60° (Δ=5.3°): High angular weight + full defect weight = **Highest priority**
+            - Twin at 30° (Δ=24.7°): Lower angular weight + full defect weight = **Medium priority**
+            - ESF at 60° (Δ=5.3°): High angular weight + partial defect weight = **Lower priority**
+            
+            This ensures the interpolated field looks most like the nearest source with same defect type.
             """)
+    
+    # Footer
+    st.divider()
+    col_footer1, col_footer2, col_footer3 = st.columns(3)
+    with col_footer1:
+        st.markdown("**🔬 Transformer Stress Interpolator**")
+        st.markdown("Version 2.2.0 - Enhanced Angular Proximity")
+    with col_footer2:
+        st.markdown("**📚 Key Features:**")
+        st.markdown("• 60% weight to angular proximity")
+        st.markdown("• 30% weight to defect type similarity")
+        st.markdown("• Comparison dashboard")
+    with col_footer3:
+        st.markdown("**📧 Contact:**")
+        st.markdown("For issues or feature requests")
+        st.markdown("Open an issue on GitHub")
 
 # =============================================
 # RUN THE APPLICATION
 # =============================================
 if __name__ == "__main__":
     main()
-
