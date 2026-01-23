@@ -1339,7 +1339,7 @@ class HeatMapVisualizer:
                     yaxis=dict(
                         title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
                         tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200),
+                        gridcolor='rgb(200, 200, 200)',
                         backgroundcolor='white'
                     ),
                     zaxis=dict(
