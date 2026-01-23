@@ -2808,7 +2808,7 @@ def main():
                     # Create a sample of the data
                     sample_data = {}
                     for field_name, field_data in result['fields'].items():
-                        sample_data[field_name] = field_data.flatten()[:100] 1]  # First 100 values
+                        sample_data[field_name] = field_data.flatten()[:100]  # First 100 values
                     
                     df_sample = pd.DataFrame(sample_data)
                     st.dataframe(df_sample.head(10))
