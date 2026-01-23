@@ -793,7 +793,7 @@ class TransformerSpatialInterpolator:
                         'max': float(np.max(interpolated fields['sigma_mag'])),
                         'mean': float(np.mean(interpolated fields['sigma_mag'])),
                         'std': float(np.std(interpolated fields['sigma_mag'])),
-                        'min': float(np.min(interpolated fields['sigma_mag'])])
+                        'min': float(np.min(interpolated fields['sigma_mag']))
                     }
                 },
                 'target_params': target_params,
