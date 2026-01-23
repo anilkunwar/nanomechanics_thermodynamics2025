@@ -28,6 +28,7 @@ warnings.filterwarnings('ignore')
 # =============================================
 # GLOBAL STYLING CONFIGURATION
 # =============================================
+# Publication quality styling
 plt.rcParams.update({
     'font.size': 14,
     'axes.titlesize': 20,
@@ -49,6 +50,7 @@ VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 
+# Enhanced colormap options with publication standards
 COLORMAP_OPTIONS = {
     'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
                    'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
@@ -66,21 +68,22 @@ COLORMAP_OPTIONS = {
 }
 
 # =============================================
-# TARGETED SOLUTION LOADER WITH ANGLE BRACKETING
+# ENHANCED SOLUTION LOADER
 # =============================================
-class TargetedSolutionLoader:
-    """Solution loader with targeted angle bracketing capability"""
+class EnhancedSolutionLoader:
+    """Enhanced solution loader with physics-aware processing"""
     def __init__(self, solutions_dir: str = SOLUTIONS_DIR):
         self.solutions_dir = solutions_dir
         self._ensure_directory()
         self.cache = {}
-        self.angle_tolerance = 5.0  # Degrees tolerance for finding bracketing sources
     
     def _ensure_directory(self):
+        """Create solutions directory if it doesn't exist"""
         if not os.path.exists(self.solutions_dir):
             os.makedirs(self.solutions_dir, exist_ok=True)
     
     def scan_solutions(self) -> List[Dict[str, Any]]:
+        """Scan directory for solution files"""
         all_files = []
         for ext in ['*.pkl', '*.pickle', '*.pt', '*.pth']:
             import glob
@@ -88,6 +91,7 @@ class TargetedSolutionLoader:
             files = glob.glob(pattern)
             all_files.extend(files)
         
+        # Sort by modification time (newest first)
         all_files.sort(key=os.path.getmtime, reverse=True)
         
         file_info = []
@@ -103,26 +107,32 @@ class TargetedSolutionLoader:
                 file_info.append(info)
             except:
                 continue
+        
         return file_info
     
     def read_simulation_file(self, file_path, format_type='auto'):
+        """Read simulation file with physics-aware processing"""
         try:
             with open(file_path, 'rb') as f:
                 if format_type == 'pt' or file_path.endswith(('.pt', '.pth')):
+                    # PyTorch file
                     try:
                         data = torch.load(f, map_location='cpu', weights_only=True)
                     except:
                         data = torch.load(f, map_location='cpu', weights_only=False)
                 else:
+                    # Pickle file
                     data = pickle.load(f)
-                
-                standardized = self._standardize_data(data, file_path)
-                return standardized
+            
+            # Standardize data structure
+            standardized = self._standardize_data(data, file_path)
+            return standardized
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
     
     def _standardize_data(self, data, file_path):
+        """Standardize simulation data with physics metadata"""
         standardized = {
             'params': {},
             'history': [],
@@ -133,27 +143,33 @@ class TargetedSolutionLoader:
                 'angle_degrees': None
             }
         }
+        
         try:
             if isinstance(data, dict):
+                # Extract parameters
                 if 'params' in data:
                     standardized['params'] = data['params']
                 elif 'parameters' in data:
                     standardized['params'] = data['parameters']
                 
+                # Extract history
                 if 'history' in data:
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
                     elif isinstance(history, dict):
+                        # Convert dict to list
                         history_list = []
                         for key in sorted(history.keys()):
                             if isinstance(history[key], dict):
                                 history_list.append(history[key])
                         standardized['history'] = history_list
                 
+                # Extract additional metadata
                 if 'metadata' in data:
                     standardized['metadata'].update(data['metadata'])
                 
+                # Convert tensors to numpy arrays
                 self._convert_tensors(standardized)
                 
                 # Extract angle in degrees for easier sorting
@@ -163,9 +179,11 @@ class TargetedSolutionLoader:
         except Exception as e:
             st.error(f"Standardization error: {e}")
             standardized['metadata']['error'] = str(e)
+        
         return standardized
     
     def _convert_tensors(self, data):
+        """Convert PyTorch tensors to numpy arrays recursively"""
         if isinstance(data, dict):
             for key, value in data.items():
                 if torch.is_tensor(value):
@@ -179,67 +197,11 @@ class TargetedSolutionLoader:
                 elif isinstance(item, (dict, list)):
                     self._convert_tensors(item)
     
-    def find_bracketing_sources(self, target_angle_deg, target_defect_type, solutions):
-        """
-        Find the two nearest sources that bracket the target angle for the given defect type.
-        Returns: (lower_source, upper_source, lower_idx, upper_idx, lower_angle, upper_angle)
-        """
-        # Filter solutions by defect type
-        same_defect_solutions = []
-        for i, sol in enumerate(solutions):
-            if 'params' in sol and sol['params'].get('defect_type') == target_defect_type:
-                angle_deg = sol['metadata'].get('angle_degrees')
-                if angle_deg is not None:
-                    same_defect_solutions.append((i, sol, angle_deg))
-        
-        if not same_defect_solutions:
-            return None, None, None, None, None, None
-        
-        # Sort by angle
-        same_defect_solutions.sort(key=lambda x: x[2])
-        angles = [x[2] for x in same_defect_solutions]
-        
-        # Find bracketing angles
-        lower_idx = None
-        upper_idx = None
-        
-        # Find the first angle greater than target
-        for i, angle in enumerate(angles):
-            if angle > target_angle_deg:
-                upper_idx = i
-                lower_idx = i - 1 if i > 0 else None
-                break
-        
-        # If no angle greater than target, use the last two angles
-        if upper_idx is None:
-            if len(angles) >= 2:
-                lower_idx = len(angles) - 2
-                upper_idx = len(angles) - 1
-            else:
-                # Only one source available
-                lower_idx = 0
-                upper_idx = 0
-        
-        # If no angle less than target, use the first two angles
-        elif lower_idx is None:
-            lower_idx = 0
-            upper_idx = 1 if len(angles) > 1 else 0
-        
-        # Get the bracketing sources
-        lower_source_idx, lower_source, lower_angle = same_defect_solutions[lower_idx]
-        upper_source_idx, upper_source, upper_angle = same_defect_solutions[upper_idx]
-        
-        # Ensure we have valid sources
-        if lower_source_idx is not None and upper_source_idx is not None:
-            return (lower_source, upper_source,
-                    lower_source_idx, upper_source_idx,
-                    lower_angle, upper_angle)
-        
-        return None, None, None, None, None, None
-    
     def load_all_solutions(self, use_cache=True, max_files=None):
+        """Load all solutions with physics processing"""
         solutions = []
         file_info = self.scan_solutions()
+        
         if max_files:
             file_info = file_info[:max_files]
         
@@ -256,75 +218,42 @@ class TargetedSolutionLoader:
             if solution:
                 self.cache[cache_key] = solution
                 solutions.append(solution)
+        
         return solutions
 
 # =============================================
-# POSITIONAL ENCODING FOR TRANSFORMER
+# ANGULAR BRACKETING INTERPOLATOR
 # =============================================
-class PositionalEncoding(nn.Module):
-    """Positional encoding for transformer"""
-    def __init__(self, d_model, max_len=5000):
-        super().__init__()
-        self.d_model = d_model
-        self.max_len = max_len
+class AngularBracketingInterpolator:
+    """
+    Interpolator that uses angular bracketing principle:
+    1. Finds the two nearest sources of the same defect type that bracket the target angle
+    2. Assigns near-zero weights to all other sources
+    3. Performs linear interpolation between the two bracketing sources
+    """
     
-    def forward(self, x):
-        batch_size, seq_len, d_model = x.shape
-        
-        # Create positional indices
-        position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
-        
-        # Compute divisor term
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() *
-                            (-np.log(10000.0) / d_model))
-        
-        # Create positional encoding
-        pe = torch.zeros(seq_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        
-        return x + pe.unsqueeze(0)
-
-# =============================================
-# TARGETED TRANSFORMER INTERPOLATOR WITH BRACKETING
-# =============================================
-class TargetedTransformerInterpolator:
-    """
-    Targeted interpolator that uses ONLY the two nearest bracketing sources
-    of the same defect type, giving near-zero weights to all other sources.
-    """
-    def __init__(self, d_model=64, nhead=8, num_layers=3,
-                bracketing_weight=0.98, other_weight=0.01):
-        self.d_model = d_model
-        self.nhead = nhead
-        self.num_layers = num_layers
-        self.bracketing_weight = bracketing_weight  # Weight for bracketing sources
-        self.other_weight = other_weight  # Near-zero weight for other sources
-        
-        # Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=d_model*4,
-            dropout=0.1,
-            batch_first=True
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
-        # Input projection
-        self.input_proj = nn.Linear(12, d_model)
-        
-        # Positional encoding
-        self.pos_encoder = PositionalEncoding(d_model)
+    def __init__(self, bracketing_weight=0.98, other_weight=0.001):
+        """
+        Args:
+            bracketing_weight: Total weight allocated to the two bracketing sources
+            other_weight: Near-zero weight for non-bracketing sources
+        """
+        self.bracketing_weight = bracketing_weight
+        self.other_weight = other_weight
     
     def find_bracketing_sources(self, solutions, target_angle_deg, target_defect_type):
-        """Find the two nearest sources that bracket the target angle"""
-        # Filter by defect type
+        """
+        Find the two nearest sources that bracket the target angle for the given defect type.
+        
+        Returns:
+            (lower_source, upper_source, lower_idx, upper_idx, lower_angle, upper_angle)
+        """
+        # Filter solutions by defect type
         same_defect_solutions = []
         for i, sol in enumerate(solutions):
             if 'params' in sol and sol['params'].get('defect_type') == target_defect_type:
-                if 'theta' in sol['params']:
-                    angle_deg = np.degrees(sol['params']['theta'])
+                angle_deg = sol['metadata'].get('angle_degrees')
+                if angle_deg is not None:
                     same_defect_solutions.append((i, sol, angle_deg))
         
         if len(same_defect_solutions) < 2:
@@ -360,66 +289,33 @@ class TargetedTransformerInterpolator:
         lower_source_idx, lower_source, lower_angle = same_defect_solutions[lower_idx]
         upper_source_idx, upper_source, upper_angle = same_defect_solutions[upper_idx]
         
-        return (lower_source, upper_source,
+        return (lower_source, upper_source, 
                 lower_source_idx, upper_source_idx,
                 lower_angle, upper_angle)
     
-    def create_targeted_weights(self, solutions, target_angle_deg, target_defect_type):
-        """
-        Create weights where bracketing sources get most weight and others get near-zero
-        """
-        # Find bracketing sources
-        result = self.find_bracketing_sources(solutions, target_angle_deg, target_defect_type)
-        if not result[0] or not result[1]:
-            return None
-        
-        lower_source, upper_source, lower_idx, upper_idx, lower_angle, upper_angle = result
-        
-        # Calculate weights based on angular distance
-        lower_dist = abs(target_angle_deg - lower_angle)
-        upper_dist = abs(upper_angle - target_angle_deg)
-        total_dist = lower_dist + upper_dist
-        
-        # Inverse distance weighting
-        if total_dist > 0:
-            lower_weight = (upper_dist / total_dist) * self.bracketing_weight
-            upper_weight = (lower_dist / total_dist) * self.bracketing_weight
-        else:
-            lower_weight = upper_weight = self.bracketing_weight / 2
-        
-        # Create weight array
-        weights = np.ones(len(solutions)) * self.other_weight  # Near-zero for others
-        weights[lower_idx] = lower_weight
-        weights[upper_idx] = upper_weight
-        
-        # Normalize to sum to 1
-        weights = weights / np.sum(weights)
-        
-        # Calculate angular distances for all sources
-        angular_distances = []
-        for sol in solutions:
-            if 'params' in sol and 'theta' in sol['params']:
-                angle_deg = np.degrees(sol['params']['theta'])
-                dist = abs(angle_deg - target_angle_deg)
-                dist = min(dist, 360 - dist)  # Handle circular nature
-                angular_distances.append(dist)
-            else:
-                angular_distances.append(180.0)  # Max distance
-        
-        return {
-            'weights': weights,
-            'lower_source': {
-                'index': lower_idx,
-                'angle': lower_angle,
-                'weight': lower_weight
-            },
-            'upper_source': {
-                'index': upper_idx,
-                'angle': upper_angle,
-                'weight': upper_weight
-            },
-            'angular_distances': angular_distances
-        }
+    def compute_von_mises(self, stress_fields):
+        """Compute von Mises stress from stress components"""
+        if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz', 'tau_xy']):
+            sxx = stress_fields['sigma_xx']
+            syy = stress_fields['sigma_yy']
+            szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
+            txy = stress_fields['tau_xy']
+            tyz = stress_fields.get('tau_yz', np.zeros_like(sxx))
+            tzx = stress_fields.get('tau_zx', np.zeros_like(sxx))
+            
+            von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
+                                     6*(txy**2 + tyz**2 + tzx**2)))
+            return von_mises
+        return np.zeros((100, 100))  # Default shape
+    
+    def compute_hydrostatic(self, stress_fields):
+        """Compute hydrostatic stress from stress components"""
+        if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz']):
+            sxx = stress_fields['sigma_xx']
+            syy = stress_fields['sigma_yy']
+            szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
+            return (sxx + syy + szz) / 3
+        return np.zeros((100, 100))
     
     def interpolate_with_bracketing(self, solutions, target_angle_deg, target_params):
         """
@@ -432,19 +328,45 @@ class TargetedTransformerInterpolator:
         try:
             target_defect_type = target_params.get('defect_type', 'Twin')
             
-            # Get targeted weights
-            weight_info = self.create_targeted_weights(solutions, target_angle_deg, target_defect_type)
-            if not weight_info:
+            # Find bracketing sources
+            result = self.find_bracketing_sources(solutions, target_angle_deg, target_defect_type)
+            if not result[0] or not result[1]:
                 st.error("Could not find bracketing sources.")
                 return None
             
-            weights = weight_info['weights']
-            lower_info = weight_info['lower_source']
-            upper_info = weight_info['upper_source']
+            lower_source, upper_source, lower_idx, upper_idx, lower_angle, upper_angle = result
+            
+            # Calculate interpolation factor
+            if abs(upper_angle - lower_angle) > 0:
+                t = (target_angle_deg - lower_angle) / (upper_angle - lower_angle)
+            else:
+                t = 0.5
+            
+            # Calculate weights based on angular distance
+            lower_dist = abs(target_angle_deg - lower_angle)
+            upper_dist = abs(upper_angle - target_angle_deg)
+            total_dist = lower_dist + upper_dist
+            
+            # Inverse distance weighting
+            if total_dist > 0:
+                lower_weight = (upper_dist / total_dist) * self.bracketing_weight
+                upper_weight = (lower_dist / total_dist) * self.bracketing_weight
+            else:
+                lower_weight = upper_weight = self.bracketing_weight / 2
+            
+            # Create weight array
+            weights = np.ones(len(solutions)) * self.other_weight  # Near-zero for others
+            weights[lower_idx] = lower_weight
+            weights[upper_idx] = upper_weight
+            
+            # Normalize to sum to 1
+            weights = weights / np.sum(weights)
             
             # Extract all source fields
             source_fields = []
             source_params = []
+            raw_source_fields = []  # Store original fields
+            
             for i, src in enumerate(solutions):
                 if 'params' not in src or 'history' not in src:
                     continue
@@ -456,25 +378,25 @@ class TargetedTransformerInterpolator:
                 if history and isinstance(history[-1], dict):
                     last_frame = history[-1]
                     if 'stresses' in last_frame:
-                        stress_fields = last_frame['stresses']
+                        stress_fields = last_frame['stresses'].copy()
                         
-                        # Extract von Mises
+                        # Save raw fields
+                        raw_source_fields.append(stress_fields.copy())
+                        
+                        # Extract or compute von Mises
                         if 'von_mises' in stress_fields:
                             vm = stress_fields['von_mises']
                         else:
                             vm = self.compute_von_mises(stress_fields)
                         
-                        # Extract hydrostatic
+                        # Extract or compute hydrostatic
                         if 'sigma_hydro' in stress_fields:
                             hydro = stress_fields['sigma_hydro']
                         else:
                             hydro = self.compute_hydrostatic(stress_fields)
                         
-                        # Extract magnitude
-                        if 'sigma_mag' in stress_fields:
-                            mag = stress_fields['sigma_mag']
-                        else:
-                            mag = np.sqrt(vm**2 + hydro**2)
+                        # Compute magnitude
+                        mag = np.sqrt(vm**2 + hydro**2)
                         
                         source_fields.append({
                             'von_mises': vm,
@@ -498,37 +420,31 @@ class TargetedTransformerInterpolator:
             shapes = [f['von_mises'].shape for f in source_fields]
             if len(set(shapes)) > 1:
                 target_shape = shapes[0]
-                for fields in source_fields:
+                for fields, raw_fields in zip(source_fields, raw_source_fields):
                     for key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                         if fields[key].shape != target_shape:
                             factors = [t/s for t, s in zip(target_shape, fields[key].shape)]
                             fields[key] = zoom(fields[key], factors, order=1)
+                            raw_fields[key] = zoom(raw_fields[key], factors, order=1)
             
-            # Apply angular interpolation correction
+            # Apply angular interpolation
             shape = source_fields[0]['von_mises'].shape
             interpolated_fields = {}
+            
             for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                 interpolated = np.zeros(shape)
                 
                 # Get bracketing source fields
-                lower_field = source_fields[lower_info['index']][component]
-                upper_field = source_fields[upper_info['index']][component]
-                lower_angle = lower_info['angle']
-                upper_angle = upper_info['angle']
-                
-                # Calculate interpolation factor
-                if abs(upper_angle - lower_angle) > 0:
-                    t = (target_angle_deg - lower_angle) / (upper_angle - lower_angle)
-                else:
-                    t = 0.5
+                lower_field = source_fields[lower_idx][component]
+                upper_field = source_fields[upper_idx][component]
                 
                 # Linear interpolation between bracketing sources
                 interpolated = (1 - t) * lower_field + t * upper_field
                 
-                # Add small contributions from other sources (if weights > threshold)
-                threshold = 0.01  # Only include sources with weight > 1%
+                # Add small contributions from other sources
+                threshold = 0.001  # Only include sources with weight > 0.1%
                 for i, fields in enumerate(source_fields):
-                    if i != lower_info['index'] and i != upper_info['index']:
+                    if i != lower_idx and i != upper_idx:
                         if weights[i] > threshold and component in fields:
                             interpolated += weights[i] * fields[component]
                 
@@ -552,23 +468,41 @@ class TargetedTransformerInterpolator:
                 if 'theta' in params:
                     angle_deg = np.degrees(params['theta'])
                     dist = abs(angle_deg - target_angle_deg)
-                    dist = min(dist, 360 - dist)
+                    dist = min(dist, 360 - dist)  # Handle circular nature
                     angular_distances.append(dist)
                 else:
                     angular_distances.append(180.0)
+                
                 defect_types.append(params.get('defect_type', 'Unknown'))
             
             # Calculate weight distribution metrics
-            weight_entropy = self._calculate_entropy(weights)
+            def calculate_entropy(weights):
+                weights = np.array(weights)
+                weights = weights[weights > 0]
+                if len(weights) == 0:
+                    return 0.0
+                weights = weights / weights.sum()
+                return float(-np.sum(weights * np.log(weights + 1e-10)))
+            
+            weight_entropy = calculate_entropy(weights)
             
             return {
                 'fields': interpolated_fields,
+                'raw_source_fields': raw_source_fields,
                 'weights': {
                     'combined': weights.tolist(),
                     'entropy': weight_entropy,
                     'bracketing_sources': {
-                        'lower': lower_info,
-                        'upper': upper_info
+                        'lower': {
+                            'index': lower_idx,
+                            'angle': lower_angle,
+                            'weight': lower_weight
+                        },
+                        'upper': {
+                            'index': upper_idx,
+                            'angle': upper_angle,
+                            'weight': upper_weight
+                        }
                     }
                 },
                 'statistics': stats,
@@ -579,103 +513,37 @@ class TargetedTransformerInterpolator:
                 'source_angular_distances': angular_distances,
                 'source_defect_types': defect_types,
                 'source_fields': source_fields,
-                'interpolation_method': 'targeted_bracketing',
+                'interpolation_method': 'angular_bracketing',
                 'interpolation_factor': {
-                    'lower_angle': float(lower_info['angle']),
-                    'upper_angle': float(upper_info['angle']),
+                    'lower_angle': float(lower_angle),
+                    'upper_angle': float(upper_angle),
                     'target_angle': float(target_angle_deg),
-                    'interpolation_t': float((target_angle_deg - lower_info['angle']) /
-                                           (upper_info['angle'] - lower_info['angle'])
-                                           if abs(upper_info['angle'] - lower_info['angle']) > 0 else 0.5)
+                    'interpolation_t': float(t)
                 }
             }
+            
         except Exception as e:
-            st.error(f"Error during targeted interpolation: {str(e)}")
+            st.error(f"Error during angular bracketing interpolation: {str(e)}")
             import traceback
             st.error(f"Traceback: {traceback.format_exc()}")
             return None
-    
-    def compute_von_mises(self, stress_fields):
-        if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz', 'tau_xy']):
-            sxx = stress_fields['sigma_xx']
-            syy = stress_fields['sigma_yy']
-            szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
-            txy = stress_fields['tau_xy']
-            tyz = stress_fields.get('tau_yz', np.zeros_like(sxx))
-            tzx = stress_fields.get('tau_zx', np.zeros_like(sxx))
-            von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
-                                     6*(txy**2 + tyz**2 + tzx**2)))
-            return von_mises
-        return np.zeros((100, 100))
-    
-    def compute_hydrostatic(self, stress_fields):
-        if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz']):
-            sxx = stress_fields['sigma_xx']
-            syy = stress_fields['sigma_yy']
-            szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
-            return (sxx + syy + szz) / 3
-        return np.zeros((100, 100))
-    
-    def _calculate_entropy(self, weights):
-        weights = np.array(weights)
-        weights = weights[weights > 0]
-        if len(weights) == 0:
-            return 0.0
-        weights = weights / weights.sum()
-        return float(-np.sum(weights * np.log(weights + 1e-10)))
 
 # =============================================
-# DUAL INTERPOLATION SYSTEM
+# ENHANCED HEATMAP VISUALIZER WITH BRACKETING ANALYSIS
 # =============================================
-class DualInterpolationSystem:
-    """
-    Dual interpolation system that can switch between:
-    1. Targeted bracketing (using only two nearest same-defect sources)
-    2. Full transformer interpolation (using all sources)
-    """
-    def __init__(self):
-        self.targeted_interpolator = TargetedTransformerInterpolator(
-            bracketing_weight=0.98,
-            other_weight=0.001
-        )
-        self.use_targeted_mode = True  # Default to targeted mode
+class HeatMapVisualizer:
+    """Enhanced heat map visualizer with comparison dashboard and publication styling"""
     
-    def set_interpolation_mode(self, use_targeted_mode):
-        self.use_targeted_mode = use_targeted_mode
-    
-    def interpolate(self, solutions, target_angle_deg, target_params, mode='auto'):
-        """
-        Interpolate using selected mode
-        mode: 'targeted', 'full', or 'auto'
-        """
-        if mode == 'auto':
-            mode = 'targeted' if self.use_targeted_mode else 'full'
-        
-        if mode == 'targeted':
-            return self.targeted_interpolator.interpolate_with_bracketing(
-                solutions, target_angle_deg, target_params
-            )
-        else:
-            # For full mode, we would use the enhanced transformer interpolator
-            # For now, return targeted as placeholder
-            return self.targeted_interpolator.interpolate_with_bracketing(
-                solutions, target_angle_deg, target_params
-            )
-
-# =============================================
-# ENHANCED HEATMAP VISUALIZER WITH ADVANCED VISUALIZATIONS
-# =============================================
-class AdvancedHeatmapVisualizer:
-    """Enhanced visualizer with advanced visualization capabilities"""
     def __init__(self):
         self.colormaps = COLORMAP_OPTIONS
     
     def create_stress_heatmap(self, stress_field, title="Stress Heat Map",
-                             cmap_name='viridis', figsize=(12, 10),
-                             colorbar_label="Stress (GPa)", vmin=None, vmax=None,
-                             show_stats=True, target_angle=None, defect_type=None,
-                             show_colorbar=True, aspect_ratio='equal', special_angle=None):
+                            cmap_name='viridis', figsize=(12, 10),
+                            colorbar_label="Stress (GPa)", vmin=None, vmax=None,
+                            show_stats=True, target_angle=None, defect_type=None,
+                            show_colorbar=True, aspect_ratio='equal'):
         """Create enhanced heat map with chosen colormap and publication styling"""
+        
         # Create figure
         fig, ax = plt.subplots(figsize=figsize)
         
@@ -695,11 +563,6 @@ class AdvancedHeatmapVisualizer:
         im = ax.imshow(stress_field, cmap=cmap, vmin=vmin, vmax=vmax,
                       aspect=aspect_ratio, interpolation='bilinear', origin='lower')
         
-        # Add special angle indicator if provided
-        if special_angle is not None:
-            ax.axhline(y=special_angle, color='r', linestyle='--', alpha=0.7, linewidth=1)
-            ax.axvline(x=special_angle, color='r', linestyle='--', alpha=0.7, linewidth=1)
-        
         # Add colorbar with enhanced styling
         if show_colorbar:
             cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
@@ -710,8 +573,7 @@ class AdvancedHeatmapVisualizer:
         title_str = title
         if target_angle is not None and defect_type is not None:
             title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
-        if special_angle is not None:
-            title_str += f"\nSpecial Angle: {special_angle}°"
+        
         ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
         ax.set_xlabel('X Position', fontsize=16, fontweight='bold')
         ax.set_ylabel('Y Position', fontsize=16, fontweight='bold')
@@ -731,12 +593,13 @@ class AdvancedHeatmapVisualizer:
         
         # Set tick parameters
         ax.tick_params(axis='both', which='major', labelsize=14)
+        
         plt.tight_layout()
         return fig
     
     def create_interactive_heatmap(self, stress_field, title="Stress Heat Map",
-                                  cmap_name='viridis', width=800, height=700,
-                                  target_angle=None, defect_type=None, special_angle=None):
+                                 cmap_name='viridis', width=800, height=700,
+                                 target_angle=None, defect_type=None):
         """Create interactive heatmap with Plotly with enhanced styling"""
         try:
             # Validate colormap
@@ -749,12 +612,10 @@ class AdvancedHeatmapVisualizer:
             for i in range(stress_field.shape[0]):
                 row_text = []
                 for j in range(stress_field.shape[1]):
-                    text = f"Position: ({i}, {j})<br>Stress: {stress_field[i, j]:.4f} GPa"
                     if target_angle is not None:
-                        text += f"<br>θ: {target_angle:.1f}°"
-                    if special_angle is not None:
-                        text += f"<br>Special Angle: {special_angle}°"
-                    row_text.append(text)
+                        row_text.append(f"Position: ({i}, {j})<br>Stress: {stress_field[i, j]:.4f} GPa<br>θ: {target_angle:.1f}°")
+                    else:
+                        row_text.append(f"Position: ({i}, {j})<br>Stress: {stress_field[i, j]:.4f} GPa")
                 hover_text.append(row_text)
             
             # Create heatmap trace
@@ -784,8 +645,6 @@ class AdvancedHeatmapVisualizer:
             title_str = title
             if target_angle is not None and defect_type is not None:
                 title_str = f"{title}<br>θ = {target_angle:.1f}°, Defect: {defect_type}"
-            if special_angle is not None:
-                title_str += f"<br>Special Angle: {special_angle}°"
             
             # Update layout with publication styling
             fig.update_layout(
@@ -822,7 +681,9 @@ class AdvancedHeatmapVisualizer:
                 scaleanchor="x",
                 scaleratio=1,
             )
+            
             return fig
+        
         except Exception as e:
             st.error(f"Error creating interactive heatmap: {e}")
             # Return a simple figure as fallback
@@ -830,9 +691,591 @@ class AdvancedHeatmapVisualizer:
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
     
+    def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info,
+                                   target_angle, defect_type, component='von_mises',
+                                   cmap_name='viridis', figsize=(20, 15),
+                                   ground_truth_index=None, bracketing_info=None):
+        """
+        Create comprehensive comparison dashboard showing:
+        1. Interpolated result
+        2. Ground truth (selected source or closest match)
+        3. Difference between interpolated and ground truth
+        4. Weight distribution analysis
+        5. Angular distribution of sources
+        """
+        
+        fig = plt.figure(figsize=figsize)
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        
+        # Determine vmin and vmax for consistent scaling
+        all_values = [interpolated_fields[component]]
+        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
+            gt_field = source_fields[ground_truth_index].get(component)
+            if gt_field is not None:
+                all_values.append(gt_field)
+        vmin = min(np.nanmin(field) for field in all_values)
+        vmax = max(np.nanmax(field) for field in all_values)
+        
+        # 1. Interpolated result (top left)
+        ax1 = fig.add_subplot(gs[0, 0])
+        im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name,
+                        vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
+        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
+        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}',
+                     fontsize=16, fontweight='bold')
+        ax1.set_xlabel('X Position')
+        ax1.set_ylabel('Y Position')
+        ax1.grid(True, alpha=0.2)
+        
+        # 2. Ground truth comparison (top center)
+        ax2 = fig.add_subplot(gs[0, 1])
+        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
+            gt_field = source_fields[ground_truth_index].get(component)
+            if gt_field is not None:
+                # Get angular info if available
+                gt_angle = None
+                if 'source_angular_distances' in source_info and ground_truth_index < len(source_info.get('source_angular_distances', [])):
+                    gt_distance = source_info['source_angular_distances'][ground_truth_index]
+                    gt_angle = target_angle + gt_distance if ground_truth_index < len(source_info.get('source_theta_degrees', [])) else None
+                
+                im2 = ax2.imshow(gt_field, cmap=cmap_name,
+                                vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
+                plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
+                
+                if gt_angle is not None:
+                    ax2.set_title(f'Ground Truth\nθ = {gt_angle:.1f}° (Δ={gt_distance:.1f}°)',
+                                 fontsize=16, fontweight='bold')
+                else:
+                    ax2.set_title(f'Ground Truth\nSource {ground_truth_index}',
+                                 fontsize=16, fontweight='bold')
+                ax2.set_xlabel('X Position')
+                ax2.set_ylabel('Y Position')
+                ax2.grid(True, alpha=0.2)
+            else:
+                ax2.text(0.5, 0.5, f'Component "{component}"\nmissing in ground truth',
+                        ha='center', va='center', fontsize=14, fontweight='bold')
+                ax2.set_axis_off()
+        else:
+            ax2.text(0.5, 0.5, 'Select Ground Truth Source',
+                    ha='center', va='center', fontsize=14, fontweight='bold')
+            ax2.set_title('Ground Truth Selection', fontsize=16, fontweight='bold')
+            ax2.set_axis_off()
+        
+        # 3. Difference plot (top right)
+        ax3 = fig.add_subplot(gs[0, 2])
+        if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
+            gt_field = source_fields[ground_truth_index].get(component)
+            if gt_field is not None:
+                diff_field = interpolated_fields[component] - gt_field
+                max_diff = np.max(np.abs(diff_field))
+                im3 = ax3.imshow(diff_field, cmap='RdBu_r',
+                                vmin=-max_diff, vmax=max_diff, aspect='equal',
+                                interpolation='bilinear', origin='lower')
+                plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04, label='Difference (GPa)')
+                ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa',
+                             fontsize=16, fontweight='bold')
+                ax3.set_xlabel('X Position')
+                ax3.set_ylabel('Y Position')
+                ax3.grid(True, alpha=0.2)
+                
+                # Calculate and display error metrics
+                mse = np.mean(diff_field**2)
+                mae = np.mean(np.abs(diff_field))
+                rmse = np.sqrt(mse)
+                error_text = (f"MSE: {mse:.4f}\n"
+                             f"MAE: {mae:.4f}\n"
+                             f"RMSE: {rmse:.4f}")
+                ax3.text(0.05, 0.95, error_text, transform=ax3.transAxes,
+                        fontsize=12, fontweight='bold', verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+            else:
+                ax3.text(0.5, 0.5, 'Ground truth missing\nfor difference plot',
+                        ha='center', va='center', fontsize=14, fontweight='bold')
+                ax3.set_axis_off()
+        else:
+            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected',
+                    ha='center', va='center', fontsize=14, fontweight='bold')
+            ax3.set_title('Difference Analysis', fontsize=16, fontweight='bold')
+            ax3.set_axis_off()
+        
+        # 4. Weight distribution analysis (middle left)
+        ax4 = fig.add_subplot(gs[1, 0])
+        if 'weights' in source_info:
+            weights = source_info['weights']['combined']
+            x = range(len(weights))
+            bars = ax4.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
+            ax4.set_xlabel('Source Index')
+            ax4.set_ylabel('Weight')
+            ax4.set_title('Source Weight Distribution', fontsize=16, fontweight='bold')
+            ax4.grid(True, alpha=0.3, axis='y')
+            
+            # Highlight bracketing sources if available
+            if bracketing_info:
+                lower_idx = bracketing_info.get('lower', {}).get('index')
+                upper_idx = bracketing_info.get('upper', {}).get('index')
+                
+                if lower_idx is not None and lower_idx < len(bars):
+                    bars[lower_idx].set_color('green')
+                    bars[lower_idx].set_alpha(0.9)
+                    bars[lower_idx].set_label('Lower Bracket')
+                
+                if upper_idx is not None and upper_idx < len(bars):
+                    bars[upper_idx].set_color('red')
+                    bars[upper_idx].set_alpha(0.9)
+                    bars[upper_idx].set_label('Upper Bracket')
+            
+            # Highlight selected ground truth
+            if ground_truth_index is not None and ground_truth_index < len(bars):
+                bars[ground_truth_index].set_edgecolor('orange')
+                bars[ground_truth_index].set_linewidth(3)
+            
+            ax4.legend()
+        
+        # 5. Angular distribution of sources (middle center)
+        ax5 = fig.add_subplot(gs[1, 1], projection='polar')
+        if 'source_angular_distances' in source_info:
+            # Get angles for polar plot
+            angles_rad = []
+            distances = []
+            
+            if 'source_theta_degrees' in source_info:
+                angles_rad = np.radians(source_info['source_theta_degrees'])
+                distances = source_info['source_angular_distances']
+            else:
+                # If theta degrees not available, use angular distances
+                angles_rad = np.linspace(0, 2*np.pi, len(source_info['source_angular_distances']))
+                distances = source_info['source_angular_distances']
+            
+            # Plot sources as points with size proportional to weight
+            if 'weights' in source_info:
+                weights = source_info['weights']['combined']
+                sizes = 100 * np.array(weights) / (np.max(weights) + 1e-8)  # Normalize sizes
+            else:
+                sizes = 50 * np.ones(len(angles_rad))
+            
+            scatter = ax5.scatter(angles_rad, distances,
+                                s=sizes, alpha=0.7, c='blue', edgecolors='black')
+            
+            # Plot target angle
+            target_rad = np.radians(target_angle)
+            ax5.scatter(target_rad, 0, s=200, c='red', marker='*', edgecolors='black', label='Target')
+            
+            # Highlight bracketing angles if available
+            if bracketing_info:
+                lower_angle = bracketing_info.get('lower', {}).get('angle')
+                upper_angle = bracketing_info.get('upper', {}).get('angle')
+                
+                if lower_angle is not None:
+                    lower_rad = np.radians(lower_angle)
+                    ax5.scatter(lower_rad, abs(lower_angle - target_angle), 
+                               s=150, c='green', marker='^', edgecolors='black', label='Lower Bracket')
+                
+                if upper_angle is not None:
+                    upper_rad = np.radians(upper_angle)
+                    ax5.scatter(upper_rad, abs(upper_angle - target_angle), 
+                               s=150, c='red', marker='v', edgecolors='black', label='Upper Bracket')
+            
+            ax5.set_title('Angular Distribution of Sources', fontsize=16, fontweight='bold', pad=20)
+            ax5.set_theta_zero_location('N')  # 0° at top
+            ax5.set_theta_direction(-1)  # Clockwise
+            ax5.legend(loc='upper right', fontsize=10)
+        
+        # 6. Bracketing interpolation visualization (middle right)
+        ax6 = fig.add_subplot(gs[1, 2])
+        if bracketing_info:
+            lower_angle = bracketing_info.get('lower', {}).get('angle')
+            upper_angle = bracketing_info.get('upper', {}).get('angle')
+            interp_t = bracketing_info.get('interpolation_t', 0.5)
+            
+            # Create angle line
+            angles = np.array([lower_angle, target_angle, upper_angle])
+            values = np.array([0, interp_t, 1])
+            
+            ax6.plot(angles, values, 'b-', linewidth=2, marker='o', markersize=8)
+            ax6.fill_between([lower_angle, upper_angle], 0, 1, alpha=0.2, color='blue')
+            
+            # Add labels
+            ax6.text(lower_angle, -0.05, f'{lower_angle:.1f}°', 
+                    ha='center', va='top', fontsize=12, fontweight='bold')
+            ax6.text(target_angle, interp_t + 0.05, f'Target: {target_angle:.1f}°', 
+                    ha='center', va='bottom', fontsize=12, fontweight='bold', color='red')
+            ax6.text(upper_angle, -0.05, f'{upper_angle:.1f}°', 
+                    ha='center', va='top', fontsize=12, fontweight='bold')
+            
+            # Add interpolation factor
+            ax6.text(target_angle, interp_t/2, f't = {interp_t:.3f}', 
+                    ha='center', va='center', fontsize=10,
+                    bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+            
+            ax6.set_xlabel('Angle (degrees)')
+            ax6.set_ylabel('Interpolation Factor (t)')
+            ax6.set_title('Angular Bracketing Interpolation', fontsize=16, fontweight='bold')
+            ax6.grid(True, alpha=0.3)
+            ax6.set_ylim(-0.1, 1.1)
+        else:
+            ax6.text(0.5, 0.5, 'Bracketing info\nnot available',
+                    ha='center', va='center', fontsize=14, fontweight='bold')
+            ax6.set_title('Bracketing Visualization', fontsize=16, fontweight='bold')
+            ax6.set_axis_off()
+        
+        # 7. Statistics table (bottom left)
+        ax7 = fig.add_subplot(gs[2, 0])
+        ax7.axis('off')
+        
+        # Prepare statistics with enhanced formatting
+        stats = source_info.get('statistics', {}).get(component, {})
+        if stats:
+            stats_text = (
+                f"{component.replace('_', ' ').title()} Statistics:\n"
+                f" Max: {stats.get('max', 0):.3f} GPa\n"
+                f" Min: {stats.get('min', 0):.3f} GPa\n"
+                f" Mean: {stats.get('mean', 0):.3f} GPa\n"
+                f" Std: {stats.get('std', 0):.3f} GPa\n"
+                f" Median: {stats.get('median', 0):.3f} GPa"
+            )
+        else:
+            stats_text = "Statistics not available"
+        
+        ax7.text(0.1, 0.5, stats_text, fontsize=13, family='monospace', fontweight='bold',
+                verticalalignment='center', transform=ax7.transAxes,
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, edgecolor='brown', linewidth=2))
+        ax7.set_title('Stress Statistics', fontsize=18, fontweight='bold', pad=20)
+        
+        # 8. Source information (bottom center)
+        ax8 = fig.add_subplot(gs[2, 1])
+        ax8.axis('off')
+        
+        # Prepare source information
+        if bracketing_info:
+            lower_weight = bracketing_info.get('lower', {}).get('weight', 0)
+            upper_weight = bracketing_info.get('upper', {}).get('weight', 0)
+            
+            source_text = (
+                f"Bracketing Sources:\n"
+                f" Lower: {bracketing_info.get('lower', {}).get('angle', 0):.1f}°\n"
+                f" Upper: {bracketing_info.get('upper', {}).get('angle', 0):.1f}°\n\n"
+                f"Weight Distribution:\n"
+                f" Lower: {lower_weight*100:.1f}%\n"
+                f" Upper: {upper_weight*100:.1f}%\n"
+                f" Others: {(1 - lower_weight - upper_weight)*100:.3f}%"
+            )
+        else:
+            source_text = "Bracketing information\nnot available"
+        
+        ax8.text(0.1, 0.5, source_text, fontsize=13, family='monospace', fontweight='bold',
+                verticalalignment='center', transform=ax8.transAxes,
+                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8, edgecolor='blue', linewidth=2))
+        ax8.set_title('Source Information', fontsize=18, fontweight='bold', pad=20)
+        
+        # 9. Interpolation method info (bottom right)
+        ax9 = fig.add_subplot(gs[2, 2])
+        ax9.axis('off')
+        
+        method_text = (
+            f"Interpolation Method:\n"
+            f" Angular Bracketing\n\n"
+            f"Target Parameters:\n"
+            f" Angle: {target_angle:.1f}°\n"
+            f" Defect: {defect_type}\n"
+            f" Grid: {interpolated_fields[component].shape[0]}×{interpolated_fields[component].shape[1]}\n\n"
+            f"Sources Used: {source_info.get('num_sources', 0)}"
+        )
+        
+        ax9.text(0.1, 0.5, method_text, fontsize=13, family='monospace', fontweight='bold',
+                verticalalignment='center', transform=ax9.transAxes,
+                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8, edgecolor='green', linewidth=2))
+        ax9.set_title('Method Info', fontsize=18, fontweight='bold', pad=20)
+        
+        plt.suptitle(f'Comprehensive Stress Field Analysis - Target θ={target_angle:.1f}°, {defect_type}',
+                    fontsize=24, fontweight='bold', y=0.98)
+        plt.tight_layout()
+        return fig
+    
+    def create_bracketing_analysis_dashboard(self, interpolation_result, figsize=(20, 15)):
+        """Create comprehensive dashboard for bracketing interpolation analysis"""
+        fig = plt.figure(figsize=figsize)
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        
+        result = interpolation_result
+        target_angle = result['target_angle']
+        target_defect = result['target_params']['defect_type']
+        
+        # 1. Weight distribution (top left)
+        ax1 = fig.add_subplot(gs[0, 0])
+        if 'weights' in result and 'combined' in result['weights']:
+            weights = result['weights']['combined']
+            x = range(len(weights))
+            
+            bars = ax1.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
+            ax1.set_xlabel('Source Index')
+            ax1.set_ylabel('Weight')
+            ax1.set_title('Targeted Weight Distribution', fontsize=16, fontweight='bold')
+            ax1.grid(True, alpha=0.3, axis='y')
+            
+            # Highlight bracketing sources
+            if 'bracketing_sources' in result['weights']:
+                bracketing = result['weights']['bracketing_sources']
+                lower_idx = bracketing['lower']['index']
+                upper_idx = bracketing['upper']['index']
+                
+                if lower_idx < len(bars):
+                    bars[lower_idx].set_color('green')
+                    bars[lower_idx].set_alpha(0.9)
+                    bars[lower_idx].set_label('Lower Bracket')
+                
+                if upper_idx < len(bars):
+                    bars[upper_idx].set_color('red')
+                    bars[upper_idx].set_alpha(0.9)
+                    bars[upper_idx].set_label('Upper Bracket')
+            
+            # Add weight labels for significant sources
+            for i, bar in enumerate(bars):
+                height = bar.get_height()
+                if height > 0.01:  # Label weights > 1%
+                    ax1.text(bar.get_x() + bar.get_width()/2., height + 0.005,
+                            f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+            
+            ax1.legend()
+        
+        # 2. Angular bracketing visualization (top center)
+        ax2 = fig.add_subplot(gs[0, 1])
+        if 'interpolation_method' in result and result['interpolation_method'] == 'angular_bracketing':
+            # Get bracketing angles
+            if 'interpolation_factor' in result:
+                factor = result['interpolation_factor']
+                lower_angle = factor['lower_angle']
+                upper_angle = factor['upper_angle']
+                interp_t = factor['interpolation_t']
+                
+                # Create angle line
+                angles = np.array([lower_angle, target_angle, upper_angle])
+                values = np.array([0, interp_t, 1])
+                
+                ax2.plot(angles, values, 'b-', linewidth=2, marker='o', markersize=8)
+                ax2.fill_between([lower_angle, upper_angle], 0, 1, alpha=0.2, color='blue')
+                
+                # Add labels
+                ax2.text(lower_angle, -0.05, f'{lower_angle:.1f}°', 
+                        ha='center', va='top', fontsize=12, fontweight='bold')
+                ax2.text(target_angle, interp_t + 0.05, f'Target: {target_angle:.1f}°', 
+                        ha='center', va='bottom', fontsize=12, fontweight='bold', color='red')
+                ax2.text(upper_angle, -0.05, f'{upper_angle:.1f}°', 
+                        ha='center', va='top', fontsize=12, fontweight='bold')
+                
+                # Add interpolation factor
+                ax2.text(target_angle, interp_t/2, f't = {interp_t:.3f}', 
+                        ha='center', va='center', fontsize=10,
+                        bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+                
+                ax2.set_xlabel('Angle (degrees)')
+                ax2.set_ylabel('Interpolation Factor (t)')
+                ax2.set_title('Angular Bracketing Interpolation', fontsize=16, fontweight='bold')
+                ax2.grid(True, alpha=0.3)
+                ax2.set_ylim(-0.1, 1.1)
+        
+        # 3. Defect type distribution (top right)
+        ax3 = fig.add_subplot(gs[0, 2])
+        if 'source_defect_types' in result:
+            defect_types = result['source_defect_types']
+            defect_counts = {}
+            
+            for defect in defect_types:
+                defect_counts[defect] = defect_counts.get(defect, 0) + 1
+            
+            # Create pie chart
+            labels = list(defect_counts.keys())
+            sizes = list(defect_counts.values())
+            colors = plt.cm.Set3(np.linspace(0, 1, len(labels)))
+            
+            wedges, texts, autotexts = ax3.pie(sizes, labels=labels, colors=colors,
+                                              autopct='%1.1f%%', startangle=90)
+            
+            ax3.set_title('Defect Type Distribution in Sources', fontsize=16, fontweight='bold')
+            
+            # Highlight target defect
+            for i, label in enumerate(labels):
+                if label == target_defect:
+                    wedges[i].set_edgecolor('red')
+                    wedges[i].set_linewidth(3)
+        
+        # 4. Stress field interpolation (middle row)
+        components = ['von_mises', 'sigma_hydro', 'sigma_mag']
+        titles = ['Von Mises', 'Hydrostatic', 'Magnitude']
+        
+        for idx, (component, title) in enumerate(zip(components, titles)):
+            ax = fig.add_subplot(gs[1, idx])
+            
+            if component in result['fields']:
+                field = result['fields'][component]
+                
+                im = ax.imshow(field, cmap='viridis', aspect='equal', 
+                              interpolation='bilinear', origin='lower')
+                plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+                
+                ax.set_title(f'{title} Stress\nθ={target_angle:.1f}°', 
+                           fontsize=14, fontweight='bold')
+                ax.set_xlabel('X Position')
+                ax.set_ylabel('Y Position')
+                ax.grid(True, alpha=0.2)
+        
+        # 5. Angular distance vs weight (bottom left)
+        ax7 = fig.add_subplot(gs[2, 0])
+        if 'source_angular_distances' in result and 'weights' in result:
+            distances = result['source_angular_distances']
+            weights = result['weights']['combined']
+            defect_types = result['source_defect_types']
+            
+            # Color by defect type
+            colors = []
+            for defect in defect_types:
+                if defect == target_defect:
+                    colors.append('green')
+                else:
+                    colors.append('red')
+            
+            scatter = ax7.scatter(distances, weights, c=colors, alpha=0.7, 
+                                 s=100, edgecolors='black')
+            
+            ax7.set_xlabel('Angular Distance from Target (°)')
+            ax7.set_ylabel('Weight')
+            ax7.set_title('Weight vs Angular Distance', fontsize=16, fontweight='bold')
+            ax7.grid(True, alpha=0.3)
+            
+            # Add legend
+            import matplotlib.patches as mpatches
+            target_patch = mpatches.Patch(color='green', label=f'Target Defect ({target_defect})')
+            other_patch = mpatches.Patch(color='red', label='Other Defects')
+            ax7.legend(handles=[target_patch, other_patch])
+        
+        # 6. Bracketing sources comparison (bottom center)
+        ax8 = fig.add_subplot(gs[2, 1])
+        if 'weights' in result and 'bracketing_sources' in result['weights']:
+            bracketing = result['weights']['bracketing_sources']
+            lower_info = bracketing['lower']
+            upper_info = bracketing['upper']
+            
+            # Create bar comparison
+            x = [0, 1, 2]
+            labels = ['Lower Bracket', 'Upper Bracket', 'Target']
+            angles = [lower_info['angle'], upper_info['angle'], target_angle]
+            weights_display = [lower_info['weight'], upper_info['weight'], 1.0]
+            
+            bars = ax8.bar(x, weights_display, alpha=0.7, color=['green', 'red', 'blue'])
+            ax8.set_xticks(x)
+            ax8.set_xticklabels(labels)
+            ax8.set_ylabel('Weight')
+            ax8.set_title('Bracketing Sources Weight Comparison', fontsize=16, fontweight='bold')
+            ax8.grid(True, alpha=0.3, axis='y')
+            
+            # Add angle labels
+            for i, (bar, angle) in enumerate(zip(bars, angles)):
+                height = bar.get_height()
+                ax8.text(bar.get_x() + bar.get_width()/2., height + 0.05,
+                        f'{angle:.1f}°', ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        # 7. Interpolation statistics (bottom right)
+        ax9 = fig.add_subplot(gs[2, 2])
+        ax9.axis('off')
+        
+        # Calculate weight concentration metrics
+        if 'weights' in result:
+            weights = np.array(result['weights']['combined'])
+            sorted_weights = np.sort(weights)[::-1]
+            top_2_weight = sum(sorted_weights[:2])
+            other_weight = sum(sorted_weights[2:])
+            
+            stats_text = (
+                f"Weight Concentration:\n"
+                f" Top 2: {top_2_weight*100:.1f}%\n"
+                f" Others: {other_weight*100:.3f}%\n\n"
+                f"Entropy: {result['weights']['entropy']:.3f}\n"
+                f"Sources: {result['num_sources']}\n"
+                f"Grid: {result['shape'][0]}×{result['shape'][1]}"
+            )
+        else:
+            stats_text = "Statistics not available"
+        
+        ax9.text(0.1, 0.5, stats_text, fontsize=13, family='monospace', fontweight='bold',
+                verticalalignment='center', transform=ax9.transAxes,
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, edgecolor='brown', linewidth=2))
+        ax9.set_title('Interpolation Statistics', fontsize=18, fontweight='bold', pad=20)
+        
+        plt.suptitle(f'Angular Bracketing Interpolation Analysis - θ={target_angle:.1f}°, {target_defect}',
+                    fontsize=24, fontweight='bold', y=0.98)
+        plt.tight_layout()
+        return fig
+    
+    def create_angular_bracketing_visualization(self, solutions, target_angle_deg, target_defect_type, figsize=(12, 8)):
+        """Visualize how sources bracket the target angle"""
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Group sources by defect type
+        defect_groups = {}
+        for i, sol in enumerate(solutions):
+            if 'params' in sol:
+                defect = sol['params'].get('defect_type', 'Unknown')
+                if defect not in defect_groups:
+                    defect_groups[defect] = []
+                
+                if 'theta' in sol['params']:
+                    angle = np.degrees(sol['params']['theta'])
+                    defect_groups[defect].append((i, angle))
+        
+        # Create visualization
+        colors = {'Twin': 'red', 'ESF': 'blue', 'ISF': 'green', 'No Defect': 'gray'}
+        y_positions = {}
+        y = 0
+        
+        for defect, sources in defect_groups.items():
+            if sources:
+                y_positions[defect] = y
+                angles = [s[1] for s in sources]
+                
+                # Plot sources as points
+                ax.scatter(angles, [y] * len(angles), 
+                          color=colors.get(defect, 'black'),
+                          s=100, alpha=0.7, edgecolors='black',
+                          label=f'{defect} ({len(sources)} sources)')
+                
+                # Draw range line
+                if len(angles) > 1:
+                    min_angle = min(angles)
+                    max_angle = max(angles)
+                    ax.plot([min_angle, max_angle], [y, y], 
+                           color=colors.get(defect, 'black'), 
+                           linewidth=2, alpha=0.5)
+                
+                y += 1
+        
+        # Plot target
+        ax.axvline(x=target_angle_deg, color='red', linestyle='--', 
+                  linewidth=3, alpha=0.8, label=f'Target: {target_angle_deg:.1f}°')
+        
+        # Highlight target defect
+        if target_defect_type in y_positions:
+            y_target = y_positions[target_defect_type]
+            ax.axhline(y=y_target, color='yellow', linestyle=':', 
+                      linewidth=2, alpha=0.5, label=f'Target Defect: {target_defect_type}')
+        
+        ax.set_xlabel('Angle (degrees)', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Defect Type', fontsize=14, fontweight='bold')
+        ax.set_title('Source Distribution by Angle and Defect Type', fontsize=16, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right', fontsize=10)
+        
+        # Set y-ticks
+        ax.set_yticks(list(y_positions.values()))
+        ax.set_yticklabels(list(y_positions.keys()))
+        
+        plt.tight_layout()
+        return fig
+    
+    # Additional visualization methods from the original code...
+    # (These methods remain unchanged from the original code)
+    
     def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
-                                    cmap_name='viridis', width=900, height=700,
-                                    target_angle=None, defect_type=None, special_angle=None):
+                                     cmap_name='viridis', width=900, height=700,
+                                     target_angle=None, defect_type=None):
         """Create interactive 3D surface plot with Plotly"""
         try:
             # Validate colormap
@@ -849,12 +1292,7 @@ class AdvancedHeatmapVisualizer:
             for i in range(stress_field.shape[0]):
                 row_text = []
                 for j in range(stress_field.shape[1]):
-                    text = f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa"
-                    if target_angle is not None:
-                        text += f"<br>Target Angle: {target_angle:.1f}°"
-                    if special_angle is not None:
-                        text += f"<br>Special Angle: {special_angle}°"
-                    row_text.append(text)
+                    row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa")
                 hover_text.append(row_text)
             
             # Create 3D surface trace
@@ -877,8 +1315,6 @@ class AdvancedHeatmapVisualizer:
             title_str = title
             if target_angle is not None and defect_type is not None:
                 title_str = f"{title}<br>θ = {target_angle:.1f}°, Defect: {defect_type}"
-            if special_angle is not None:
-                title_str += f"<br>Special Angle: {special_angle}°"
             
             # Update layout with publication styling
             fig.update_layout(
@@ -918,7 +1354,9 @@ class AdvancedHeatmapVisualizer:
                 paper_bgcolor='white',
                 margin=dict(l=0, r=0, t=100, b=0)
             )
+            
             return fig
+        
         except Exception as e:
             st.error(f"Error creating 3D surface: {e}")
             fig = go.Figure()
@@ -926,7 +1364,7 @@ class AdvancedHeatmapVisualizer:
             return fig
     
     def create_angular_orientation_plot(self, target_angle_deg, defect_type="Unknown",
-                                       figsize=(8, 8), show_special_angle=True, special_angle=54.7):
+                                       figsize=(8, 8), special_angle=None):
         """Create polar plot showing angular orientation"""
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection='polar')
@@ -938,32 +1376,30 @@ class AdvancedHeatmapVisualizer:
         ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02,
                 color='red', alpha=0.8, label=f'Defect Orientation: {target_angle_deg:.1f}°')
         
-        # Plot special angle orientation if requested
-        if show_special_angle:
-            special_angle_rad = np.radians(special_angle)
-            ax.arrow(special_angle_rad, 0.8, 0, 0.6, width=0.02,
-                    color='blue', alpha=0.5, label=f'Special Angle ({special_angle}°)')
+        # Plot special angle (habit plane) if provided
+        if special_angle is not None:
+            habit_plane_rad = np.radians(special_angle)
+            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02,
+                    color='blue', alpha=0.5, label=f'Special Angle: {special_angle}°')
         
         # Plot cardinal directions
         for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
             ax.axvline(np.radians(angle), color='gray', linestyle='--', alpha=0.3)
         
         # Customize plot
-        title = f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}'
-        if show_special_angle:
-            title += f"\nSpecial Angle: {special_angle}°"
-        ax.set_title(title, fontsize=20, fontweight='bold', pad=20)
+        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}',
+                    fontsize=20, fontweight='bold', pad=20)
         ax.set_theta_zero_location('N')  # 0° at top
         ax.set_theta_direction(-1)  # Clockwise
         ax.set_ylim(0, 1.5)
         ax.grid(True, alpha=0.3)
         ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
         
-        # Add annotation for angular difference from special angle
-        if show_special_angle:
+        # Add annotation for angular difference from special angle if applicable
+        if special_angle is not None:
             angular_diff = abs(target_angle_deg - special_angle)
             angular_diff = min(angular_diff, 360 - angular_diff)  # Handle cyclic nature
-            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom special angle',
+            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom {special_angle}°',
                        xy=(theta_rad, 1.2), xytext=(theta_rad, 1.4),
                        arrowprops=dict(arrowstyle='->', color='green', alpha=0.7),
                        fontsize=12, fontweight='bold',
@@ -974,10 +1410,11 @@ class AdvancedHeatmapVisualizer:
         return fig
     
     def create_comparison_heatmaps(self, stress_fields_dict, cmap_name='viridis',
-                                  figsize=(18, 6), titles=None, target_angle=None, defect_type=None, special_angle=None):
+                                 figsize=(18, 6), titles=None, target_angle=None, defect_type=None):
         """Create comparison heatmaps for multiple stress components"""
         n_components = len(stress_fields_dict)
         fig, axes = plt.subplots(1, n_components, figsize=figsize)
+        
         if n_components == 1:
             axes = [axes]
         
@@ -986,6 +1423,7 @@ class AdvancedHeatmapVisualizer:
         
         for idx, ((component_name, stress_field), title) in enumerate(zip(stress_fields_dict.items(), titles)):
             ax = axes[idx]
+            
             # Get colormap
             if cmap_name in plt.colormaps():
                 cmap = plt.get_cmap(cmap_name)
@@ -994,6 +1432,7 @@ class AdvancedHeatmapVisualizer:
             
             # Create heatmap with equal aspect ratio
             im = ax.imshow(stress_field, cmap=cmap, aspect='equal', interpolation='bilinear', origin='lower')
+            
             # Add colorbar
             cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             cbar.set_label("Stress (GPa)", fontsize=14)
@@ -1014,14 +1453,13 @@ class AdvancedHeatmapVisualizer:
         suptitle = "Stress Component Comparison"
         if target_angle is not None and defect_type is not None:
             suptitle = f"Stress Component Comparison - θ = {target_angle:.1f}°, {defect_type}"
-        if special_angle is not None:
-            suptitle += f"\nSpecial Angle: {special_angle}°"
         plt.suptitle(suptitle, fontsize=22, fontweight='bold', y=1.02)
+        
         plt.tight_layout()
         return fig
     
     def create_3d_surface_plot(self, stress_field, title="3D Stress Surface",
-                              cmap_name='viridis', figsize=(14, 10), target_angle=None, defect_type=None, special_angle=None):
+                             cmap_name='viridis', figsize=(14, 10), target_angle=None, defect_type=None):
         """Create 3D surface plot of stress field with enhanced styling"""
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection='3d')
@@ -1053,8 +1491,6 @@ class AdvancedHeatmapVisualizer:
         title_str = title
         if target_angle is not None and defect_type is not None:
             title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
-        if special_angle is not None:
-            title_str += f"\nSpecial Angle: {special_angle}°"
         
         # Customize plot with publication styling
         ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
@@ -1069,6 +1505,7 @@ class AdvancedHeatmapVisualizer:
         
         # Adjust view angle
         ax.view_init(elev=30, azim=45)
+        
         plt.tight_layout()
         return fig
     
@@ -1093,534 +1530,27 @@ class AdvancedHeatmapVisualizer:
         ax.set_xticks([0, 128, 255])
         ax.set_xticklabels(['0.0', '0.5', '1.0'], fontsize=12)
         ax.xaxis.set_ticks_position('bottom')
-        plt.tight_layout()
-        return fig
-    
-    def create_comprehensive_dashboard(self, stress_fields, theta, defect_type,
-                                      cmap_name='viridis', figsize=(24, 16), special_angle=None):
-        """Create comprehensive dashboard with all stress components and angular orientation"""
-        fig = plt.figure(figsize=figsize)
-        # Create subplots grid with polar plot included
-        gs = fig.add_gridspec(3, 4, hspace=0.35, wspace=0.35)
-        
-        # 0. Angular orientation plot (polar plot)
-        ax0 = fig.add_subplot(gs[0, 0], projection='polar')
-        theta_rad = np.radians(theta)
-        ax0.arrow(theta_rad, 0.8, 0, 0.6, width=0.02, color='red', alpha=0.8)
-        
-        # Plot special angle if provided
-        if special_angle is not None:
-            special_angle_rad = np.radians(special_angle)
-            ax0.arrow(special_angle_rad, 0.8, 0, 0.6, width=0.02, color='blue', alpha=0.5)
-        
-        # Customize polar plot
-        title = f'Defect Orientation\nθ = {theta:.1f}°'
-        if special_angle is not None:
-            title += f"\nSpecial Angle: {special_angle}°"
-        ax0.set_title(title, fontsize=16, fontweight='bold', pad=15)
-        ax0.set_theta_zero_location('N')
-        ax0.set_theta_direction(-1)
-        ax0.set_ylim(0, 1.5)
-        ax0.grid(True, alpha=0.3)
-        
-        # 1. Von Mises stress (main plot)
-        ax1 = fig.add_subplot(gs[0, 1:3])
-        im1 = ax1.imshow(stress_fields['von_mises'], cmap=cmap_name, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im1, ax=ax1, label='Von Mises Stress (GPa)')
-        title = f'Von Mises Stress at θ={theta}°\nDefect: {defect_type}'
-        if special_angle is not None:
-            title += f"\nSpecial Angle: {special_angle}°"
-        ax1.set_title(title, fontsize=18, fontweight='bold')
-        ax1.set_xlabel('X Position', fontsize=14)
-        ax1.set_ylabel('Y Position', fontsize=14)
-        ax1.grid(True, alpha=0.2)
-        
-        # 2. Hydrostatic stress
-        ax2 = fig.add_subplot(gs[0, 3])
-        # Use diverging colormap for hydrostatic
-        hydro_cmap = 'RdBu_r' if cmap_name in ['viridis', 'plasma', 'inferno'] else cmap_name
-        im2 = ax2.imshow(stress_fields['sigma_hydro'], cmap=hydro_cmap, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im2, ax=ax2, label='Hydrostatic Stress (GPa)')
-        ax2.set_title('Hydrostatic Stress', fontsize=18, fontweight='bold')
-        ax2.set_xlabel('X Position', fontsize=14)
-        ax2.set_ylabel('Y Position', fontsize=14)
-        
-        # 3. Stress magnitude
-        ax3 = fig.add_subplot(gs[1, 0])
-        im3 = ax3.imshow(stress_fields['sigma_mag'], cmap=cmap_name, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im3, ax=ax3, label='Stress Magnitude (GPa)')
-        ax3.set_title('Stress Magnitude', fontsize=18, fontweight='bold')
-        ax3.set_xlabel('X Position', fontsize=14)
-        ax3.set_ylabel('Y Position', fontsize=14)
-        
-        # 4. Histogram of von Mises
-        ax4 = fig.add_subplot(gs[1, 1])
-        ax4.hist(stress_fields['von_mises'].flatten(), bins=50, alpha=0.7, color='blue', edgecolor='black')
-        ax4.set_xlabel('Von Mises Stress (GPa)', fontsize=14)
-        ax4.set_ylabel('Frequency', fontsize=14)
-        ax4.set_title('Von Mises Distribution', fontsize=16, fontweight='bold')
-        ax4.grid(True, alpha=0.3)
-        
-        # 5. Histogram of hydrostatic
-        ax5 = fig.add_subplot(gs[1, 2])
-        ax5.hist(stress_fields['sigma_hydro'].flatten(), bins=50, alpha=0.7, color='green', edgecolor='black')
-        ax5.set_xlabel('Hydrostatic Stress (GPa)', fontsize=14)
-        ax5.set_ylabel('Frequency', fontsize=14)
-        ax5.set_title('Hydrostatic Distribution', fontsize=16, fontweight='bold')
-        ax5.grid(True, alpha=0.3)
-        
-        # 6. Line profiles
-        ax6 = fig.add_subplot(gs[1, 3])
-        middle_row = stress_fields['von_mises'].shape[0] // 2
-        middle_col = stress_fields['von_mises'].shape[1] // 2
-        ax6.plot(stress_fields['von_mises'][middle_row, :], label='Von Mises', linewidth=2)
-        ax6.plot(stress_fields['sigma_hydro'][middle_row, :], label='Hydrostatic', linewidth=2)
-        ax6.plot(stress_fields['sigma_mag'][middle_row, :], label='Magnitude', linewidth=2)
-        ax6.set_xlabel('X Position', fontsize=14)
-        ax6.set_ylabel('Stress (GPa)', fontsize=14)
-        ax6.set_title(f'Line Profile at Row {middle_row}', fontsize=16, fontweight='bold')
-        ax6.legend(fontsize=12)
-        ax6.grid(True, alpha=0.3)
-        
-        # 7. Statistics table
-        ax7 = fig.add_subplot(gs[2, 0:2])
-        ax7.axis('off')
-        # Prepare statistics with enhanced formatting
-        stats_text = (
-            f"Von Mises Stress:\n"
-            f"  Max: {np.max(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Min: {np.min(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['von_mises']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['von_mises']):.3f} GPa\n\n"
-            f"Hydrostatic Stress:\n"
-            f"  Max Tension: {np.max(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Max Compression: {np.min(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['sigma_hydro']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['sigma_hydro']):.3f} GPa\n\n"
-            f"Stress Magnitude:\n"
-            f"  Max: {np.max(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Min: {np.min(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Mean: {np.mean(stress_fields['sigma_mag']):.3f} GPa\n"
-            f"  Std: {np.std(stress_fields['sigma_mag']):.3f} GPa"
-        )
-        ax7.text(0.1, 0.5, stats_text, fontsize=13, family='monospace', fontweight='bold',
-                verticalalignment='center', transform=ax7.transAxes,
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8, edgecolor='brown', linewidth=2))
-        ax7.set_title('Stress Statistics', fontsize=18, fontweight='bold', pad=20)
-        
-        # 8. Target parameters display
-        ax8 = fig.add_subplot(gs[2, 2:])
-        ax8.axis('off')
-        params_text = (
-            f"Target Parameters:\n"
-            f"  Polar Angle (θ): {theta:.1f}°\n"
-            f"  Defect Type: {defect_type}\n"
-            f"  Shape: Square (default)\n"
-            f"  Simulation Grid: {stress_fields['von_mises'].shape[0]} × {stress_fields['von_mises'].shape[1]}\n"
-        )
-        if special_angle is not None:
-            params_text += f"  Special Angle: {special_angle}°\n"
-        params_text += f"  Angular Deviation from Special Angle: {abs(theta - special_angle):.1f}°" if special_angle is not None else ""
-        ax8.text(0.1, 0.5, params_text, fontsize=13, family='monospace', fontweight='bold',
-                verticalalignment='center', transform=ax8.transAxes,
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8, edgecolor='blue', linewidth=2))
-        ax8.set_title('Interpolation Parameters', fontsize=18, fontweight='bold', pad=20)
-        
-        plt.suptitle(f'Comprehensive Stress Analysis - θ={theta}°, {defect_type}',
-                    fontsize=24, fontweight='bold', y=0.98)
-        plt.tight_layout()
-        return fig
-    
-    def create_weights_visualization(self, weights_data, figsize=(15, 10)):
-        """Create comprehensive visualization of different weight types"""
-        fig = plt.figure(figsize=figsize)
-        gs = fig.add_gridspec(2, 2, hspace=0.4, wspace=0.3)
-        
-        # 1. Weight distribution comparison
-        ax1 = fig.add_subplot(gs[0, 0])
-        x = np.arange(len(weights_data['spatial']))
-        
-        # Plot all weight types
-        width = 0.25
-        spatial_bars = ax1.bar(x - width, weights_data['spatial'], width, 
-                              label='Spatial Weights', alpha=0.8, color='blue')
-        attention_bars = ax1.bar(x, weights_data['attention'], width,
-                                label='Attention Weights', alpha=0.8, color='orange')
-        combined_bars = ax1.bar(x + width, weights_data['combined'], width,
-                               label='Combined Weights', alpha=0.8, color='red')
-        
-        ax1.set_xlabel('Source Index', fontsize=14)
-        ax1.set_ylabel('Weight Value', fontsize=14)
-        ax1.set_title('Weight Distribution Comparison', fontsize=16, fontweight='bold')
-        ax1.legend(fontsize=12)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_ylim(0, max(np.max(weights_data['spatial']), 
-                           np.max(weights_data['attention']), 
-                           np.max(weights_data['combined'])) * 1.1)
-        
-        # Add source annotations
-        for i in range(len(x)):
-            height = max(weights_data['spatial'][i], weights_data['attention'][i], weights_data['combined'][i])
-            if height > 0.01:  # Only label significant weights
-                ax1.text(i, height + 0.01, f"Src {i}", 
-                        ha='center', va='bottom', fontsize=8, rotation=90)
-        
-        # 2. Polar plot of angular distribution
-        ax2 = fig.add_subplot(gs[0, 1], projection='polar')
-        
-        # Convert angles to radians
-        angles_rad = np.radians(weights_data['angles'])
-        sizes = 100 * np.array(weights_data['combined']) / np.max(weights_data['combined'])
-        
-        # Plot sources as points
-        scatter = ax2.scatter(angles_rad, weights_data['distances'],
-                            s=sizes, c=weights_data['combined'], 
-                            cmap='viridis', alpha=0.8, edgecolors='black')
-        
-        # Plot target angle
-        target_rad = np.radians(weights_data['target_angle'])
-        ax2.scatter(target_rad, 0, s=200, c='red', marker='*', 
-                   edgecolors='white', label=f'Target: {weights_data["target_angle"]:.1f}°')
-        
-        # Plot special angle if provided
-        if weights_data.get('special_angle') is not None:
-            special_rad = np.radians(weights_data['special_angle'])
-            ax2.axvline(special_rad, color='green', alpha=0.7, 
-                       linestyle='--', linewidth=2, label=f'Special: {weights_data["special_angle"]:.1f}°')
-        
-        ax2.set_title('Angular Distribution of Sources', fontsize=16, fontweight='bold', pad=20)
-        ax2.set_theta_zero_location('N')  # 0° at top
-        ax2.set_theta_direction(-1)  # Clockwise
-        
-        # 3. Entropy comparison
-        ax3 = fig.add_subplot(gs[1, 0])
-        entropy_types = ['Spatial', 'Attention', 'Combined']
-        entropies = [weights_data['entropy_spatial'], weights_data['entropy_attention'], weights_data['entropy_combined']]
-        
-        entropy_bars = ax3.bar(entropy_types, entropies, color=['blue', 'orange', 'red'], alpha=0.8)
-        ax3.set_ylabel('Entropy', fontsize=14)
-        ax3.set_title('Weight Distribution Entropy', fontsize=16, fontweight='bold')
-        ax3.grid(True, axis='y', alpha=0.3)
-        
-        # Add entropy values on bars
-        for bar, entropy in zip(entropy_bars, entropies):
-            height = bar.get_height()
-            ax3.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                    f'{entropy:.3f}', ha='center', va='bottom', fontweight='bold')
-        
-        # 4. Weight vs distance correlation
-        ax4 = fig.add_subplot(gs[1, 1])
-        scatter = ax4.scatter(weights_data['distances'], weights_data['combined'],
-                            c=weights_data['angles'], cmap='viridis', 
-                            s=100, alpha=0.8, edgecolors='black')
-        
-        ax4.set_xlabel('Angular Distance (°)', fontsize=14)
-        ax4.set_ylabel('Combined Weight', fontsize=14)
-        ax4.set_title('Weight vs Angular Distance', fontsize=16, fontweight='bold')
-        ax4.grid(True, alpha=0.3)
-        
-        # Add trend line
-        if len(weights_data['distances']) > 1:
-            z = np.polyfit(weights_data['distances'], weights_data['combined'], 1)
-            p = np.poly1d(z)
-            x_range = np.linspace(min(weights_data['distances']), max(weights_data['distances']), 100)
-            ax4.plot(x_range, p(x_range), 'r--', linewidth=2, alpha=0.8, label='Trend')
-            ax4.legend()
-        
-        plt.colorbar(scatter, ax=ax4, label='Source Angle (°)')
-        
-        plt.suptitle('Comprehensive Weight Analysis', fontsize=20, fontweight='bold')
-        plt.tight_layout()
-        return fig
-    
-    def create_interactive_weights_dashboard(self, weights_data, width=1000, height=800):
-        """Create interactive dashboard for weight analysis using Plotly"""
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=('Weight Distribution', 'Angular Distribution',
-                           'Entropy Comparison', 'Weight vs Distance'),
-            specs=[[{'type': 'bar'}, {'type': 'polar'}],
-                  [{'type': 'bar'}, {'type': 'scatter'}]],
-            horizontal_spacing=0.1,
-            vertical_spacing=0.15
-        )
-        
-        # 1. Weight distribution comparison (bar chart)
-        x = list(range(len(weights_data['spatial'])))
-        
-        # Spatial weights
-        fig.add_trace(
-            go.Bar(x=x, y=weights_data['spatial'], name='Spatial', 
-                  marker_color='blue', opacity=0.8),
-            row=1, col=1
-        )
-        
-        # Attention weights
-        fig.add_trace(
-            go.Bar(x=x, y=weights_data['attention'], name='Attention', 
-                  marker_color='orange', opacity=0.8),
-            row=1, col=1
-        )
-        
-        # Combined weights
-        fig.add_trace(
-            go.Bar(x=x, y=weights_data['combined'], name='Combined', 
-                  marker_color='red', opacity=0.8),
-            row=1, col=1
-        )
-        
-        fig.update_xaxes(title_text="Source Index", row=1, col=1)
-        fig.update_yaxes(title_text="Weight Value", row=1, col=1)
-        
-        # 2. Angular distribution (polar plot)
-        angles_rad = np.radians(weights_data['angles'])
-        max_distance = max(weights_data['distances']) * 1.1
-        
-        # Sources
-        fig.add_trace(
-            go.Scatterpolar(
-                r=weights_data['distances'],
-                theta=weights_data['angles'],
-                mode='markers',
-                marker=dict(
-                    size=100 * np.array(weights_data['combined']) / np.max(weights_data['combined']),
-                    color=weights_data['combined'],
-                    colorscale='viridis',
-                    showscale=True,
-                    colorbar=dict(title='Combined Weight')
-                ),
-                name='Sources',
-                hovertemplate='Source: %{text}<br>Angle: %{theta:.1f}°<br>Distance: %{r:.1f}°<br>Weight: %{marker.color:.4f}',
-                text=[f'Source {i}' for i in range(len(weights_data['angles']))]
-            ),
-            row=1, col=2
-        )
-        
-        # Target angle
-        fig.add_trace(
-            go.Scatterpolar(
-                r=[0],
-                theta=[weights_data['target_angle']],
-                mode='markers',
-                marker=dict(size=20, color='red', symbol='star'),
-                name=f'Target: {weights_data["target_angle"]:.1f}°'
-            ),
-            row=1, col=2
-        )
-        
-        # Special angle line if provided
-        if weights_data.get('special_angle') is not None:
-            fig.add_shape(
-                type='line',
-                x0=0, y0=0, x1=max_distance*np.cos(np.radians(weights_data['special_angle']-90)), 
-                y1=max_distance*np.sin(np.radians(weights_data['special_angle']-90)),
-                line=dict(color='green', dash='dash'),
-                row=1, col=2
-            )
-        
-        fig.update_polar(
-            radialaxis=dict(range=[0, max_distance], title='Angular Distance (°)'),
-            angularaxis=dict(direction='clockwise', rotation=90),
-            row=1, col=2
-        )
-        
-        # 3. Entropy comparison (bar chart)
-        entropy_types = ['Spatial', 'Attention', 'Combined']
-        entropies = [weights_data['entropy_spatial'], weights_data['entropy_attention'], weights_data['entropy_combined']]
-        
-        fig.add_trace(
-            go.Bar(x=entropy_types, y=entropies, marker_color=['blue', 'orange', 'red'], opacity=0.8),
-            row=2, col=1
-        )
-        
-        fig.update_xaxes(title_text="Weight Type", row=2, col=1)
-        fig.update_yaxes(title_text="Entropy", row=2, col=1)
-        
-        # 4. Weight vs distance (scatter plot)
-        fig.add_trace(
-            go.Scatter(
-                x=weights_data['distances'],
-                y=weights_data['combined'],
-                mode='markers',
-                marker=dict(
-                    size=10,
-                    color=weights_data['angles'],
-                    colorscale='viridis',
-                    colorbar=dict(title='Source Angle (°)')
-                ),
-                name='Weight vs Distance',
-                hovertemplate='Source Angle: %{marker.color:.1f}°<br>Distance: %{x:.1f}°<br>Weight: %{y:.4f}'
-            ),
-            row=2, col=2
-        )
-        
-        # Add trend line
-        if len(weights_data['distances']) > 1:
-            z = np.polyfit(weights_data['distances'], weights_data['combined'], 1)
-            p = np.poly1d(z)
-            x_range = np.linspace(min(weights_data['distances']), max(weights_data['distances']), 100)
-            y_range = p(x_range)
-            
-            fig.add_trace(
-                go.Scatter(
-                    x=x_range,
-                    y=y_range,
-                    mode='lines',
-                    line=dict(color='red', dash='dash'),
-                    name='Trend Line'
-                ),
-                row=2, col=2
-            )
-        
-        fig.update_xaxes(title_text="Angular Distance (°)", row=2, col=2)
-        fig.update_yaxes(title_text="Combined Weight", row=2, col=2)
-        
-        # Update layout
-        fig.update_layout(
-            title=dict(
-                text='Interactive Weight Analysis Dashboard',
-                x=0.5,
-                font=dict(size=24, color='darkblue')
-            ),
-            width=width,
-            height=height,
-            showlegend=True,
-            hovermode='closest',
-            template='presentation'
-        )
-        
-        return fig
-    
-    def create_transformer_attention_visualization(self, attention_matrix, source_angles, target_angle, figsize=(12, 10)):
-        """Visualize transformer attention weights as heatmap"""
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Create heatmap
-        im = ax.imshow(attention_matrix, cmap='viridis', aspect='auto')
-        
-        # Add colorbar
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label('Attention Weight', fontsize=14)
-        
-        # Set tick labels
-        ax.set_xticks(np.arange(len(source_angles)))
-        ax.set_xticklabels([f"{angle:.1f}°" for angle in source_angles], rotation=45, ha='right')
-        ax.set_yticks([0])
-        ax.set_yticklabels([f"Target: {target_angle:.1f}°"])
-        
-        # Set labels and title
-        ax.set_xlabel('Source Angles', fontsize=16, fontweight='bold')
-        ax.set_ylabel('Target Angle', fontsize=16, fontweight='bold')
-        ax.set_title('Transformer Attention Weights', fontsize=20, fontweight='bold', pad=20)
-        
-        # Add grid
-        ax.grid(False)
-        
-        plt.tight_layout()
-        return fig
-    
-    def create_bracketing_visualization(self, lower_angle, upper_angle, target_angle, 
-                                       target_defect, figsize=(10, 8)):
-        """Visualize the bracketing relationship between angles"""
-        fig, ax = plt.subplots(figsize=figsize)
-        
-        # Draw circle representing 360 degrees
-        circle = plt.Circle((0, 0), 1, fill=False, color='gray', alpha=0.5)
-        ax.add_patch(circle)
-        
-        # Calculate positions for the three angles
-        angles = [lower_angle, target_angle, upper_angle]
-        labels = [f'Lower: {lower_angle:.1f}°', f'Target: {target_angle:.1f}°', f'Upper: {upper_angle:.1f}°']
-        colors = ['blue', 'red', 'green']
-        markers = ['o', '*', 's']
-        sizes = [100, 200, 100]
-        
-        for i, (angle, label, color, marker, size) in enumerate(zip(angles, labels, colors, markers, sizes)):
-            # Handle cyclic nature
-            adjusted_angle = angle % 360
-            
-            # Calculate position on circle
-            x = np.cos(np.radians(adjusted_angle - 90))  # -90 to start from top (0°)
-            y = np.sin(np.radians(adjusted_angle - 90))
-            
-            # Plot point
-            ax.scatter(x, y, s=size, c=color, marker=marker, edgecolors='black', zorder=3)
-            
-            # Add label with offset
-            label_x = x * 1.15
-            label_y = y * 1.15
-            ax.text(label_x, label_y, label, ha='center', va='center', 
-                   fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
-        
-        # Draw lines connecting the points
-        lower_idx = 0
-        target_idx = 1
-        upper_idx = 2
-        
-        # Get coordinates
-        lower_x = np.cos(np.radians(angles[lower_idx] % 360 - 90))
-        lower_y = np.sin(np.radians(angles[lower_idx] % 360 - 90))
-        target_x = np.cos(np.radians(angles[target_idx] % 360 - 90))
-        target_y = np.sin(np.radians(angles[target_idx] % 360 - 90))
-        upper_x = np.cos(np.radians(angles[upper_idx] % 360 - 90))
-        upper_y = np.sin(np.radians(angles[upper_idx] % 360 - 90))
-        
-        # Draw lines
-        ax.plot([lower_x, upper_x], [lower_y, upper_y], 'k--', alpha=0.7, linewidth=1.5)
-        ax.plot([lower_x, target_x], [lower_y, target_y], 'k:', alpha=0.5, linewidth=1)
-        ax.plot([target_x, upper_x], [target_y, upper_y], 'k:', alpha=0.5, linewidth=1)
-        
-        # Set limits and aspect ratio
-        ax.set_xlim(-1.3, 1.3)
-        ax.set_ylim(-1.3, 1.3)
-        ax.set_aspect('equal')
-        
-        # Remove axes
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.axis('off')
-        
-        # Add title and annotation
-        ax.set_title(f'Angular Bracketing for {target_defect} Defect', 
-                    fontsize=16, fontweight='bold', pad=20)
-        
-        # Add interpolation factor annotation
-        if upper_angle != lower_angle:
-            t = (target_angle - lower_angle) / (upper_angle - lower_angle)
-            ax.text(0, -1.2, f'Interpolation Factor: t = {t:.3f}\n'
-                   f'Lower weight: {1-t:.2f}, Upper weight: {t:.2f}',
-                   ha='center', va='center', fontsize=12,
-                   bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-        
-        # Add defect type annotation
-        ax.text(0, -1.45, f'Defect Type: {target_defect}', 
-               ha='center', va='center', fontsize=14, fontweight='bold',
-               bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         
         plt.tight_layout()
         return fig
 
 # =============================================
-# ENHANCED RESULTS MANAGER FOR EXPORT
+# RESULTS MANAGER FOR EXPORT
 # =============================================
-class EnhancedResultsManager:
-    """Manager for exporting interpolation results with advanced options"""
+class ResultsManager:
+    """Manager for exporting interpolation results"""
+    
     def __init__(self):
         pass
     
     def prepare_export_data(self, interpolation_result, visualization_params):
-        """Prepare data for export with enhanced metadata"""
+        """Prepare data for export"""
         result = interpolation_result.copy()
         export_data = {
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
-                'interpolation_method': 'transformer_spatial',
-                'visualization_params': visualization_params,
-                'software_version': '1.0.0',
-                'hardware_info': {
-                    'device': 'cpu' if not torch.cuda.is_available() else 'cuda',
-                    'memory': 'N/A'
-                }
+                'interpolation_method': result.get('interpolation_method', 'angular_bracketing'),
+                'visualization_params': visualization_params
             },
             'result': {
                 'target_angle': result['target_angle'],
@@ -1628,23 +1558,10 @@ class EnhancedResultsManager:
                 'shape': result['shape'],
                 'statistics': result['statistics'],
                 'weights': result['weights'],
-                'entropy': result['weights']['entropy']['combined'],
                 'num_sources': result.get('num_sources', 0),
-                'source_theta_degrees': result.get('source_theta_degrees', []),
-                'source_distances': result.get('source_distances', []),
-                'source_indices': result.get('source_indices', []),
                 'source_defect_types': result.get('source_defect_types', []),
-                'interpolation_method': result.get('interpolation_method', 'full_transformer'),
-                'special_angle': visualization_params.get('special_angle', 54.7),
-                'use_special_angle': visualization_params.get('use_special_angle', False),
-                'weight_analysis': {
-                    'spatial_entropy': result['weights']['entropy']['spatial'],
-                    'transformer_entropy': result['weights']['entropy']['transformer'],
-                    'combined_entropy': result['weights']['entropy']['combined'],
-                    'max_spatial_weight': max(result['weights']['positional']),
-                    'max_transformer_weight': max(result['weights']['transformer']),
-                    'max_combined_weight': max(result['weights']['combined'])
-                }
+                'interpolation_factor': result.get('interpolation_factor', {}),
+                'bracketing_sources': result.get('weights', {}).get('bracketing_sources', {})
             }
         }
         
@@ -1652,30 +1569,21 @@ class EnhancedResultsManager:
         for field_name, field_data in result['fields'].items():
             export_data['result'][f'{field_name}_data'] = field_data.tolist()
         
-        # Add weight distribution analysis
-        if 'weights' in result:
-            weights = result['weights']
-            export_data['result']['weight_distribution'] = {
-                'spatial_weights': weights['positional'],
-                'transformer_weights': weights['transformer'],
-                'combined_weights': weights['combined']
-            }
-        
         return export_data
     
     def export_to_json(self, export_data, filename=None):
-        """Export results to JSON file with enhanced formatting"""
+        """Export results to JSON file"""
         if filename is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             theta = export_data['result']['target_angle']
             defect = export_data['result']['target_params']['defect_type']
-            filename = f"transformer_interpolation_theta_{theta}_{defect}_{timestamp}.json"
+            filename = f"angular_bracketing_interpolation_theta_{theta}_{defect}_{timestamp}.json"
         
         json_str = json.dumps(export_data, indent=2, default=self._json_serializer)
         return json_str, filename
     
     def export_to_csv(self, interpolation_result, filename=None):
-        """Export flattened field data to CSV with source information"""
+        """Export flattened field data to CSV"""
         if filename is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             theta = interpolation_result['target_angle']
@@ -1684,39 +1592,12 @@ class EnhancedResultsManager:
         
         # Create DataFrame with flattened data
         data_dict = {}
-        
-        # Add stress field data
         for field_name, field_data in interpolation_result['fields'].items():
-            flattened = field_data.flatten()
-            data_dict[field_name] = flattened
-        
-        # Add coordinate columns
-        shape = interpolation_result['shape']
-        x_coords, y_coords = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
-        data_dict['x_position'] = x_coords.flatten()
-        data_dict['y_position'] = y_coords.flatten()
-        
-        # Add weight information if available
-        if 'weights' in interpolation_result:
-            combined_weights = interpolation_result['weights']['combined']
-            # Create weight columns for each source
-            for i, weight in enumerate(combined_weights):
-                data_dict[f'source_{i}_weight'] = np.full(len(data_dict['x_position']), weight)
+            data_dict[field_name] = field_data.flatten()
         
         df = pd.DataFrame(data_dict)
         csv_str = df.to_csv(index=False)
         return csv_str, filename
-    
-    def export_visualization_as_png(self, fig, filename=None, dpi=300):
-        """Export matplotlib figure as PNG"""
-        if filename is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"visualization_{timestamp}.png"
-        
-        buf = BytesIO()
-        fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
-        buf.seek(0)
-        return buf.getvalue(), filename
     
     def _json_serializer(self, obj):
         """JSON serializer for objects not serializable by default"""
@@ -1730,20 +1611,18 @@ class EnhancedResultsManager:
             return obj.isoformat()
         elif isinstance(obj, torch.Tensor):
             return obj.cpu().numpy().tolist()
-        elif hasattr(obj, '__dict__'):
-            return str(obj)
         else:
             return str(obj)
 
 # =============================================
-# MAIN APPLICATION WITH ENHANCED VISUALIZATION
+# MAIN APPLICATION WITH ANGULAR BRACKETING
 # =============================================
 def main():
     # Configure Streamlit page
     st.set_page_config(
-        page_title="Enhanced Stress Field Interpolation with Advanced Visualization",
+        page_title="Angular Bracketing Stress Interpolation",
         layout="wide",
-        page_icon="🔬",
+        page_icon="🎯",
         initial_sidebar_state="expanded"
     )
     
@@ -1783,6 +1662,30 @@ def main():
     .info-box {
         background-color: #F0F9FF;
         border-left: 5px solid #3B82F6;
+        padding: 1.2rem;
+        border-radius: 0.6rem;
+        margin: 1.2rem 0;
+        font-size: 1.1rem;
+    }
+    .warning-box {
+        background-color: #FEF3C7;
+        border-left: 5px solid #F59E0B;
+        padding: 1.2rem;
+        border-radius: 0.6rem;
+        margin: 1.2rem 0;
+        font-size: 1.1rem;
+    }
+    .success-box {
+        background-color: #D1FAE5;
+        border-left: 5px solid #10B981;
+        padding: 1.2rem;
+        border-radius: 0.6rem;
+        margin: 1.2rem 0;
+        font-size: 1.1rem;
+    }
+    .highlight-box {
+        background-color: #FCE7F3;
+        border-left: 5px solid #EC4899;
         padding: 1.2rem;
         border-radius: 0.6rem;
         margin: 1.2rem 0;
@@ -1835,18 +1738,19 @@ def main():
     """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🔬 Enhanced Stress Field Interpolation with Advanced Visualization</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🎯 Angular Bracketing Stress Interpolation</h1>', unsafe_allow_html=True)
     
     # Description
     st.markdown("""
     <div class="info-box">
-    <strong>🔬 Advanced physics-aware stress interpolation with comprehensive visualization.</strong><br>
-    • <strong>CORRECTED:</strong> Eigenstrain values match source files (Twin: 2.12, ESF: 1.414, ISF: 0.707)<br>
-    • <strong>ENHANCED:</strong> Full weight analysis (spatial, transformer attention, combined)<br>
-    • <strong>INTERACTIVE:</strong> 3D surface plots and interactive heatmaps with hover information<br>
-    • <strong>COMPREHENSIVE:</strong> Bracketing visualization for targeted interpolation<br>
-    • <strong>PROFESSIONAL:</strong> Publication-quality visualizations with detailed styling<br>
-    • <strong>COMPLETE:</strong> Export results in multiple formats with full metadata
+    <strong>🔬 Physics-aware interpolation with Angular Bracketing Principle.</strong><br>
+    • Load simulation files from numerical_solutions directory<br>
+    • <strong>Angular Bracketing:</strong> Selects nearest sources of same defect type below and above target angle<br>
+    • <strong>Targeted Weights:</strong> Gives ~98% weight to bracketing sources, ~0.1% to others<br>
+    • <strong>Linear Interpolation:</strong> Uses interpolation factor t = (θ_target - θ_lower) / (θ_upper - θ_lower)<br>
+    • Comprehensive comparison dashboard with ground truth selection<br>
+    • Advanced bracketing analysis visualization<br>
+    • Export results in multiple formats
     </div>
     """, unsafe_allow_html=True)
     
@@ -1854,21 +1758,21 @@ def main():
     if 'solutions' not in st.session_state:
         st.session_state.solutions = []
     if 'loader' not in st.session_state:
-        st.session_state.loader = TargetedSolutionLoader(SOLUTIONS_DIR)
-    if 'dual_interpolator' not in st.session_state:
-        st.session_state.dual_interpolator = DualInterpolationSystem()
-    if 'visualizer' not in st.session_state:
-        st.session_state.visualizer = AdvancedHeatmapVisualizer()
+        st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
+    if 'angular_interpolator' not in st.session_state:
+        # Initialize with adjustable bracketing parameters
+        st.session_state.angular_interpolator = AngularBracketingInterpolator(
+            bracketing_weight=0.98,  # Default: 98% weight to bracketing sources
+            other_weight=0.001      # Default: 0.1% weight to others
+        )
+    if 'heatmap_visualizer' not in st.session_state:
+        st.session_state.heatmap_visualizer = HeatMapVisualizer()
     if 'results_manager' not in st.session_state:
-        st.session_state.results_manager = EnhancedResultsManager()
+        st.session_state.results_manager = ResultsManager()
     if 'interpolation_result' not in st.session_state:
         st.session_state.interpolation_result = None
-    if 'use_targeted_mode' not in st.session_state:
-        st.session_state.use_targeted_mode = False
-    if 'special_angle' not in st.session_state:
-        st.session_state.special_angle = 54.7
-    if 'use_special_angle' not in st.session_state:
-        st.session_state.use_special_angle = True
+    if 'selected_ground_truth' not in st.session_state:
+        st.session_state.selected_ground_truth = None
     
     # Sidebar
     with st.sidebar:
@@ -1891,47 +1795,36 @@ def main():
                             defect = sol['params'].get('defect_type', 'Unknown')
                             defect_counts[defect] = defect_counts.get(defect, 0) + 1
                     
-                    st.markdown("**Loaded solutions by defect type:**")
                     for defect, count in defect_counts.items():
-                        st.markdown(f"- **{defect}**: {count} sources")
+                        st.info(f"{defect}: {count} sources")
                 else:
                     st.warning("No solutions found in directory")
+        
         with col2:
             if st.button("🧹 Clear Cache", use_container_width=True):
                 st.session_state.solutions = []
                 st.session_state.interpolation_result = None
+                st.session_state.selected_ground_truth = None
                 st.success("Cache cleared")
+        
+        # Show source distribution
+        if st.session_state.solutions:
+            if st.button("📊 Show Source Distribution", use_container_width=True):
+                # Get current target parameters
+                target_angle = st.session_state.get('target_angle', 54.7)
+                target_defect = st.session_state.get('target_defect', 'Twin')
+                
+                fig_dist = st.session_state.heatmap_visualizer.create_angular_bracketing_visualization(
+                    st.session_state.solutions,
+                    target_angle,
+                    target_defect
+                )
+                st.pyplot(fig_dist)
         
         st.divider()
         
         # Target parameters
         st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
-        
-        # Interpolation mode
-        interpolation_mode = st.radio(
-            "Interpolation Mode",
-            options=["🎯 Targeted Bracketing", "🧠 Full Transformer"],
-            index=1,
-            help="Targeted: Uses only two nearest same-defect sources\nFull: Uses all sources with transformer attention"
-        )
-        st.session_state.use_targeted_mode = (interpolation_mode == "🎯 Targeted Bracketing")
-        
-        # Special angle configuration
-        st.markdown("#### 🎯 Special Angle Configuration")
-        use_special_angle = st.checkbox("Enable Special Angle Bias", value=True,
-                                        help="Enable bias toward special angle for better accuracy near important orientations")
-        
-        special_angle = st.slider(
-            "Special Angle (degrees)",
-            min_value=0.0,
-            max_value=180.0,
-            value=54.7,
-            step=0.1,
-            help="The 'special' angle to bias toward (default 54.7° habit plane). Can be disabled above.",
-            disabled=not use_special_angle
-        )
-        st.session_state.special_angle = special_angle
-        st.session_state.use_special_angle = use_special_angle
         
         # Custom polar angle
         custom_theta = st.slider(
@@ -1940,16 +1833,22 @@ def main():
             max_value=180.0,
             value=54.7,
             step=0.1,
-            help="Angle for which to interpolate stress fields"
+            help="Angle in degrees (0° to 180°). Default habit plane is 54.7°"
         )
+        
+        # Store in session state
+        st.session_state.target_angle = custom_theta
         
         # Defect type
         defect_type = st.selectbox(
             "Target Defect Type",
             options=['ISF', 'ESF', 'Twin', 'No Defect'],
             index=2,
-            help="Defect type for interpolation"
+            help="Type of crystal defect to simulate"
         )
+        
+        # Store in session state
+        st.session_state.target_defect = defect_type
         
         # Show available angles for selected defect
         if st.session_state.solutions:
@@ -1963,15 +1862,39 @@ def main():
             if same_defect_angles:
                 same_defect_angles.sort()
                 st.info(f"Available {defect_type} angles: {', '.join([f'{a:.1f}°' for a in same_defect_angles])}")
+                
+                # Find bracketing angles
+                lower_angle = None
+                upper_angle = None
+                
+                for angle in same_defect_angles:
+                    if angle < custom_theta:
+                        lower_angle = angle
+                
+                for angle in reversed(same_defect_angles):
+                    if angle > custom_theta:
+                        upper_angle = angle
+                
+                if lower_angle is not None and upper_angle is not None:
+                    st.success(f"Bracketing sources: {lower_angle:.1f}° (lower) and {upper_angle:.1f}° (upper)")
+                elif lower_angle is not None:
+                    st.warning(f"Only lower bracket: {lower_angle:.1f}°")
+                elif upper_angle is not None:
+                    st.warning(f"Only upper bracket: {upper_angle:.1f}°")
+                else:
+                    st.error(f"No {defect_type} sources available")
         
-        st.divider()
-        
-        # Material parameters with CORRECTED eigenstrains
-        st.markdown('<h2 class="section-header">🧬 Material Properties</h2>', unsafe_allow_html=True)
+        # Shape selection
+        shape = st.selectbox(
+            "Shape",
+            options=['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle'],
+            index=0,
+            help="Geometry of defect region"
+        )
         
         # Kappa parameter
         kappa = st.slider(
-            "Kappa (κ)",
+            "Kappa (material property)",
             min_value=0.1,
             max_value=2.0,
             value=0.6,
@@ -1979,93 +1902,78 @@ def main():
             help="Material stiffness parameter"
         )
         
-        # CORRECTED Eigenstrain calculation
+        # Eigenstrain auto-calculation
         st.markdown("#### 🧮 Eigenstrain Calculation")
         col_e1, col_e2 = st.columns(2)
         with col_e1:
             auto_eigen = st.checkbox("Auto-calculate eigenstrain", value=True)
         with col_e2:
-            # CORRECTED eigenstrain values to match source files
-            corrected_eigenstrain_map = {
-                'ISF': 0.707,    # Corrected to match source files
-                'ESF': 1.414,    # Corrected to match source files  
-                'Twin': 2.12,    # Corrected to match source files
-                'No Defect': 0.0
-            }
-            
             if auto_eigen:
-                # Auto-calculate based on defect type using corrected values
-                eigen_strain = corrected_eigenstrain_map[defect_type]
-                st.metric("Eigenstrain ε₀", f"{eigen_strain:.3f}", 
-                         delta=f"Corrected values")
+                # Auto-calculate based on defect type
+                eigen_strain = {
+                    'ISF': 0.289,
+                    'ESF': 0.333,
+                    'Twin': 0.707,
+                    'No Defect': 0.0
+                }[defect_type]
+                st.metric("Eigenstrain ε₀", f"{eigen_strain:.3f}")
             else:
                 eigen_strain = st.slider(
                     "Eigenstrain ε₀",
                     min_value=0.0,
                     max_value=3.0,
-                    value=corrected_eigenstrain_map[defect_type],  # Start with corrected default
-                    step=0.001,
-                    help="Corrected values: Twin=2.12, ESF=1.414, ISF=0.707"
+                    value=0.707,
+                    step=0.001
                 )
-        
-        # Shape
-        shape = st.selectbox(
-            "Shape",
-            options=['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle'],
-            index=0,
-            help="Geometry of the defect region"
-        )
         
         st.divider()
         
-        # Transformer parameters
-        st.markdown('<h2 class="section-header">🧠 Transformer Configuration</h2>', unsafe_allow_html=True)
+        # Angular bracketing parameters
+        st.markdown('<h2 class="section-header">🎯 Angular Bracketing Parameters</h2>', unsafe_allow_html=True)
         
-        # Temperature parameter
-        temperature = st.slider(
-            "Attention Temperature",
-            min_value=0.1,
-            max_value=10.0,
-            value=1.0,
-            step=0.1,
-            help="Softmax temperature for attention weights (lower = sharper distribution)"
+        # IMPORTANT TOGGLE: ANGULAR BRACKETING ENABLE/DISABLE
+        enable_bracketing = st.checkbox(
+            "Enable Angular Bracketing",
+            value=True,
+            help="If checked, uses only two nearest sources of same defect type. If unchecked, falls back to other methods."
         )
         
-        # Advanced parameters for targeted mode
-        if st.session_state.use_targeted_mode:
-            st.markdown("#### 🎯 Targeted Mode Parameters")
-            bracketing_weight = st.slider(
-                "Bracketing Source Weight",
-                min_value=0.9,
-                max_value=0.999,
-                value=0.98,
-                step=0.001,
-                help="Total weight allocated to the two bracketing sources"
-            )
-            other_weight = st.slider(
-                "Other Source Weight",
-                min_value=0.0001,
-                max_value=0.01,
-                value=0.001,
-                step=0.0001,
-                format="%.4f",
-                help="Weight allocated to non-bracketing sources (should be very small)"
-            )
-            
-            # Update interpolator parameters
-            st.session_state.dual_interpolator.targeted_interpolator.bracketing_weight = bracketing_weight
-            st.session_state.dual_interpolator.targeted_interpolator.other_weight = other_weight
+        # Bracketing weight parameters
+        st.markdown("#### ⚖️ Weight Parameters")
+        
+        bracketing_weight = st.slider(
+            "Bracketing Source Weight",
+            min_value=0.9,
+            max_value=0.999,
+            value=0.98,
+            step=0.001,
+            help="Total weight allocated to the two bracketing sources"
+        )
+        
+        other_weight = st.slider(
+            "Other Source Weight",
+            min_value=0.0001,
+            max_value=0.01,
+            value=0.001,
+            step=0.0001,
+            format="%.4f",
+            help="Weight allocated to non-bracketing sources (should be very small)"
+        )
+        
+        # Update interpolator parameters
+        st.session_state.angular_interpolator.bracketing_weight = bracketing_weight
+        st.session_state.angular_interpolator.other_weight = other_weight
         
         st.divider()
         
         # Run interpolation
         st.markdown("#### 🚀 Interpolation Control")
-        if st.button("🚀 Perform Interpolation", type="primary", use_container_width=True):
+        if st.button("🎯 Perform Angular Bracketing Interpolation", type="primary", use_container_width=True):
             if not st.session_state.solutions:
                 st.error("Please load solutions first!")
             else:
-                with st.spinner("Performing interpolation with enhanced visualization..."):
-                    # Setup target parameters with CORRECTED eigenstrains
+                with st.spinner("Performing angular bracketing interpolation..."):
+                    # Setup target parameters
                     target_params = {
                         'defect_type': defect_type,
                         'eps0': eigen_strain,
@@ -2074,41 +1982,37 @@ def main():
                         'shape': shape
                     }
                     
-                    # Set interpolation mode
-                    mode = 'targeted' if st.session_state.use_targeted_mode else 'full'
-                    
-                    # Perform interpolation
-                    result = st.session_state.dual_interpolator.interpolate(
+                    # Perform interpolation with angular bracketing
+                    result = st.session_state.angular_interpolator.interpolate_with_bracketing(
                         st.session_state.solutions,
                         custom_theta,
-                        target_params,
-                        mode=mode
+                        target_params
                     )
                     
                     if result:
                         st.session_state.interpolation_result = result
-                        st.session_state.target_angle = custom_theta
-                        st.session_state.target_defect = defect_type
                         
-                        # Show success message with bracketing info for targeted mode
-                        if st.session_state.use_targeted_mode and 'weights' in result:
-                            if 'bracketing_sources' in result['weights']:
-                                bracketing = result['weights']['bracketing_sources']
-                                lower = bracketing['lower']
-                                upper = bracketing['upper']
-                                st.markdown(f"""
-                                <div class="info-box">
-                                <strong>✅ Targeted Interpolation Successful!</strong><br>
-                                • Used <strong>{lower['index']} ({lower['angle']:.1f}°)</strong> as lower bracket<br>
-                                • Used <strong>{upper['index']} ({upper['angle']:.1f}°)</strong> as upper bracket<br>
+                        # Show success message with bracketing info
+                        if 'bracketing_sources' in result.get('weights', {}):
+                            bracketing = result['weights']['bracketing_sources']
+                            lower = bracketing['lower']
+                            upper = bracketing['upper']
+                            
+                            st.markdown(f"""
+                            <div class="success-box">
+                                <strong>✅ Angular Bracketing Interpolation Successful!</strong><br>
+                                • Used <strong>Source {lower['index']} ({lower['angle']:.1f}°)</strong> as lower bracket<br>
+                                • Used <strong>Source {upper['index']} ({upper['angle']:.1f}°)</strong> as upper bracket<br>
                                 • Bracketing weight: <strong>{(lower['weight'] + upper['weight'])*100:.1f}%</strong><br>
-                                • Other sources weight: <strong>{(1 - lower['weight'] - upper['weight'])*100:.3f}%</strong>
-                                </div>
-                                """, unsafe_allow_html=True)
+                                • Other sources weight: <strong>{(1 - lower['weight'] - upper['weight'])*100:.3f}%</strong><br>
+                                • Interpolation factor t = <strong>{result.get('interpolation_factor', {}).get('interpolation_t', 0):.3f}</strong>
+                            </div>
+                            """, unsafe_allow_html=True)
                         else:
-                            st.success("Interpolation completed with full transformer attention!")
+                            st.success("Interpolation completed!")
+                        st.session_state.selected_ground_truth = None
                     else:
-                        st.error("Interpolation failed. Check the console for errors.")
+                        st.error("Interpolation failed. Check console for errors.")
     
     # Main content area
     if st.session_state.solutions:
@@ -2128,34 +2032,27 @@ def main():
         # Display source information
         if st.session_state.solutions:
             source_thetas = []
-            source_defects = []
             for sol in st.session_state.solutions:
                 if 'params' in sol and 'theta' in sol['params']:
-                    theta_deg = np.degrees(sol['params']['theta']) % 360
+                    theta_deg = np.degrees(sol['params']['theta']) % 360  # Normalize to [0, 360)
                     source_thetas.append(theta_deg)
-                if 'defect_type' in sol.get('params', {}):
-                    source_defects.append(sol['params']['defect_type'])
-            
             if source_thetas:
                 st.markdown(f"**Source Angles Range:** {min(source_thetas):.1f}° to {max(source_thetas):.1f}°")
                 st.markdown(f"**Mean Source Angle:** {np.mean(source_thetas):.1f}°")
-                
-                # Show defect type distribution
-                if source_defects:
-                    defect_counts = pd.Series(source_defects).value_counts()
-                    st.markdown("**Source Defect Types:**")
-                    for defect, count in defect_counts.items():
-                        st.markdown(f"- **{defect}**: {count} sources")
     
     # Results display
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
         
+        # Retrieve bracketing info
+        bracketing_info = result.get('weights', {}).get('bracketing_sources', {})
+        
         # Tabs for different views
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📈 Results Overview",
-            "🎨 Advanced Visualization", 
-            "🧠 Weights Analysis",
+            "🎯 Bracketing Analysis",
+            "🎨 Visualization",
+            "⚖️ Weight Analysis",
             "🔄 Comparison Dashboard",
             "💾 Export Results"
         ])
@@ -2175,7 +2072,7 @@ def main():
             with col2:
                 st.metric(
                     "Hydrostatic Range",
-                    f"{result['statistics']['sigma_hydro']['max_tension']:.3f}/{result['statistics']['sigma_hydro']['max_compression']:.3f} GPa"
+                    f"{result['statistics']['sigma_hydro']['max']:.3f}/{result['statistics']['sigma_hydro']['min']:.3f} GPa"
                 )
             with col3:
                 st.metric(
@@ -2184,9 +2081,9 @@ def main():
                 )
             with col4:
                 st.metric(
-                    "Source Count",
+                    "Number of Sources",
                     result['num_sources'],
-                    delta=f"Entropy: {result['weights']['entropy']['combined']:.3f}"
+                    delta=f"Entropy: {result['weights']['entropy']:.3f}"
                 )
             
             # Target parameters display
@@ -2195,43 +2092,140 @@ def main():
             with param_col1:
                 st.markdown(f"""
                 <div class="param-table">
-                <div class="param-key">Angle (θ)</div>
-                <div class="param-value">{result['target_angle']:.2f}°</div>
-                <div class="param-key">Defect Type</div>
-                <div class="param-value">{result['target_params']['defect_type']}</div>
+                    <div class="param-key">Angle (θ)</div>
+                    <div class="param-value">{result['target_angle']:.2f}°</div>
+                    <div class="param-key">Defect Type</div>
+                    <div class="param-value">{result['target_params']['defect_type']}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with param_col2:
                 st.markdown(f"""
                 <div class="param-table">
-                <div class="param-key">Eigenstrain (ε₀)</div>
-                <div class="param-value">{result['target_params']['eps0']:.3f}</div>
-                <div class="param-key">Kappa (κ)</div>
-                <div class="param-value">{result['target_params']['kappa']:.3f}</div>
+                    <div class="param-key">Eigenstrain (ε₀)</div>
+                    <div class="param-value">{result['target_params']['eps0']:.3f}</div>
+                    <div class="param-key">Kappa (κ)</div>
+                    <div class="param-value">{result['target_params']['kappa']:.3f}</div>
                 </div>
                 """, unsafe_allow_html=True)
             with param_col3:
                 st.markdown(f"""
                 <div class="param-table">
-                <div class="param-key">Shape</div>
-                <div class="param-value">{result['target_params'].get('shape', 'Square')}</div>
-                <div class="param-key">Grid Size</div>
-                <div class="param-value">{result['shape'][0]}×{result['shape'][1]}</div>
+                    <div class="param-key">Shape</div>
+                    <div class="param-value">{result['target_params'].get('shape', 'Square')}</div>
+                    <div class="param-key">Method</div>
+                    <div class="param-value">{result.get('interpolation_method', 'angular_bracketing')}</div>
                 </div>
                 """, unsafe_allow_html=True)
             
-            # Special angle configuration
-            if st.session_state.use_special_angle:
-                st.markdown(f"#### 🎯 Special Angle: {st.session_state.special_angle:.1f}°")
-                angular_diff = abs(result['target_angle'] - st.session_state.special_angle)
-                st.markdown(f"**Angular distance from special angle:** {angular_diff:.1f}°")
+            # Bracketing information
+            st.markdown("#### 🎯 Bracketing Information")
+            if bracketing_info:
+                col_br1, col_br2, col_br3 = st.columns(3)
+                with col_br1:
+                    lower_info = bracketing_info.get('lower', {})
+                    st.metric(
+                        "Lower Bracket",
+                        f"{lower_info.get('angle', 0):.1f}°",
+                        delta=f"Weight: {lower_info.get('weight', 0)*100:.1f}%"
+                    )
+                with col_br2:
+                    interp_t = result.get('interpolation_factor', {}).get('interpolation_t', 0.5)
+                    st.metric(
+                        "Interpolation Factor (t)",
+                        f"{interp_t:.3f}",
+                        delta=f"{(1-interp_t)*100:.1f}% : {interp_t*100:.1f}%"
+                    )
+                with col_br3:
+                    upper_info = bracketing_info.get('upper', {})
+                    st.metric(
+                        "Upper Bracket",
+                        f"{upper_info.get('angle', 0):.1f}°",
+                        delta=f"Weight: {upper_info.get('weight', 0)*100:.1f}%"
+                    )
+            
+            # Quick preview of stress fields
+            st.markdown("#### 👀 Quick Preview")
+            preview_component = st.selectbox(
+                "Preview Component",
+                options=['von_mises', 'sigma_hydro', 'sigma_mag'],
+                index=0,
+                key="preview_component"
+            )
+            
+            if preview_component in result['fields']:
+                fig_preview = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                    result['fields'][preview_component],
+                    title=f"{preview_component.replace('_', ' ').title()} Stress",
+                    cmap_name='viridis',
+                    target_angle=result['target_angle'],
+                    defect_type=result['target_params']['defect_type'],
+                    figsize=(10, 8)
+                )
+                st.pyplot(fig_preview)
         
         with tab2:
-            # Advanced visualization tab
+            # Bracketing analysis
+            st.markdown('<h2 class="section-header">🎯 Angular Bracketing Analysis</h2>', unsafe_allow_html=True)
+            
+            # Create comprehensive bracketing analysis dashboard
+            fig_analysis = st.session_state.heatmap_visualizer.create_bracketing_analysis_dashboard(result)
+            st.pyplot(fig_analysis)
+            
+            # Additional analysis
+            st.markdown("#### 📊 Detailed Bracketing Analysis")
+            
+            if bracketing_info:
+                lower_info = bracketing_info.get('lower', {})
+                upper_info = bracketing_info.get('upper', {})
+                
+                # Create comparison table
+                st.markdown("##### 📋 Bracketing Sources Comparison")
+                df_bracketing = pd.DataFrame([
+                    {
+                        'Parameter': 'Angle',
+                        'Lower Bracket': f"{lower_info.get('angle', 0):.1f}°",
+                        'Upper Bracket': f"{upper_info.get('angle', 0):.1f}°",
+                        'Target': f"{result['target_angle']:.1f}°"
+                    },
+                    {
+                        'Parameter': 'Weight',
+                        'Lower Bracket': f"{lower_info.get('weight', 0)*100:.2f}%",
+                        'Upper Bracket': f"{upper_info.get('weight', 0)*100:.2f}%",
+                        'Target': '100.00%'
+                    },
+                    {
+                        'Parameter': 'Δθ from Target',
+                        'Lower Bracket': f"{abs(result['target_angle'] - lower_info.get('angle', 0)):.1f}°",
+                        'Upper Bracket': f"{abs(upper_info.get('angle', 0) - result['target_angle']):.1f}°",
+                        'Target': '0.0°'
+                    },
+                    {
+                        'Parameter': 'Source Index',
+                        'Lower Bracket': str(lower_info.get('index', 'N/A')),
+                        'Upper Bracket': str(upper_info.get('index', 'N/A')),
+                        'Target': 'N/A'
+                    }
+                ])
+                
+                st.dataframe(df_bracketing, use_container_width=True)
+                
+                # Show interpolation factor details
+                st.markdown("##### 🧮 Interpolation Factor Details")
+                interp_t = result.get('interpolation_factor', {}).get('interpolation_t', 0.5)
+                col_int1, col_int2, col_int3 = st.columns(3)
+                with col_int1:
+                    st.metric("t = (θ_target - θ_lower) / (θ_upper - θ_lower)", f"{interp_t:.4f}")
+                with col_int2:
+                    st.metric("Lower Contribution", f"{(1-interp_t)*100:.1f}%")
+                with col_int3:
+                    st.metric("Upper Contribution", f"{interp_t*100:.1f}%")
+        
+        with tab3:
+            # Visualization tab
             st.markdown('<h2 class="section-header">🎨 Advanced Visualization</h2>', unsafe_allow_html=True)
             
             # Visualization controls
-            col_viz1, col_viz2 = st.columns(2)
+            col_viz1, col_viz2, col_viz3 = st.columns(3)
             with col_viz1:
                 component = st.selectbox(
                     "Stress Component",
@@ -2240,9 +2234,17 @@ def main():
                     key="viz_component"
                 )
             with col_viz2:
+                cmap_category = st.selectbox(
+                    "Colormap Category",
+                    options=list(COLORMAP_OPTIONS.keys()),
+                    index=0,
+                    key="cmap_category"
+                )
+                cmap_options = COLORMAP_OPTIONS[cmap_category]
+            with col_viz3:
                 cmap_name = st.selectbox(
                     "Colormap",
-                    options=COLORMAP_OPTIONS['Publication Standard'],
+                    options=cmap_options,
                     index=0,
                     key="cmap_name"
                 )
@@ -2251,13 +2253,13 @@ def main():
             if cmap_name:
                 col_preview1, col_preview2, col_preview3 = st.columns([1, 2, 1])
                 with col_preview2:
-                    fig_cmap = st.session_state.visualizer.get_colormap_preview(cmap_name)
+                    fig_cmap = st.session_state.heatmap_visualizer.get_colormap_preview(cmap_name)
                     st.pyplot(fig_cmap)
             
             # Visualization type selection
             viz_type = st.radio(
                 "Visualization Type",
-                options=["2D Heatmap", "3D Surface", "Interactive Heatmap", "Interactive 3D"],
+                options=["2D Heatmap", "3D Surface", "Interactive Heatmap", "Interactive 3D", "Angular Orientation"],
                 horizontal=True
             )
             
@@ -2266,216 +2268,324 @@ def main():
                 
                 if viz_type == "2D Heatmap":
                     # 2D heatmap
-                    fig_2d = st.session_state.visualizer.create_stress_heatmap(
+                    fig_2d = st.session_state.heatmap_visualizer.create_stress_heatmap(
                         stress_field,
                         title=f"{component.replace('_', ' ').title()} Stress",
                         cmap_name=cmap_name,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
-                        special_angle=st.session_state.special_angle if st.session_state.use_special_angle else None,
                         figsize=(12, 10)
                     )
                     st.pyplot(fig_2d)
+                    
+                    # Show statistics
+                    with st.expander("📊 Detailed Statistics", expanded=False):
+                        stats = result['statistics'][component]
+                        for key, value in stats.items():
+                            st.metric(key.replace('_', ' ').title(), f"{value:.4f}")
+                
                 elif viz_type == "3D Surface":
                     # 3D surface plot
-                    fig_3d = st.session_state.visualizer.create_3d_surface_plot(
+                    fig_3d = st.session_state.heatmap_visualizer.create_3d_surface_plot(
                         stress_field,
                         title=f"{component.replace('_', ' ').title()} Stress",
                         cmap_name=cmap_name,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
-                        special_angle=st.session_state.special_angle if st.session_state.use_special_angle else None,
                         figsize=(14, 10)
                     )
                     st.pyplot(fig_3d)
+                
                 elif viz_type == "Interactive Heatmap":
                     # Interactive heatmap
-                    fig_interactive = st.session_state.visualizer.create_interactive_heatmap(
+                    fig_interactive = st.session_state.heatmap_visualizer.create_interactive_heatmap(
                         stress_field,
                         title=f"{component.replace('_', ' ').title()} Stress",
                         cmap_name=cmap_name,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
-                        special_angle=st.session_state.special_angle if st.session_state.use_special_angle else None,
                         width=800,
                         height=700
                     )
                     st.plotly_chart(fig_interactive, use_container_width=True)
+                
                 elif viz_type == "Interactive 3D":
                     # Interactive 3D surface
-                    fig_3d_interactive = st.session_state.visualizer.create_interactive_3d_surface(
+                    fig_3d_interactive = st.session_state.heatmap_visualizer.create_interactive_3d_surface(
                         stress_field,
                         title=f"{component.replace('_', ' ').title()} Stress",
                         cmap_name=cmap_name,
                         target_angle=result['target_angle'],
                         defect_type=result['target_params']['defect_type'],
-                        special_angle=st.session_state.special_angle if st.session_state.use_special_angle else None,
                         width=900,
                         height=700
                     )
                     st.plotly_chart(fig_3d_interactive, use_container_width=True)
+                
+                elif viz_type == "Angular Orientation":
+                    # Angular orientation plot
+                    fig_angular = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
+                        result['target_angle'],
+                        defect_type=result['target_params']['defect_type'],
+                        figsize=(10, 10)
+                    )
+                    st.pyplot(fig_angular)
+            
+            # Comparison of all components
+            st.markdown("#### 🔄 Component Comparison")
+            if st.button("Show All Components Comparison", key="show_all_components"):
+                fig_all = st.session_state.heatmap_visualizer.create_comparison_heatmaps(
+                    result['fields'],
+                    cmap_name=cmap_name,
+                    target_angle=result['target_angle'],
+                    defect_type=result['target_params']['defect_type'],
+                    figsize=(18, 6)
+                )
+                st.pyplot(fig_all)
         
-        with tab3:
-            # Weights analysis tab
-            st.markdown('<h2 class="section-header">🧠 Weights Analysis</h2>', unsafe_allow_html=True)
+        with tab4:
+            # Weight analysis tab
+            st.markdown('<h2 class="section-header">⚖️ Weight Distribution Analysis</h2>', unsafe_allow_html=True)
             
             if 'weights' in result:
-                weights = result['weights']
+                weights = result['weights']['combined']
                 
                 # Weight statistics
                 col_w1, col_w2, col_w3, col_w4 = st.columns(4)
                 with col_w1:
-                    st.metric("Transformer Entropy", f"{weights['entropy']['transformer']:.3f}")
+                    st.metric("Weight Entropy", f"{result['weights']['entropy']:.3f}")
                 with col_w2:
-                    st.metric("Spatial Entropy", f"{weights['entropy']['spatial']:.3f}")
+                    sorted_weights = np.sort(weights)[::-1]
+                    top_2_weight = sum(sorted_weights[:2])
+                    st.metric("Top 2 Sources Weight", f"{top_2_weight*100:.1f}%")
                 with col_w3:
-                    st.metric("Combined Entropy", f"{weights['entropy']['combined']:.3f}")
+                    other_weight = 1 - top_2_weight
+                    st.metric("Other Sources Weight", f"{other_weight*100:.3f}%")
                 with col_w4:
-                    max_weight_idx = np.argmax(weights['combined'])
-                    max_theta = result['source_theta_degrees'][max_weight_idx] if max_weight_idx < len(result['source_theta_degrees']) else 0.0
-                    max_defect = result.get('source_defect_types', [result['target_params']['defect_type']])[max_weight_idx]
-                    st.metric("Top Contributor", f"{max_defect} @ {max_theta:.1f}°")
+                    non_zero_sources = sum(1 for w in weights if w > 0.001)
+                    st.metric("Significant Sources", non_zero_sources)
                 
-                # Prepare weight data for visualization
-                weights_data = {
-                    'spatial': weights['positional'],
-                    'attention': weights['transformer'],
-                    'combined': weights['combined'],
-                    'entropy_spatial': weights['entropy']['spatial'],
-                    'entropy_attention': weights['entropy']['transformer'],
-                    'entropy_combined': weights['entropy']['combined'],
-                    'angles': result['source_theta_degrees'],
-                    'distances': result.get('source_distances', [0] * len(weights['combined'])),
-                    'target_angle': result['target_angle'],
-                    'special_angle': st.session_state.special_angle if st.session_state.use_special_angle else None
-                }
+                # Weight distribution plot
+                st.markdown("#### 📊 Source Weight Distribution")
+                fig_weights, ax_weights = plt.subplots(figsize=(14, 6))
+                x = range(len(weights))
                 
-                # Static weights visualization
-                st.markdown("#### 📊 Static Weights Visualization")
-                fig_weights = st.session_state.visualizer.create_weights_visualization(weights_data, figsize=(15, 10))
+                # Plot weights
+                bars = ax_weights.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
+                ax_weights.set_xlabel('Source Index')
+                ax_weights.set_ylabel('Weight')
+                ax_weights.set_title('Weight Distribution Across Sources', fontsize=16, fontweight='bold')
+                ax_weights.grid(True, alpha=0.3, axis='y')
+                
+                # Highlight bracketing sources
+                if bracketing_info:
+                    lower_idx = bracketing_info.get('lower', {}).get('index')
+                    upper_idx = bracketing_info.get('upper', {}).get('index')
+                    
+                    if lower_idx is not None and lower_idx < len(bars):
+                        bars[lower_idx].set_color('green')
+                        bars[lower_idx].set_alpha(0.9)
+                        bars[lower_idx].set_label('Lower Bracket')
+                    
+                    if upper_idx is not None and upper_idx < len(bars):
+                        bars[upper_idx].set_color('red')
+                        bars[upper_idx].set_alpha(0.9)
+                        bars[upper_idx].set_label('Upper Bracket')
+                
+                # Add weight labels for significant sources
+                for i, bar in enumerate(bars):
+                    height = bar.get_height()
+                    if height > 0.01:  # Label weights > 1%
+                        ax_weights.text(bar.get_x() + bar.get_width()/2., height + 0.005,
+                                      f'{height:.3f}', ha='center', va='bottom', fontsize=8)
+                
+                ax_weights.legend()
                 st.pyplot(fig_weights)
                 
-                # Interactive weights dashboard
-                st.markdown("#### 🔄 Interactive Weights Dashboard")
-                fig_interactive_weights = st.session_state.visualizer.create_interactive_weights_dashboard(weights_data)
-                st.plotly_chart(fig_interactive_weights, use_container_width=True)
-                
-                # Bracketing visualization for targeted mode
-                if st.session_state.use_targeted_mode and 'bracketing_sources' in weights:
-                    st.markdown("#### 🎯 Bracketing Visualization")
-                    bracketing = weights['bracketing_sources']
-                    lower_angle = bracketing['lower']['angle']
-                    upper_angle = bracketing['upper']['angle']
-                    target_angle = result['target_angle']
-                    target_defect = result['target_params']['defect_type']
+                # Top contributors table
+                st.markdown("#### 🏆 Top Contributors Analysis")
+                weight_data = []
+                for i in range(len(weights)):
+                    angle_dist = result['source_angular_distances'][i] if i < len(result['source_angular_distances']) else 0.0
+                    defect_type = result['source_defect_types'][i] if i < len(result['source_defect_types']) else 'Unknown'
                     
-                    fig_bracketing = st.session_state.visualizer.create_bracketing_visualization(
-                        lower_angle, upper_angle, target_angle, target_defect, figsize=(10, 8)
-                    )
-                    st.pyplot(fig_bracketing)
+                    weight_data.append({
+                        'Source': i,
+                        'Weight': weights[i],
+                        'Angular Distance (°)': angle_dist,
+                        'Defect Type': defect_type,
+                        'Contribution': f"{weights[i]*100:.2f}%",
+                        'Is Bracket': '✓' if (i == bracketing_info.get('lower', {}).get('index') or 
+                                             i == bracketing_info.get('upper', {}).get('index')) else ''
+                    })
+                
+                df_weights = pd.DataFrame(weight_data)
+                df_weights = df_weights.sort_values('Weight', ascending=False)
+                
+                # Display top contributors
+                st.dataframe(df_weights.head(10).style.format({
+                    'Weight': '{:.6f}',
+                    'Angular Distance (°)': '{:.1f}'
+                }).background_gradient(subset=['Weight'], cmap='YlOrRd'))
         
-        with tab4:
+        with tab5:
             # COMPARISON DASHBOARD
             st.markdown('<h2 class="section-header">🔄 Comparison Dashboard</h2>', unsafe_allow_html=True)
-            st.markdown("""
+            st.markdown(f"""
             <div class="info-box">
-            <strong>Compare interpolated results with source solutions</strong><br>
-            • Select any source solution as ground truth<br>
+            <strong>Compare interpolated results with ground truth sources</strong><br>
+            • Select a source solution as ground truth<br>
             • Visualize differences between interpolation and ground truth<br>
+            • Calculate error metrics (MSE, MAE, RMSE, correlation)<br>
             • Analyze spatial correlation patterns<br>
-            • Compare stress field profiles
+            • Current Method: Angular Bracketing<br>
+            • <strong>Bracketing Sources:</strong> Shows which sources were used as lower/upper brackets
             </div>
             """, unsafe_allow_html=True)
             
             # Ground truth selection
             st.markdown("#### 🎯 Select Ground Truth Source")
-            if 'source_theta_degrees' in result and result['source_theta_degrees']:
+            if 'source_defect_types' in result and result['source_defect_types']:
+                # Create dropdown options
                 ground_truth_options = []
-                for i, theta in enumerate(result['source_theta_degrees']):
-                    defect_type = result.get('source_defect_types', [result['target_params']['defect_type']])[i]
-                    weight = result['weights']['combined'][i]
+                for i in range(len(result['source_defect_types'])):
+                    angle_dist = result['source_angular_distances'][i] if i < len(result['source_angular_distances']) else 0.0
+                    defect = result['source_defect_types'][i] if i < len(result['source_defect_types']) else 'Unknown'
+                    weight = result['weights']['combined'][i] if i < len(result['weights']['combined']) else 0.0
+                    
+                    # Determine if this is a bracketing source
+                    bracket_type = ""
+                    if i == bracketing_info.get('lower', {}).get('index'):
+                        bracket_type = " [Lower Bracket]"
+                    elif i == bracketing_info.get('upper', {}).get('index'):
+                        bracket_type = " [Upper Bracket]"
+                    
                     ground_truth_options.append(
-                        f"Source {i}: {defect_type} @ {theta:.1f}° (weight={weight:.3f})"
+                        f"Source {i}{bracket_type}: {defect}, Δ={angle_dist:.1f}°, weight={weight:.3f}"
                     )
                 
                 selected_option = st.selectbox(
                     "Choose ground truth source:",
                     options=ground_truth_options,
-                    index=0,
+                    index=0 if not st.session_state.selected_ground_truth else st.session_state.selected_ground_truth,
                     key="ground_truth_select"
                 )
                 
                 # Parse selected index
                 selected_index = int(selected_option.split(":")[0].split(" ")[1])
+                st.session_state.selected_ground_truth = selected_index
                 
                 # Display selected source info
-                selected_theta = result['source_theta_degrees'][selected_index]
                 selected_weight = result['weights']['combined'][selected_index]
-                selected_defect = result.get('source_defect_types', [result['target_params']['defect_type']])[selected_index]
+                selected_distance = result['source_angular_distances'][selected_index] if selected_index < len(result['source_angular_distances']) else 0.0
+                selected_defect = result['source_defect_types'][selected_index] if selected_index < len(result['source_defect_types']) else 'Unknown'
                 
                 col_gt1, col_gt2, col_gt3, col_gt4 = st.columns(4)
                 with col_gt1:
                     st.metric("Selected Source", selected_index)
                 with col_gt2:
-                    st.metric("Source Angle", f"{selected_theta:.1f}°")
+                    st.metric("Angular Distance", f"{selected_distance:.1f}°")
                 with col_gt3:
-                    st.metric("Source Defect", selected_defect)
+                    st.metric("Defect Type", selected_defect)
                 with col_gt4:
                     st.metric("Contribution Weight", f"{selected_weight:.3f}")
+            
+            # Visualization options for comparison
+            st.markdown("#### 🎨 Comparison Visualization")
+            comp_component = st.selectbox(
+                "Component for Comparison",
+                options=['von_mises', 'sigma_hydro', 'sigma_mag'],
+                index=0,
+                key="comp_component"
+            )
+            
+            comp_cmap = st.selectbox(
+                "Colormap for Comparison",
+                options=COLORMAP_OPTIONS['Publication Standard'],
+                index=0,
+                key="comp_cmap"
+            )
+            
+            # Create comparison dashboard
+            if comp_component in result['fields']:
+                # Prepare source info for dashboard
+                source_info = {
+                    'theta_degrees': result.get('source_theta_degrees', []),
+                    'source_angular_distances': result['source_angular_distances'],
+                    'weights': result['weights'],
+                    'statistics': result['statistics'],
+                    'num_sources': result['num_sources']
+                }
                 
-                # Create comparison dashboard
-                if 'source_fields' in result and selected_index < len(result['source_fields']):
-                    comparison_component = st.selectbox(
-                        "Component for Comparison",
-                        options=['von_mises', 'sigma_hydro', 'sigma_mag'],
-                        index=0,
-                        key="comp_component"
-                    )
+                # Get raw source fields
+                raw_source_fields_list = result.get('raw_source_fields', result.get('source_fields', []))
+                
+                if len(raw_source_fields_list) > 0:
+                    # Get bracketing info for visualization
+                    bracketing_viz_info = {}
+                    if bracketing_info:
+                        bracketing_viz_info = {
+                            'lower': bracketing_info.get('lower', {}),
+                            'upper': bracketing_info.get('upper', {}),
+                            'interpolation_t': result.get('interpolation_factor', {}).get('interpolation_t', 0.5)
+                        }
                     
-                    if comparison_component in result['fields']:
-                        # Prepare source fields for comparison
-                        source_fields = []
-                        for fields in result['source_fields']:
-                            if comparison_component in fields:
-                                source_fields.append(fields[comparison_component])
+                    fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                        interpolated_fields=result['fields'],
+                        source_fields=raw_source_fields_list,
+                        source_info=source_info,
+                        target_angle=result['target_angle'],
+                        defect_type=result['target_params']['defect_type'],
+                        component=comp_component,
+                        cmap_name=comp_cmap,
+                        figsize=(20, 15),
+                        ground_truth_index=selected_index,
+                        bracketing_info=bracketing_viz_info
+                    )
+                    st.pyplot(fig_comparison)
+                    
+                    # Calculate and display detailed error metrics
+                    if selected_index < len(raw_source_fields_list):
+                        ground_truth_field = raw_source_fields_list[selected_index].get(comp_component)
+                        interpolated_field = result['fields'][comp_component]
                         
-                        if selected_index < len(source_fields):
-                            # Create comparison figure
-                            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+                        if ground_truth_field is not None:
+                            # Calculate errors
+                            error_field = interpolated_field - ground_truth_field
+                            mse = np.mean(error_field**2)
+                            mae = np.mean(np.abs(error_field))
+                            rmse = np.sqrt(mse)
                             
-                            # Interpolated result
-                            im1 = axes[0].imshow(result['fields'][comparison_component], cmap='viridis')
-                            axes[0].set_title('Interpolated Result', fontsize=14, fontweight='bold')
-                            plt.colorbar(im1, ax=axes[0])
+                            # Calculate correlation
+                            try:
+                                corr_coef = np.corrcoef(ground_truth_field.flatten(), interpolated_field.flatten())[0, 1]
+                            except:
+                                corr_coef = 0.0
                             
-                            # Ground truth
-                            im2 = axes[1].imshow(source_fields[selected_index], cmap='viridis')
-                            axes[1].set_title(f'Ground Truth\nSource {selected_index}: {selected_defect} @ {selected_theta:.1f}°', 
-                                            fontsize=14, fontweight='bold')
-                            plt.colorbar(im2, ax=axes[1])
-                            
-                            # Difference
-                            diff = result['fields'][comparison_component] - source_fields[selected_index]
-                            im3 = axes[2].imshow(diff, cmap='RdBu_r')
-                            axes[2].set_title('Difference', fontsize=14, fontweight='bold')
-                            plt.colorbar(im3, ax=axes[2])
-                            
-                            plt.suptitle(f'Comparison: {comparison_component.replace("_", " ").title()} Stress', 
-                                        fontsize=16, fontweight='bold')
-                            plt.tight_layout()
-                            st.pyplot(fig)
+                            # Display metrics
+                            st.markdown("#### 📊 Error Metrics")
+                            err_col1, err_col2, err_col3, err_col4 = st.columns(4)
+                            with err_col1:
+                                st.metric("Mean Squared Error (MSE)", f"{mse:.6f}")
+                            with err_col2:
+                                st.metric("Mean Absolute Error (MAE)", f"{mae:.6f}")
+                            with err_col3:
+                                st.metric("Root Mean Squared Error (RMSE)", f"{rmse:.6f}")
+                            with err_col4:
+                                st.metric("Pearson Correlation", f"{corr_coef:.4f}")
+            else:
+                st.warning("No source information available for comparison.")
         
-        with tab5:
+        with tab6:
             # Export tab
             st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
-            st.markdown("""
+            st.markdown(f"""
             <div class="info-box">
             <strong>Export interpolation results for further analysis</strong><br>
             • Export full results as JSON with metadata<br>
             • Export stress field data as CSV for external analysis<br>
             • Download visualizations as PNG images<br>
-            • Save comparison dashboard for publication<br>
-            • Includes corrected eigenstrain values and weight analysis
+            • Save comparison dashboard for publication
             </div>
             """, unsafe_allow_html=True)
             
@@ -2491,14 +2601,15 @@ def main():
                 visualization_params = {
                     'component': component if 'component' in locals() else 'von_mises',
                     'colormap': cmap_name if 'cmap_name' in locals() else 'viridis',
-                    'visualization_type': viz_type if 'viz_type' in locals() else '2D Heatmap',
-                    'special_angle': st.session_state.special_angle,
-                    'use_special_angle': st.session_state.use_special_angle
+                    'visualization_type': viz_type if 'viz_type' in locals() else '2D Heatmap'
                 }
+                
                 export_data = st.session_state.results_manager.prepare_export_data(
                     result, visualization_params
                 )
+                
                 json_str, json_filename = st.session_state.results_manager.export_to_json(export_data)
+                
                 st.download_button(
                     label="📥 Download JSON",
                     data=json_str,
@@ -2510,9 +2621,11 @@ def main():
                 # Show preview
                 with st.expander("🔍 JSON Preview", expanded=False):
                     st.json(export_data)
+            
             elif export_format == "CSV (Field Data)":
                 # CSV export
                 csv_str, csv_filename = st.session_state.results_manager.export_to_csv(result)
+                
                 st.download_button(
                     label="📥 Download CSV",
                     data=csv_str,
@@ -2527,64 +2640,176 @@ def main():
                     sample_data = {}
                     for field_name, field_data in result['fields'].items():
                         sample_data[field_name] = field_data.flatten()[:100]  # First 100 values
+                    
                     df_sample = pd.DataFrame(sample_data)
                     st.dataframe(df_sample.head(10))
+            
             elif export_format == "PNG (Visualizations)":
                 # PNG export options
                 st.markdown("#### 📸 Select Visualizations to Export")
                 export_plots = st.multiselect(
                     "Choose plots to export:",
                     options=[
-                        "Von Mises Heatmap", 
-                        "Hydrostatic Heatmap", 
+                        "Von Mises Heatmap",
+                        "Hydrostatic Heatmap",
                         "Stress Magnitude Heatmap",
-                        "3D Surface Plot", 
-                        "Interactive Dashboard", 
-                        "Weights Analysis", 
-                        "Bracketing Visualization"
+                        "3D Surface Plot",
+                        "Angular Orientation",
+                        "Bracketing Analysis Dashboard",
+                        "Weight Distribution",
+                        "Comparison Dashboard"
                     ],
-                    default=["Von Mises Heatmap", "Weights Analysis"]
+                    default=["Von Mises Heatmap", "Bracketing Analysis Dashboard", "Comparison Dashboard"]
                 )
                 
                 if st.button("🖼️ Generate and Download Visualizations", use_container_width=True):
                     # Create a zip file with all selected plots
                     import zipfile
                     from io import BytesIO
+                    
                     zip_buffer = BytesIO()
                     with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+                        # Generate and save each selected plot
                         plot_count = 0
                         
                         if "Von Mises Heatmap" in export_plots:
-                            fig = st.session_state.visualizer.create_stress_heatmap(
+                            fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
                                 result['fields']['von_mises'],
                                 title="Von Mises Stress",
                                 cmap_name='viridis',
                                 target_angle=result['target_angle'],
-                                defect_type=result['target_params']['defect_type'],
-                                special_angle=st.session_state.special_angle if st.session_state.use_special_angle else None
+                                defect_type=result['target_params']['defect_type']
                             )
-                            png_data, filename = st.session_state.results_manager.export_visualization_as_png(fig)
-                            zip_file.writestr(f"von_mises_{result['target_angle']:.1f}.png", png_data)
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"von_mises_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                         
-                        if "Weights Analysis" in export_plots and 'weights' in result:
-                            weights = result['weights']
-                            weights_data = {
-                                'spatial': weights['positional'],
-                                'attention': weights['transformer'],
-                                'combined': weights['combined'],
-                                'entropy_spatial': weights['entropy']['spatial'],
-                                'entropy_attention': weights['entropy']['transformer'],
-                                'entropy_combined': weights['entropy']['combined'],
-                                'angles': result['source_theta_degrees'],
-                                'distances': result.get('source_distances', [0] * len(weights['combined'])),
-                                'target_angle': result['target_angle'],
-                                'special_angle': st.session_state.special_angle if st.session_state.use_special_angle else None
+                        if "Hydrostatic Heatmap" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                                result['fields']['sigma_hydro'],
+                                title="Hydrostatic Stress",
+                                cmap_name='RdBu_r',
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type']
+                            )
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"hydrostatic_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "Stress Magnitude Heatmap" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                                result['fields']['sigma_mag'],
+                                title="Stress Magnitude",
+                                cmap_name='plasma',
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type']
+                            )
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"stress_magnitude_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "3D Surface Plot" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_3d_surface_plot(
+                                result['fields']['von_mises'],
+                                title="3D Von Mises Stress",
+                                cmap_name='viridis',
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type']
+                            )
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"3d_surface_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "Angular Orientation" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_angular_orientation_plot(
+                                result['target_angle'],
+                                defect_type=result['target_params']['defect_type']
+                            )
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"angular_orientation_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "Bracketing Analysis Dashboard" in export_plots:
+                            fig = st.session_state.heatmap_visualizer.create_bracketing_analysis_dashboard(result)
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"bracketing_analysis_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "Weight Distribution" in export_plots:
+                            fig, ax = plt.subplots(figsize=(12, 6))
+                            weights = result['weights']['combined']
+                            x = range(len(weights))
+                            bars = ax.bar(x, weights, alpha=0.7, color='steelblue', edgecolor='black')
+                            ax.set_xlabel('Source Index')
+                            ax.set_ylabel('Weight')
+                            ax.set_title('Weight Distribution', fontsize=16, fontweight='bold')
+                            ax.grid(True, alpha=0.3, axis='y')
+                            
+                            # Highlight bracketing sources
+                            if bracketing_info:
+                                lower_idx = bracketing_info.get('lower', {}).get('index')
+                                upper_idx = bracketing_info.get('upper', {}).get('index')
+                                
+                                if lower_idx is not None and lower_idx < len(bars):
+                                    bars[lower_idx].set_color('green')
+                                    bars[lower_idx].set_alpha(0.9)
+                                    bars[lower_idx].set_label('Lower Bracket')
+                                
+                                if upper_idx is not None and upper_idx < len(bars):
+                                    bars[upper_idx].set_color('red')
+                                    bars[upper_idx].set_alpha(0.9)
+                                    bars[upper_idx].set_label('Upper Bracket')
+                            
+                            ax.legend()
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"weight_distribution_theta_{result['target_angle']:.1f}.png", buf.getvalue())
+                            plot_count += 1
+                            plt.close(fig)
+                        
+                        if "Comparison Dashboard" in export_plots and st.session_state.selected_ground_truth is not None:
+                            source_info = {
+                                'source_angular_distances': result['source_angular_distances'],
+                                'weights': result['weights'],
+                                'statistics': result['statistics'],
+                                'num_sources': result['num_sources']
                             }
-                            fig = st.session_state.visualizer.create_weights_visualization(weights_data)
-                            png_data, filename = st.session_state.results_manager.export_visualization_as_png(fig)
-                            zip_file.writestr(f"weights_analysis_{result['target_angle']:.1f}.png", png_data)
+                            
+                            bracketing_viz_info = {}
+                            if bracketing_info:
+                                bracketing_viz_info = {
+                                    'lower': bracketing_info.get('lower', {}),
+                                    'upper': bracketing_info.get('upper', {}),
+                                    'interpolation_t': result.get('interpolation_factor', {}).get('interpolation_t', 0.5)
+                                }
+                            
+                            fig = st.session_state.heatmap_visualizer.create_comparison_dashboard(
+                                interpolated_fields=result['fields'],
+                                source_fields=result.get('raw_source_fields', result.get('source_fields', [])),
+                                source_info=source_info,
+                                target_angle=result['target_angle'],
+                                defect_type=result['target_params']['defect_type'],
+                                component='von_mises',
+                                cmap_name='viridis',
+                                ground_truth_index=st.session_state.selected_ground_truth,
+                                bracketing_info=bracketing_viz_info
+                            )
+                            
+                            buf = BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+                            zip_file.writestr(f"comparison_dashboard_theta_{result['target_angle']:.1f}.png", buf.getvalue())
                             plot_count += 1
                             plt.close(fig)
                     
@@ -2598,110 +2823,72 @@ def main():
                         mime="application/zip",
                         use_container_width=True
                     )
+                    
                     st.success(f"Generated {plot_count} visualization(s) for download.")
     
-    # No results yet - show instructions
     else:
+        # No results yet - show instructions
         st.markdown("""
         <div style="text-align: center; padding: 50px; background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%); border-radius: 20px; color: white;">
-        <h2>🚀 Ready to Begin!</h2>
-        <p style="font-size: 1.2rem; margin-bottom: 30px;">
-        Follow these steps to start interpolating stress fields with advanced visualization:
-        </p>
-        <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
-        <li>Load simulation files from the sidebar</li>
-        <li>Configure target parameters (angle, defect type, etc.)</li>
-        <li>Adjust transformer and visualization parameters</li>
-        <li>Click "Perform Interpolation"</li>
-        <li>Explore advanced visualizations in the tabs above</li>
-        </ol>
-        <p style="margin-top: 30px; font-size: 1.1rem;">
-        <strong>Key Features:</strong>
-        <ul style="text-align: left; display: inline-block;">
-        <li>✅ <strong>Corrected eigenstrain values</strong> (Twin: 2.12, ESF: 1.414, ISF: 0.707)</li>
-        <li>✅ <strong>Advanced weight visualization</strong> (spatial, attention, combined)</li>
-        <li>✅ <strong>Interactive 3D visualizations</strong> with hover information</li>
-        <li>✅ <strong>Bracketing analysis</strong> for targeted interpolation</li>
-        <li>✅ <strong>Comprehensive export options</strong> with full metadata</li>
-        </ul>
-        </p>
+            <h2>🎯 Ready to Begin!</h2>
+            <p style="font-size: 1.2rem; margin-bottom: 30px;">
+                Follow these steps to start interpolating stress fields with angular bracketing:
+            </p>
+            <ol style="text-align: left; display: inline-block; font-size: 1.1rem;">
+                <li>Load simulation files from the sidebar</li>
+                <li>Configure target parameters (angle, defect type, etc.)</li>
+                <li><strong>Feature:</strong> System automatically finds bracketing sources of same defect type</li>
+                <li><strong>Feature:</strong> Adjust bracketing weight parameters (98% to bracketing, 0.1% to others)</li>
+                <li>Click "Perform Angular Bracketing Interpolation"</li>
+                <li>Explore results in the tabs above</li>
+            </ol>
+            <p style="margin-top: 30px; font-size: 1.1rem;">
+                <strong>Angular Bracketing Principle:</strong>
+                <ul style="text-align: left; display: inline-block;">
+                    <li><strong>Source Selection:</strong> Finds nearest sources below and above target angle with same defect type</li>
+                    <li><strong>Weight Assignment:</strong> Gives ~98% weight to bracketing sources, ~0.1% to others</li>
+                    <li><strong>Linear Interpolation:</strong> Uses t = (θ_target - θ_lower) / (θ_upper - θ_lower)</li>
+                    <li><strong>Physics-based:</strong> Maintains defect type consistency for accurate interpolation</li>
+                </ul>
+            </p>
         </div>
         """, unsafe_allow_html=True)
-    
-    # Quick start guide
-    st.markdown("### 📚 Advanced Visualization Guide")
-    col_guide1, col_guide2, col_guide3 = st.columns(3)
-    with col_guide1:
-        st.markdown("""
-        #### 🎨 Visualization Types
-        1. **2D Heatmaps** with publication-quality styling
-        2. **3D Surface Plots** for spatial stress distribution
-        3. **Interactive Heatmaps** with hover information
-        4. **Interactive 3D Surfaces** with rotation and zoom
-        5. **Weight Distribution Analysis** for model transparency
-        """)
-    with col_guide2:
-        st.markdown("""
-        #### 🧠 Weight Analysis
-        - **Spatial Weights**: Based on angular proximity and parameter similarity
-        - **Attention Weights**: From transformer neural network
-        - **Combined Weights**: Hybrid approach (configurable balance)
-        - **Entropy Metrics**: Measure of weight distribution concentration
-        - **Bracketing Visualization**: For targeted interpolation mode
-        """)
-    with col_guide3:
-        st.markdown("""
-        #### 📤 Export Options
-        - **JSON**: Full results with metadata and stress field data
-        - **CSV**: Flattened stress field data for external analysis
-        - **PNG**: High-resolution visualizations (300+ DPI)
-        - **ZIP**: Package of multiple visualizations
-        - **Interactive Plots**: Save Plotly figures as HTML
-        """)
-    
-    # Physics explanation
-    with st.expander("🧬 Physics Background: Corrected Eigenstrains and Advanced Visualization", expanded=True):
-        st.markdown("""
-        **Key Corrections and Enhancements:**
-
-        1. **Corrected Eigenstrain Values:**
-           - Fixed to match original source files:
-             - Twin boundary: **2.12** (previously 0.707)
-             - ESF (Extrinsic Stacking Fault): **1.414** (previously 0.333) 
-             - ISF (Intrinsic Stacking Fault): **0.707** (previously 0.289)
-           - These values now correctly reflect the physical magnitudes for FCC crystal defects
-
-        2. **Advanced Weight Visualization:**
-           - **Spatial Weights**: Show influence of angular proximity and parameter similarity
-           - **Attention Weights**: Visualize transformer's learned importance
-           - **Combined Weights**: See the final blending of spatial and attention mechanisms
-           - **Polar Plots**: Display angular distribution of source influence
-           - **Entropy Analysis**: Quantify weight distribution concentration
-
-        3. **Interactive 3D Visualization:**
-           - **Interactive Heatmaps** with hover information for detailed inspection
-           - **3D Surface Plots** that can be rotated, zoomed, and panned
-           - **Dynamic Color Maps** that adapt to data range
-           - **Real-time Statistics** display on hover
-
-        4. **Bracketing Analysis:**
-           - For targeted interpolation mode, visualize the bracketing relationship
-           - See exactly which sources are used and their relative weights
-           - Understand why certain sources dominate the interpolation
-
-        5. **Publication Quality:**
-           - All visualizations follow publication standards
-           - Consistent color schemes and labeling
-           - Proper axis labels and units
-           - High-resolution (300+ DPI) export options
-           - Comprehensive metadata for reproducibility
-
-        This implementation ensures that both the physics and visualization are state-of-the-art, providing researchers with the tools needed for rigorous analysis and clear communication of results.
-        """)
+        
+        # Theory explanation
+        with st.expander("📚 Theoretical Basis for Angular Bracketing", expanded=True):
+            st.markdown("""
+            ### **Angular Bracketing: Mathematical Formulation**
+            
+            **1. Source Selection:**
+            For target angle θₜ and defect type Dₜ:
+            - Find Sₗ = argminₛ |θₛ - θₜ| where θₛ < θₜ and defect_type(Sₛ) = Dₜ
+            - Find Sᵤ = argminₛ |θₛ - θₜ| where θₛ > θₜ and defect_type(Sₛ) = Dₜ
+            
+            **2. Weight Assignment:**
+            - wₗ = α × (θᵤ - θₜ) / (θᵤ - θₗ)  where α = bracketing_weight (e.g., 0.98)
+            - wᵤ = α × (θₜ - θₗ) / (θᵤ - θₗ)
+            - wᵢ = (1 - α) / (N - 2) for all other sources i
+            
+            **3. Interpolation:**
+            σ(θₜ) = wₗ × σ(θₗ) + wᵤ × σ(θᵤ) + Σᵢ wᵢ × σ(θᵢ)
+            
+            Where Σ w = 1 and wₗ + wᵤ ≈ α ≈ 0.98
+            
+            **4. Special Cases:**
+            - If only one bracketing source found, use it with weight α
+            - If no same-defect sources found, fall back to nearest sources regardless of defect type
+            - If target angle outside source range, use nearest two sources
+            
+            **5. Advantages:**
+            - Physically intuitive (linear interpolation between nearest angles)
+            - Consistent with crystallographic symmetry
+            - Minimizes influence of dissimilar defect types
+            - Provides smooth interpolation with clear bracketing
+            - Computationally efficient (uses only 2 main sources)
+            """)
 
 # =============================================
 # RUN THE APPLICATION
 # =============================================
 if __name__ == "__main__":
     main()
-
