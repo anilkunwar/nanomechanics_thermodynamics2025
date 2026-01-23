@@ -251,7 +251,10 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa39-streamlit-red)](https:///mechanicalstress-interpolation-at-theta39.streamlit.app/) (angular bracketing interpolator 2)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa40-streamlit-red)](https:///mechanicalstress-interpolation-at-theta40.streamlit.app/) 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa40-streamlit-red)](https:///mechanicalstress-interpolation-at-theta40.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa41-streamlit-red)](https:///mechanicalstress-interpolation-at-theta41.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
+
 
 
 
