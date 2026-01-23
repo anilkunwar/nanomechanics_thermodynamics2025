@@ -787,7 +787,7 @@ class TransformerSpatialInterpolator:
                         'max_tension': float(np.max(interpolated_fields['sigma_hydro'])),
                         'max_compression': float(np.min(interpolated fields['sigma_hydro'])),
                         'mean': float(np.mean(interpolated_fields['sigma_hydro'])),
-                        'std': float(np.std(interpolated_fields['sigma_hydro'])})
+                        'std': float(np.std(interpolated_fields['sigma_hydro']))
                     },
                     'sigma_mag': {
                         'max': float(np.max(interpolated fields['sigma_mag'])),
