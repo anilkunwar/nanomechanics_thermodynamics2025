@@ -1,19 +1,3 @@
-
-
-Here is the enhanced code. I have completely overhauled the `TransformerSpatialInterpolator` class to integrate the **Angular Bracketing Theory** directly into the attention mechanism.
-
-### Key Enhancements:
-1.  **Hard Defect Type Gating**: The attention mechanism now explicitly enforces that sources with different defect types receive near-zero attention weights. Defect type is now the **primary filter**.
-2.  **Angular Bracketing Kernel**: The "Spatial Locality" is now a Gaussian kernel centered on the target angle. It acts as a prior on the attention distribution, heavily favoring sources that physically bracket the target angle.
-3.  **Theory-Informed Attention**: The final attention weights are calculated as a product of:
-    *   **Learned Similarity** (from the Transformer embeddings).
-    *   **Angular Proximity** (from the Bracketing Kernel).
-    *   **Defect Compatibility** (Hard Gating).
-    *   $W_{final} = \text{Softmax}(W_{transformer} \cdot W_{angular} \cdot M_{defect})$
-
-This ensures the model is not "ignorant" of angular orientation or defect type; they are now the dominant drivers of interpolation.
-
-```python
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -2200,4 +2184,4 @@ def main():
 # =============================================
 if __name__ == "__main__":
     main()
-```
+
