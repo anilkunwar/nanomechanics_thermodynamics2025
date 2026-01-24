@@ -1715,12 +1715,12 @@ class HeatMapVisualizer:
             fig = go.Figure()
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
-    
+    #
     def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info,
-                                   target_angle, defect_type, component='von_mises',
-                                   cmap_name='viridis', figsize=(24, 18),
-                                   ground_truth_index=None, defect_type_filter=None,
-                                   config=None):
+                               target_angle, defect_type, component='von_mises',
+                               cmap_name='viridis', figsize=(24, 18),
+                               ground_truth_index=None, defect_type_filter=None,
+                               config=None):
         """
         ENHANCED COMPARISON DASHBOARD with all requested features:
         1. Over 50 colormap options including rainbow, turbo, jet, inferno
@@ -1816,7 +1816,7 @@ class HeatMapVisualizer:
             if not source_fields:
                 st.warning(f"No sources found matching defect type: {defect_type_filter}")
                 return None
-
+    
         # --- STEP 2: CREATE FIGURE WITH ENHANCED SPACING ---
         fig = plt.figure(figsize=figsize, dpi=merged_config['figure_dpi'])
         
@@ -2123,11 +2123,19 @@ class HeatMapVisualizer:
             for comp in components:
                 if comp in source_info['statistics']:
                     stats = source_info['statistics'][comp]
+                    # FIXED: Handle different key names for sigma_hydro vs other components
+                    if comp == 'sigma_hydro':
+                        # sigma_hydro uses 'max_tension' instead of 'max'
+                        max_val = stats.get('max_tension', 0)
+                    else:
+                        # von_mises and sigma_mag use 'max'
+                        max_val = stats.get('max', 0)
+                    
                     stats_data.append({
                         'component': comp,
-                        'max': stats['max'],
-                        'mean': stats['mean'],
-                        'std': stats['std']
+                        'max': max_val,
+                        'mean': stats.get('mean', 0),
+                        'std': stats.get('std', 0)
                     })
             
             if stats_data:
@@ -2265,6 +2273,7 @@ class HeatMapVisualizer:
             plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         
         return fig
+    
     
     def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
                                      cmap_name='viridis', width=900, height=700,
