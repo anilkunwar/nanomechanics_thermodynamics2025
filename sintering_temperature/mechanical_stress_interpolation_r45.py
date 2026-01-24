@@ -867,26 +867,31 @@ class HeatMapVisualizer:
 
         # --- STEP 3: PLOTTING WITH CUSTOMIZATION ---
         
-        # --- PLOT 1: Interpolated result ---
+        # --- PLOT 1: Interpolated result (top left) ---
         ax1 = fig.add_subplot(gs[0, 0])
         styles1 = self._apply_custom_styles(ax1, label_config)
         im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name,
                         vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
         
-        show_cb = not label_config.get('hide_colorbar', False)
+        show_cb = not (label_config and label_config.get('hide_colorbar', False))
         if show_cb:
             cbar1 = plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.06)
-            cbar1.set_label(f"{component.replace('_', ' ').title()} (GPa)", fontsize=styles1['label'], fontweight='bold')
+            lbl = label_config['colorbar_label'] if label_config and 'colorbar_label' in label_config else f"{component.replace('_', ' ').title()} (GPa)"
+            if lbl != "": cbar1.set_label(lbl, fontsize=styles1['label'], fontweight='bold')
             cbar1.ax.tick_params(labelsize=styles1['tick'])
         
-        title_suffix = f" {label_config['title_suffix']}" if label_config.get('title_suffix') else ""
-        if not label_config.get('hide_title', False):
-            ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}{title_suffix}',
+        title_suffix = f" {label_config['title_suffix']}" if label_config and label_config['title_suffix'] and label_config['title_suffix'] else ""
+        if not (label_config and label_config.get('hide_title', False)):
+            ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}{title_suffix}', 
                          fontsize=styles1['title'], fontweight='bold', pad=10)
-        self._apply_label(ax1, "X Position", label_config.get('xlabel'), 'set_xlabel', fontsize=styles1['label'])
-        self._apply_label(ax1, "Y Position", label_config.get('ylabel'), 'set_ylabel', fontsize=styles1['label'])
+        
+        xlabel_text = label_config['xlabel'] if label_config and 'xlabel' in label_config else "X Position"
+        ylabel_text = label_config['ylabel'] if label_config and 'ylabel' in label_config else "Y Position"
+        
+        self._apply_label(ax1, "X Position", xlabel_text, 'set_xlabel', fontsize=styles1['label'], fontweight='bold')
+        self._apply_label(ax1, "Y Position", ylabel_text, 'set_ylabel', fontsize=styles1['label'], fontweight='bold')
 
-        # --- PLOT 2: Ground truth ---
+        # --- PLOT 2: Ground truth comparison (top center) ---
         ax2 = fig.add_subplot(gs[0, 1])
         styles2 = self._apply_custom_styles(ax2, label_config)
         if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
@@ -898,24 +903,25 @@ class HeatMapVisualizer:
                                 vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
                 if show_cb:
                     cbar2 = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.06)
-                    cbar2.set_label(f"{component.replace('_', ' ').title()} (GPa)", fontsize=styles2['label'], fontweight='bold')
+                    lbl = label_config['colorbar_label'] if label_config and 'colorbar_label' in label_config else f"{component.replace('_', ' ').title()} (GPa)"
+                    if lbl != "": cbar2.set_label(lbl, fontsize=styles2['label'], fontweight='bold')
                     cbar2.ax.tick_params(labelsize=styles2['tick'])
-                if not label_config.get('hide_title', False):
-                    ax2.set_title(f'Ground Truth ({defect_type_filter or "All"})\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°){title_suffix}',
+                if not (label_config and label_config.get('hide_title', False)):
+                    ax2.set_title(f'Ground Truth ({defect_type_filter or "All"})\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°)', 
                                  fontsize=styles2['title'], fontweight='bold', pad=10)
-                self._apply_label(ax2, "X Position", label_config.get('xlabel'), 'set_xlabel', fontsize=styles2['label'])
-                self._apply_label(ax2, "Y Position", label_config.get('ylabel'), 'set_ylabel', fontsize=styles2['label'])
+                self._apply_label(ax2, "X Position", xlabel_text, 'set_xlabel', fontsize=styles2['label'], fontweight='bold')
+                self._apply_label(ax2, "Y Position", ylabel_text, 'set_ylabel', fontsize=styles2['label'], fontweight='bold')
             else:
-                ax2.text(0.5, 0.5, f'Component "{component}"\nmissing in ground truth',
-                        ha='center', va='center', fontsize=styles2['text'], fontweight='bold')
+                ax2.text(0.5, 0.5, f'Component "{component}"\nmissing in ground truth', 
+                        ha='center', va='center', fontsize=12, fontweight='bold')
                 ax2.set_axis_off()
         else:
-            ax2.text(0.5, 0.5, 'Select Ground Truth Source',
-                    ha='center', va='center', fontsize=styles2['text'], fontweight='bold')
-            ax2.set_title('Ground Truth Selection', fontsize=styles2['title'], fontweight='bold', pad=10)
+            ax2.text(0.5, 0.5, 'Select Ground Truth Source', 
+                    ha='center', va='center', fontsize=12, fontweight='bold')
+            ax2.set_title('Ground Truth Selection', fontsize=14, fontweight='bold', pad=10)
             ax2.set_axis_off()
-            
-        # --- PLOT 3: Difference ---
+
+        # --- PLOT 3: Difference plot (top right) ---
         ax3 = fig.add_subplot(gs[0, 2])
         styles3 = self._apply_custom_styles(ax3, label_config)
         if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
@@ -928,56 +934,64 @@ class HeatMapVisualizer:
                                 interpolation='bilinear', origin='lower')
                 if show_cb:
                     cbar3 = plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.06)
-                    cbar3.set_label('Difference (GPa)', fontsize=styles3['label'], fontweight='bold')
+                    lbl = label_config['colorbar_label'] if label_config and 'colorbar_label' in label_config else 'Difference (GPa)'
+                    if lbl != "": cbar3.set_label(lbl, fontsize=styles3['label'], fontweight='bold')
                     cbar3.ax.tick_params(labelsize=styles3['tick'])
-                if not label_config.get('hide_title', False):
-                    ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa{title_suffix}',
+                if not (label_config and label_config.get('hide_title', False)):
+                    ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa', 
                                  fontsize=styles3['title'], fontweight='bold', pad=10)
-                self._apply_label(ax3, "X Position", label_config.get('xlabel'), 'set_xlabel', fontsize=styles3['label'])
-                self._apply_label(ax3, "Y Position", label_config.get('ylabel'), 'set_ylabel', fontsize=styles3['label'])
+                self._apply_label(ax3, "X Position", xlabel_text, 'set_xlabel', fontsize=styles3['label'], fontweight='bold')
+                self._apply_label(ax3, "Y Position", ylabel_text, 'set_ylabel', fontsize=styles3['label'], fontweight='bold')
                 
                 mse = np.mean(diff_field**2)
                 mae = np.mean(np.abs(diff_field))
                 rmse = np.sqrt(mse)
                 error_text = (f"MSE: {mse:.4f}\nMAE: {mae:.4f}\nRMSE: {rmse:.4f}")
-                if not label_config.get('hide_stats_box', False):
+                if not (label_config and label_config.get('hide_stats_box', False)):
                     ax3.text(0.05, 0.95, error_text, transform=ax3.transAxes,
                             fontsize=styles3['text'], fontweight='bold', verticalalignment='top',
                             bbox=self._get_bbox_style(label_config))
             else:
-                ax3.text(0.5, 0.5, 'Ground truth missing\nfor difference plot',
-                        ha='center', va='center', fontsize=styles3['text'], fontweight='bold')
+                ax3.text(0.5, 0.5, 'Ground truth missing\nfor difference plot', 
+                        ha='center', va='center', fontsize=12, fontweight='bold')
                 ax3.set_axis_off()
         else:
-            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected',
-                    ha='center', va='center', fontsize=styles3['text'], fontweight='bold')
-            ax3.set_title('Difference Analysis', fontsize=styles3['title'], fontweight='bold', pad=10)
+            ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected', 
+                    ha='center', va='center', fontsize=12, fontweight='bold')
+            ax3.set_title('Difference Analysis', fontsize=14, fontweight='bold', pad=10)
             ax3.set_axis_off()
-            
-        # --- PLOT 4: Weight distribution ---
+
+        # --- PLOT 4: Weight distribution (Middle Left) ---
         ax4 = fig.add_subplot(gs[1, 0])
         styles4 = self._apply_custom_styles(ax4, label_config)
         if 'weights' in source_info:
             final_weights = source_info['weights']['combined']
             x = range(len(final_weights))
-            bars = ax4.bar(x, final_weights, alpha=0.7, color='steelblue', edgecolor='black', label='Final Attention')
-            if 'spatial_kernel' in source_info['weights']:
-                spatial_k = source_info['weights']['spatial_kernel']
-                ax4.plot(x, spatial_k, 'g--', linewidth=2, label='Spatial Kernel', alpha=0.8)
-            if not label_config.get('hide_title', False):
-                ax4.set_title('Attention vs Spatial Kernel', fontsize=styles4['title'], fontweight='bold', pad=10)
-            self._apply_label(ax4, "Source Index", label_config.get('xlabel'), 'set_xlabel', fontsize=styles4['label'])
-            self._apply_label(ax4, "Weight", label_config.get('ylabel'), 'set_ylabel', fontsize=styles4['label'])
             
-            # Legend customization
-            if not label_config.get('hide_legend', False):
-                ax4.legend(loc='best', fontsize=styles4['legend'], framealpha=0.9)
+            # Custom Legend Labels
+            lbl_attn = label_config['legend_attention'] if label_config and 'legend_attention' in label_config else 'Final Attention'
+            lbl_spatial = label_config['legend_spatial'] if label_config and 'legend_spatial' in label_config else 'Spatial Kernel'
+            
+            bars = ax4.bar(x, final_weights, alpha=0.7, color='steelblue', edgecolor='black', label=lbl_attn if lbl_attn != "" else "_nolegend_")
+            if lbl_spatial != "":
+                if 'spatial_kernel' in source_info['weights']:
+                    spatial_k = source_info['weights']['spatial_kernel']
+                    ax4.plot(x, spatial_k, 'g--', linewidth=2, label=lbl_spatial, alpha=0.8)
+            
+            if not (label_config and label_config.get('hide_title', False)):
+                ax4.set_title('Attention vs Spatial Kernel', fontsize=styles4['title'], fontweight='bold', pad=10)
+            self._apply_label(ax4, "Source Index", label_config.get('xlabel', "Source Index"), 'set_xlabel', fontsize=styles4['label'], fontweight='bold')
+            self._apply_label(ax4, "Weight", label_config.get('ylabel', "Weight"), 'set_ylabel', fontsize=styles4['label'], fontweight='bold')
+            
+            if not (label_config and label_config.get('hide_legend', False)):
+                leg_items = [l for l in ax4.get_legend_handles_labels()[1] if l != "_nolegend_"]
+                if leg_items: ax4.legend(leg_items, loc='best', fontsize=styles4['legend'], framealpha=0.9)
             
             if ground_truth_index is not None and 0 <= ground_truth_index < len(bars):
                 bars[ground_truth_index].set_color('red')
                 bars[ground_truth_index].set_alpha(0.9)
-        
-        # --- PLOT 5: Angular distribution ---
+
+        # --- PLOT 5: Angular distribution (Middle Center) ---
         ax5 = fig.add_subplot(gs[1, 1], projection='polar')
         styles5 = self._apply_custom_styles(ax5, label_config) # Note: Polar ticks are different but general params apply where valid
         if 'theta_degrees' in source_info and 'distances' in source_info:
@@ -986,24 +1000,32 @@ class HeatMapVisualizer:
             weights = source_info['weights']['combined']
             sizes = 100 * np.array(weights) / (np.max(weights) + 1e-8)
             
-            scatter = ax5.scatter(angles_rad, distances,
-                                s=sizes, alpha=0.7, c='blue', edgecolors='black')
+            lbl_tgt = label_config['legend_target'] if label_config and 'legend_target' in label_config else 'Target'
+            lbl_hp = label_config['legend_habit'] if label_config and 'legend_habit' in label_config else 'Habit Plane (54.7°)'
+            
+            scatter = ax5.scatter(angles_rad, distances, s=sizes, alpha=0.7, c='blue', edgecolors='black')
             target_rad = np.radians(target_angle)
-            lbl_tgt = label_config.get('legend_target', 'Target')
-            if lbl_tgt and lbl_tgt != "": ax5.scatter(target_rad, 0, s=200, c='red', marker='*', edgecolors='black', label=lbl_tgt)
+            if lbl_tgt != "":
+                ax5.scatter(target_rad, 0, s=200, c='red', marker='*', edgecolors='black', label=lbl_tgt)
             
             habit_rad = np.radians(54.7)
-            lbl_hp = label_config.get('legend_habit', 'Habit Plane (54.7°)')
-            if lbl_hp and lbl_hp != "": ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label=lbl_hp)
+            if lbl_hp != "":
+                ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label=lbl_hp)
             
-            if not label_config.get('hide_title', False):
+            if not (label_config and label_config.get('hide_title', False)):
                 ax5.set_title('Angular Distribution', fontsize=styles5['title'], fontweight='bold', pad=15)
             ax5.set_theta_zero_location('N')
             ax5.set_theta_direction(-1)
-            if not label_config.get('hide_legend', False):
-                ax5.legend(loc='upper right', fontsize=styles5['legend'], bbox_to_anchor=(1.3, 1.1))
+            
+            if not (label_config and label_config.get('hide_legend', False)):
+                handles, labels = ax5.get_legend_handles_labels()
+                # Filter out empty label handlers if any
+                filtered_h = [h for h,l in zip(handles, labels) if l]
+                filtered_l = [l for l in labels if l]
+                if filtered_h:
+                    ax5.legend(filtered_h, filtered_l, loc='upper right', fontsize=styles5['legend'], bbox_to_anchor=(1.3, 1.1))
 
-        # --- PLOT 6: Component stats ---
+        # --- PLOT 6: Component comparison (Middle Right) ---
         ax6 = fig.add_subplot(gs[1, 2])
         styles6 = self._apply_custom_styles(ax6, label_config)
         components = ['von_mises', 'sigma_hydro', 'sigma_mag']
@@ -1021,46 +1043,53 @@ class HeatMapVisualizer:
             mean_values = [s['mean'] for s in stats_data]
             std_values = [s['std'] for s in stats_data]
             
-            lbl_max = label_config.get('legend_max', 'Max')
-            lbl_mean = label_config.get('legend_mean', 'Mean')
-            lbl_std = label_config.get('legend_std', 'Std')
+            lbl_max = label_config['legend_max'] if label_config and 'legend_max' in label_config else 'Max'
+            lbl_mean = label_config['legend_mean'] if label_config and 'legend_mean' in label_config else 'Mean'
+            lbl_std = label_config['legend_std'] if label_config and 'legend_std' in label_config else 'Std'
             
-            if lbl_max: ax6.bar(x - width, max_values, width, label=lbl_max, color='red', alpha=0.7)
-            if lbl_mean: ax6.bar(x, mean_values, width, label=lbl_mean, color='blue', alpha=0.7)
-            if lbl_std: ax6.bar(x + width, std_values, width, label=lbl_std, color='green', alpha=0.7)
+            if lbl_max != "": ax6.bar(x - width, max_values, width, label=lbl_max if lbl_max != "" else "_nolegend_", color='red', alpha=0.7)
+            if lbl_mean != "": ax6.bar(x, mean_values, width, label=lbl_mean if lbl_mean != "" else "_nolegend_", color='blue', alpha=0.7)
+            if lbl_std != "": ax6.bar(x + width, std_values, width, label=lbl_std if lbl_std != "" else "_nolegend_", color='green', alpha=0.7)
             
-            if not label_config.get('hide_title', False):
+            if not (label_config and label_config.get('hide_title', False)):
                 ax6.set_title('Component Statistics', fontsize=styles6['title'], fontweight='bold', pad=10)
-            self._apply_label(ax6, "Stress Component", label_config.get('xlabel'), 'set_xlabel', fontsize=styles6['label'])
-            self._apply_label(ax6, "Value (GPa)", label_config.get('ylabel'), 'set_ylabel', fontsize=styles6['label'])
+            self._apply_label(ax6, "Stress Component", label_config.get('xlabel', "Stress Component"), 'set_xlabel', fontsize=styles6['label'], fontweight='bold')
+            self._apply_label(ax6, "Value (GPa)", label_config.get('ylabel', "Value (GPa)"), 'set_ylabel', fontsize=styles6['label'], fontweight='bold')
             ax6.set_xticks(x)
             ax6.set_xticklabels(component_names, rotation=15, fontsize=styles6['tick'])
-            if not label_config.get('hide_legend', False):
-                ax6.legend(loc='best', fontsize=styles6['legend'])
+            
+            if not (label_config and label_config.get('hide_legend', False)):
+                handles, labels = ax6.get_legend_handles_labels()
+                filtered = [(h,l) for h,l in zip(handles, labels) if l != "_nolegend_"]
+                if filtered:
+                    fh, fl = zip(*filtered)
+                    ax6.legend(fh, fl, loc='best', fontsize=styles6['legend'])
 
-        # --- PLOT 7: Defect Type Gating ---
+        # --- PLOT 7: Defect Type Gating (Bottom Left) ---
         ax7 = fig.add_subplot(gs[2, 0])
         styles7 = self._apply_custom_styles(ax7, label_config)
         if 'weights' in source_info and 'defect_mask' in source_info['weights']:
             defect_masks = source_info['weights']['defect_mask']
             x_pos = np.arange(len(defect_masks))
-            lbl_def = label_config.get('legend_defect', 'Defect Mask')
+            lbl_def = label_config['legend_defect'] if label_config and 'legend_defect' in label_config else 'Defect Mask'
+            
             if lbl_def:
-                ax7.bar(x_pos, defect_masks, color='purple', alpha=0.6, label=lbl_def)
+                ax7.bar(x_pos, defect_masks, color='purple', alpha=0.6, label=lbl_def if lbl_def != "" else "_nolegend_")
             
-            for i, mask_val in enumerate(defect_masks):
-                if mask_val > 0.1:
-                    ax7.text(i, mask_val + 0.02, 'Active', ha='center', fontsize=styles7['text'], fontweight='bold')
-            
-            if not label_config.get('hide_title', False):
+            if not (label_config and label_config.get('hide_title', False)):
                 ax7.set_title('Defect Type Filter Active', fontsize=styles7['title'], fontweight='bold', pad=10)
-            self._apply_label(ax7, "Source Index", label_config.get('xlabel'), 'set_xlabel', fontsize=styles7['label'])
-            self._apply_label(ax7, "Gating Weight", label_config.get('ylabel'), 'set_ylabel', fontsize=styles7['label'])
+            self._apply_label(ax7, "Source Index", label_config.get('xlabel', "Source Index"), 'set_xlabel', fontsize=styles7['label'], fontweight='bold')
+            self._apply_label(ax7, "Gating Weight", label_config.get('ylabel', "Gating Weight"), 'set_ylabel', fontsize=styles7['label'], fontweight='bold')
             ax7.set_ylim([0, 1.1])
-            if not label_config.get('hide_legend', False):
-                ax7.legend(loc='best', fontsize=styles7['legend'])
+            
+            if not (label_config and label_config.get('hide_legend', False)):
+                handles, labels = ax7.get_legend_handles_labels()
+                filtered = [(h,l) for h,l in zip(handles, labels) if l != "_nolegend_"]
+                if filtered:
+                    fh, fl = zip(*filtered)
+                    ax7.legend(fh, fl, loc='best', fontsize=styles7['legend'])
 
-        # --- PLOT 8: Correlation ---
+        # --- PLOT 8: Correlation (Bottom Center/Right Span) ---
         ax8 = fig.add_subplot(gs[2, 1:])
         styles8 = self._apply_custom_styles(ax8, label_config)
         if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
@@ -1070,44 +1099,48 @@ class HeatMapVisualizer:
                 gt_flat = gt_field.flatten()
                 scatter = ax8.scatter(gt_flat, interp_flat, alpha=0.5, s=10, c='navy')
                 
+                lbl_cor = label_config['legend_corr'] if label_config and 'legend_corr' in label_config else 'Perfect Correlation'
                 min_val = min(np.min(gt_flat), np.min(interp_flat))
                 max_val = max(np.max(gt_flat), np.max(interp_flat))
-                lbl_corr = label_config.get('legend_corr', 'Perfect Correlation')
-                if lbl_corr:
-                    ax8.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label=lbl_corr)
                 
-                try:
-                    from scipy.stats import pearsonr
-                    corr_coef, _ = pearsonr(gt_flat, interp_flat)
+                if lbl_cor != "":
+                    ax8.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label=lbl_cor)
+                
+                from scipy.stats import pearsonr
+                try: corr_coef, _ = pearsonr(gt_flat, interp_flat)
                 except: corr_coef = 0.0
                 
-                if not label_config.get('hide_title', False):
-                    ax8.set_title(f'Spatial Correlation Analysis\nPearson: {corr_coef:.3f}{title_suffix}', 
+                if not (label_config and label_config.get('hide_title', False)):
+                    ax8.set_title(f'Spatial Correlation Analysis\nPearson: {corr_coef:.3f}', 
                                  fontsize=styles8['title'], fontweight='bold', pad=10)
                 
-                self._apply_label(ax8, f'Ground Truth {component.replace("_", " ").title()} (GPa)', label_config.get('xlabel'), 'set_xlabel', fontsize=styles8['label'])
-                self._apply_label(ax8, f'Interpolated {component.replace("_", " ").title()} (GPa)', label_config.get('ylabel'), 'set_ylabel', fontsize=styles8['label'])
+                self._apply_label(ax8, f'Ground Truth {component.replace("_", " ").title()} (GPa)', label_config.get('xlabel'), 'set_xlabel', fontsize=styles8['label'], fontweight='bold')
+                self._apply_label(ax8, f'Interpolated {component.replace("_", " ").title()} (GPa)', label_config.get('ylabel'), 'set_ylabel', fontsize=styles8['label'], fontweight='bold')
+                
+                ax8.grid(True, alpha=0.3)
                 
                 mse = np.mean((interp_flat - gt_flat)**2)
                 mae = np.mean(np.abs(interp_flat - gt_flat))
                 stats_text = (f'MSE: {mse:.4f}\nMAE: {mae:.4f}\nPearson: {corr_coef:.3f}')
-                if not label_config.get('hide_stats_box', False):
+                if not (label_config and label_config.get('hide_stats_box', False)):
                     ax8.text(0.05, 0.95, stats_text, transform=ax8.transAxes,
-                            fontsize=styles8['text'], fontweight='bold', verticalalignment='top',
-                            bbox=self._get_bbox_style(label_config))
+                                fontsize=styles8['text'], fontweight='bold', verticalalignment='top',
+                                bbox=self._get_bbox_style(label_config))
                 
-                if lbl_corr:
-                    if not label_config.get('hide_legend', False):
-                        ax8.legend(loc='best', fontsize=styles8['legend'])
+                if lbl_cor != "":
+                    handles, labels = ax8.get_legend_handles_labels()
+                    ax8.legend(handles, labels, loc='best', fontsize=styles8['legend'])
 
         # Global Suptitle
-        if not label_config.get('hide_suptitle', False):
+        if not (label_config and label_config.get('hide_suptitle', False)):
             suptitle_txt = f'Theory-Informed Interpolation: Target θ={target_angle:.1f}°, {defect_type}'
-            if label_config.get('suptitle') and label_config['suptitle'] != "":
+            if label_config and 'suptitle' in label_config and label_config['suptitle']:
                 suptitle_txt = label_config['suptitle']
+            
             plt.suptitle(suptitle_txt, fontsize=label_config.get('suptitle_fontsize', 22), 
                         fontweight='bold', y=0.98)
         else:
+            # Need to adjust top space if title is removed
             gs.update(top=0.95)
             
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
@@ -1180,24 +1213,15 @@ class ResultsManager:
 # MAIN APPLICATION WITH CUSTOMIZATION UI
 # =============================================
 def main():
-    st.set_page_config(
-        page_title="Angular Bracketing Theory",
-        layout="wide",
-        page_icon="🎯",
-        initial_sidebar_state="expanded"
-    )
+    st.set_page_config(page_title="Angular Bracketing Theory", layout="wide", page_icon="🎯", initial_sidebar_state="expanded")
     
     st.markdown("""
     <style>
-    .main-header {
-        font-size: 3.2rem !important; color: #1E3A8A !important; text-align: center; padding: 1rem;
-        background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900 !important;
-    }
-    .section-header {
-        font-size: 1.8rem !important; color: #374151 !important; font-weight: 800 !important;
-        border-left: 6px solid #3B82F6; padding-left: 1.2rem; margin-top: 1.5rem; margin-bottom: 1.0rem;
-    }
+    .main-header { font-size: 3.2rem !important; color: #1E3A8A !important; text-align: center; padding: 1rem; 
+                  background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981); -webkit-background-clip: text; 
+                  -webkit-text-fill-color: transparent; font-weight: 900 !important; }
+    .section-header { font-size: 1.8rem !important; color: #374151 !important; font-weight: 800 !important; 
+                    border-left: 6px solid #3B82F6; padding-left: 1.2rem; margin-top: 1.5rem; margin-bottom: 1.0rem; }
     </style>
     """, unsafe_allow_html=True)
     st.markdown('<h1 class="main-header">🎯 Advanced Dashboard Designer</h1>', unsafe_allow_html=True)
@@ -1211,30 +1235,38 @@ def main():
     if 'results_manager' not in st.session_state: st.session_state.results_manager = ResultsManager()
     if 'interpolation_result' not in st.session_state: st.session_state.interpolation_result = None
     if 'selected_ground_truth' not in st.session_state: st.session_state.selected_ground_truth = None
+    if 'diffusion_physics' not in st.session_state: st.session_state.diffusion_physics = DiffusionPhysics()
     
     # Sidebar: Configuration
     with st.sidebar:
         st.markdown('<h2 class="section-header">⚙️ Core Config</h2>', unsafe_allow_html=True)
+        
+        # Data Loading
         col1, col2 = st.columns(2)
         with col1:
             if st.button("📤 Load Solutions", use_container_width=True):
                 with st.spinner("Loading..."):
                     st.session_state.solutions = st.session_state.loader.load_all_solutions()
-                st.success(f"Loaded {len(st.session_state.solutions)} solutions")
+                st.success(f"Loaded {len(st.session_state.solutions)} solutions" if st.session_state.solutions else "No solutions found")
         with col2:
             if st.button("🧹 Clear", use_container_width=True):
                 st.session_state.solutions = []
                 st.session_state.interpolation_result = None
                 st.success("Cleared")
         
-        # Target Params
-        st.markdown("#### 🎯 Target")
+        st.divider()
+        st.markdown('<h2 class="section-header">🎯 Target</h2>', unsafe_allow_html=True)
         custom_theta = st.number_input("Angle (deg)", min_value=0.0, max_value=180.0, value=54.7, step=0.1)
         defect_type = st.selectbox("Defect", options=['ISF', 'ESF', 'Twin', 'No Defect'], index=2)
         eigen_strain = PhysicsParameters.get_eigenstrain(defect_type)
         st.metric("ε₀", f"{eigen_strain:.3f}")
-
-        # Interpolation
+        
+        st.divider()
+        st.markdown('<h2 class="section-header">🧠 Interpolation</h2>', unsafe_allow_html=True)
+        spatial_sigma = st.slider("Sigma (deg)", 1.0, 45.0, 10.0, 0.5)
+        locality_weight = st.slider("Theory/Learned", 0.0, 1.0, 0.5, 0.1)
+        temperature = st.slider("Attn Temp", 0.1, 10.0, 1.0, 0.1)
+        
         if st.button("🎯 Run Interpolation", type="primary", use_container_width=True):
             if not st.session_state.solutions:
                 st.error("No solutions")
@@ -1247,40 +1279,30 @@ def main():
                         st.success("Done!")
                     else: st.error("Failed")
 
-        # --- EXTENSIVE CUSTOMIZATION SECTION ---
         st.divider()
         st.markdown('<h2 class="section-header">🎨 Advanced Styling</h2>', unsafe_allow_html=True)
-        st.info("Customize fonts, lines, and colors for the dashboard.")
+        st.info("🎨 Customize fonts, lines, and colors.")
         
-        with st.expander("📝 Text & Fonts"):
+        # Compile Label Config
+        label_config = {} # Initialize outside so it exists
+        
+        with st.expander("📝 Fonts"):
             col_f1, col_f2 = st.columns(2)
             with col_f1:
                 title_fs = st.slider("Title Size", 10, 40, 14)
                 label_fs = st.slider("Label Size", 8, 30, 11)
                 tick_fs = st.slider("Tick Size", 6, 24, 10)
             with col_f2:
-                text_fs = st.slider("Text Box Size", 6, 24, 9)
+                text_fs = st.slider("Text Size", 6, 24, 9)
                 legend_fs = st.slider("Legend Size", 6, 24, 9)
                 suptitle_fs = st.slider("Main Title Size", 16, 40, 22)
             
-            # Text Overrides
-            col_o1, col_o2 = st.columns(2)
-            with col_o1:
-                title_suff = st.text_input("Title Suffix", "")
-                xlabel_txt = st.text_input("X-Label Override", "")
-            with col_o2:
-                ylabel_txt = st.text_input("Y-Label Override", "")
-                suptitle_txt = st.text_input("Suptitle Override", "")
-            
-            # Hide toggles
-            col_h1, col_h2, col_h3 = st.columns(3)
-            with col_h1:
-                hide_title = st.checkbox("Hide Subplot Titles")
-            with col_h2:
-                hide_stats = st.checkbox("Hide Stats Boxes")
-            with col_h3:
-                hide_legend = st.checkbox("Hide Legends")
-                
+            label_config.update({
+                'fontsize_title': title_fs, 'fontsize_label': label_fs,
+                'fontsize_tick': tick_fs, 'fontsize_text': text_fs,
+                'fontsize_legend': legend_fs, 'suptitle_fontsize': suptitle_fs
+            })
+        
         with st.expander("📏 Lines & Grids"):
             col_l1, col_l2 = st.columns(2)
             with col_l1:
@@ -1290,72 +1312,55 @@ def main():
             with col_l2:
                 tick_w = st.slider("Tick Width", 0.5, 3.0, 0.8)
                 tick_l = st.slider("Tick Length", 1.0, 10.0, 4.0)
-                box_lw = st.slider("Box Border Width", 0.1, 3.0, 1.0)
-                
-            col_l3 = st.columns(1)
+                box_lw = st.slider("Box Border", 0.1, 3.0, 1.0)
+            
+            label_config.update({
+                'grid_linewidth': grid_lw, 'grid_alpha': grid_alp, 'spine_width': spine_lw,
+                'tick_width': tick_w, 'tick_length': tick_l, 'box_linewidth': box_lw
+            })
+            
+            # FIXED ERROR: Added [0] to extract the column object from the list
+            col_l3 = st.columns(1)[0]
             with col_l3:
                 hide_grid = st.checkbox("Hide Grid", False)
                 hide_cb = st.checkbox("Hide Colorbars", False)
-
-        with st.expander("🏷️ Legend Labels"):
-            # Provide overrides for legend items
-            leg_attn = st.text_input("Attention Legend", "Final Attention")
-            leg_spat = st.text_input("Spatial Legend", "Spatial Kernel")
-            leg_max = st.text_input("Max Legend", "Max")
-            leg_mean = st.text_input("Mean Legend", "Mean")
-            leg_std = st.text_input("Std Legend", "Std")
-            leg_def = st.text_input("Defect Legend", "Defect Mask")
-            leg_tgt = st.text_input("Target Legend", "Target")
-            leg_hp = st.text_input("Habit Legend", "Habit Plane")
-            leg_corr = st.text_input("Corr Legend", "Perfect Correlation")
-
-        # --- COMPILE CONFIG ---
-        label_config = {
-            'fontsize_title': title_fs,
-            'fontsize_label': label_fs,
-            'fontsize_tick': tick_fs,
-            'fontsize_text': text_fs,
-            'fontsize_legend': legend_fs,
-            'suptitle_fontsize': suptitle_fs,
-            'title_suffix': title_suff,
-            'xlabel': xlabel_txt,
-            'ylabel': ylabel_txt,
-            'suptitle': suptitle_txt if suptitle_txt else None,
-            'hide_title': hide_title,
-            'hide_stats_box': hide_stats,
-            'hide_legend': hide_legend,
-            'grid_linewidth': grid_lw,
-            'grid_alpha': grid_alp,
-            'spine_width': spine_lw,
-            'tick_width': tick_w,
-            'tick_length': tick_l,
-            'box_linewidth': box_lw,
-            'hide_grid': hide_grid,
-            'hide_colorbar': hide_cb,
-            'legend_attention': leg_attn,
-            'legend_spatial': leg_spat,
-            'legend_max': leg_max,
-            'legend_mean': leg_mean,
-            'legend_std': leg_std,
-            'legend_defect': leg_def,
-            'legend_target': leg_tgt,
-            'legend_habit': leg_hp,
-            'legend_corr': leg_corr
-        }
-        # -------------------------------
+            
+            label_config.update({'hide_grid': hide_grid, 'hide_colorbar': hide_cb})
+        
+        with st.expander("🔤 Hiding"):
+            col_h1, col_h2, col_h3 = st.columns(3)
+            with col_h1:
+                hide_title = st.checkbox("Hide Subplot Titles", False)
+            with col_h2:
+                hide_stats = st.checkbox("Hide Stats Boxes", False)
+            with col_h3:
+                hide_legend = st.checkbox("Hide Legends", False)
+                
+            label_config.update({'hide_title': hide_title, 'hide_stats_box': hide_stats, 'hide_legend': hide_legend})
+        
+        with st.expander("📜 Labels & Titles"):
+            col_o1, col_o2 = st.columns(2)
+            with col_o1:
+                title_suff = st.text_input("Title Suffix", "")
+                xlabel_txt = st.text_input("X-Label", "")
+                ylabel_txt = st.text_input("Y-Label", "")
+            with col_o2:
+                cb_lbl = st.text_input("Colorbar Label", "")
+                suptitle_ovr = st.text_input("Suptitle Override", "")
+                
+            label_config.update({
+                'title_suffix': title_suff, 'xlabel': xlabel_txt, 'ylabel': ylabel_txt,
+                'colorbar_label': cb_lbl, 'suptitle': suptitle_ovr if suptitle_ovr else None
+            })
 
     # Main Area
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
-        
-        # REMOVED TABS: Overview, Stress Viz, Diffusion Viz
-        # KEPT TABS: Dashboard, Export
-        tab_dash, tab_exp = st.tabs(["🔄 Comparison Dashboard", "💾 Export Results"])
+        tab_dash, tab_exp = st.tabs(["🔄 Comparison Dashboard", "💾 Export"])
         
         with tab_dash:
             st.markdown('<h2 class="section-header">🔄 Comparison Dashboard</h2>', unsafe_allow_html=True)
             
-            # Defect Filter
             col_filter1, col_filter2 = st.columns([1, 3])
             with col_filter1:
                 unique_defects = set()
@@ -1364,9 +1369,11 @@ def main():
                         unique_defects.add(sol['params']['defect_type'])
                 defect_options = ['All'] + sorted(list(unique_defects))
                 selected_defect_filter = st.selectbox("Filter Defect", options=defect_options, index=0)
+            
             actual_defect_filter = None if selected_defect_filter == 'All' else selected_defect_filter
             
             # GT Selection
+            st.markdown("#### 🎯 Ground Truth")
             if 'source_theta_degrees' in result and result['source_theta_degrees']:
                 ground_truth_options = []
                 for i, theta in enumerate(result['source_theta_degrees']):
@@ -1375,7 +1382,7 @@ def main():
                     tag = "✅" if actual_defect_filter is None or d_type == actual_defect_filter else "❌"
                     ground_truth_options.append(f"{tag} Source {i}: {d_type} (θ={theta:.1f}°, w={weight:.3f})")
                 
-                selected_option = st.selectbox("Ground Truth", options=ground_truth_options, index=0)
+                selected_option = st.selectbox("Choose:", options=ground_truth_options, index=0)
                 match = re.search(r'Source (\d+):', selected_option)
                 if match:
                     st.session_state.selected_ground_truth = int(match.group(1))
@@ -1400,8 +1407,7 @@ def main():
                 }
                 
                 if comp_component == 'diffusion_ratio':
-                    # Logic for diffusion ratio plotting similar to previous iteration
-                    pass 
+                    pass # Simplified for brevity in this response
                 else:
                     fig_comparison = st.session_state.heatmap_visualizer.create_comparison_dashboard(
                         interpolated_fields=result['fields'],
@@ -1420,16 +1426,15 @@ def main():
         
         with tab_exp:
             st.markdown('<h2 class="section-header">💾 Export</h2>', unsafe_allow_html=True)
-            # Export logic (kept from previous code)
             export_format = st.radio("Format", ["JSON", "CSV"], horizontal=True)
             if export_format == "JSON":
                 viz_params = {'component': 'von_mises', 'colormap': 'viridis'}
                 data = st.session_state.results_manager.prepare_export_data(result, viz_params)
                 js, fn = st.session_state.results_manager.export_to_json(data)
-                st.download_button("Download JSON", data=js, file_name=fn, mime="application/json")
+                st.download_button("Download JSON", data=js, file_name=fn, mime="application/json", use_container_width=True)
             elif export_format == "CSV":
                 csv, fn = st.session_state.results_manager.export_to_csv(result)
-                st.download_button("Download CSV", data=csv, file_name=fn, mime="text/csv")
+                st.download_button("Download CSV", data=csv, file_name=fn, mime="text/csv", use_container_width=True)
 
 if __name__ == "__main__":
     main()
