@@ -2918,6 +2918,19 @@ class ResultsManager:
 # MAIN APPLICATION WITH COMPLETE IMPLEMENTATION
 # =============================================
 def main():
+    # Increase inotify limits BEFORE initializing watchdog
+    try:
+        # Temporary fix for current session
+        os.system('echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf')
+        os.system('sudo sysctl -p')
+        
+        # Permanent fix (requires sudo)
+        if os.path.exists('/etc/sysctl.d/99-inotify.conf'):
+            with open('/etc/sysctl.d/99-inotify.conf', 'w') as f:
+                f.write('fs.inotify.max_user_watches=524288\n')
+    except Exception as e:
+        logging.warning(f"Could not increase inotify limits: {str(e)}")
+    
     # Configure Streamlit page
     st.set_page_config(
         page_title="Angular Bracketing Theory with Transformer Attention",
