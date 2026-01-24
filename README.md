@@ -261,6 +261,12 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa44-streamlit-red)](https:///mechanicalstress-interpolation-at-theta44.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio, complete visualization, v43 is complete and v44 is just the visualization enhancement)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa45-streamlit-red)](https:///mechanicalstress-interpolation-at-theta45.streamlit.app/) (only contains the dashboard for the comparison of AI interpolated results with the ground truth from phase field simulations) 
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa46-streamlit-red)](https:///mechanicalstress-interpolation-at-theta46.streamlit.app/) (integration of enhanced comparison dashboard in the full code)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa47-streamlit-red)](https:///mechanicalstress-interpolation-at-theta47.streamlit.app/) (advanced v46)
+
 
 
 
