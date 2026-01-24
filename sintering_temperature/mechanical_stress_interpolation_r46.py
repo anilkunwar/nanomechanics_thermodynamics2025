@@ -806,6 +806,7 @@ class HeatMapVisualizer:
     
     def __init__(self):
         # --- EXTENDED COLORMAP LIST (> 100 options) ---
+        #
         self.colormaps = {
             'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis'],
             'Sequential': ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
@@ -822,9 +823,14 @@ class HeatMapVisualizer:
             'Miscellaneous/Rainbow': ['flag', 'prism', 'ocean', 'gist_earth', 'terrain',
                                       'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap',
                                       'cubehelix', 'brg', 'gist_rainbow', 'rainbow',
-                                      'jet', 'nipy_spectral', 'gist_ncar', 'turbo']
+                                      'jet', 'nipy_spectral', 'gist_ncar', 'turbo'],
+            # --- CORRECTED: Added missing 'Publication Standard' key ---
+            'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 
+                                   'RdBu', 'RdBu_r', 'Spectral', 'coolwarm', 'bwr', 
+                                   'seismic', 'BrBG']
         }
         self.diffusion_physics = DiffusionPhysics()
+       
     
     def create_stress_heatmap(self, stress_field, title="Stress Heat Map",
                             cmap_name='viridis', figsize=(12, 10),
