@@ -1718,22 +1718,79 @@ class HeatMapVisualizer:
             fig = go.Figure()
             fig.add_annotation(text="Error creating heatmap", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
-    
+    #
     def create_comparison_dashboard(self, interpolated_fields, source_fields, source_info,
-                                   target_angle, defect_type, component='von_mises',
-                                   cmap_name='viridis', figsize=(20, 15),
-                                   ground_truth_index=None):
+                               target_angle, defect_type, component='von_mises',
+                               cmap_name='viridis', figsize=(24, 18),
+                               ground_truth_index=None, publication_quality=True):
         """
-        Create comprehensive comparison dashboard showing:
-        1. Interpolated result
-        2. Ground truth (selected source or closest match)
-        3. Difference between interpolated and ground truth
-        4. Weight distribution analysis (including Bracketing Kernel)
-        5. Angular distribution of sources
+        Create comprehensive comparison dashboard with publication-quality features
+        
+        Enhancements:
+        1. 50+ colormap support including rainbow, turbo, jet, inferno
+        2. Proper spacing management with no text overlap
+        3. Smart legend placement
+        4. Defect type dropdown support
+        5. Publication-quality styling
+        6. Multiple layout options
         """
         
-        fig = plt.figure(figsize=figsize, dpi=300)
-        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        # Enhanced colormap selection
+        EXTENDED_COLORMAPS = {
+            'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 
+                          'hot', 'afmhot', 'gist_heat', 'copper', 'summer', 'Wistia', 
+                          'spring', 'autumn', 'winter', 'bone', 'gray', 'pink', 
+                          'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 
+                          'ocean', 'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap', 
+                          'cubehelix', 'brg'],
+            'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 
+                         'BrBG', 'PiYG', 'PRGn', 'PuOr', 'RdGy', 'RdYlGn'],
+            'Rainbow/Vibrant': ['rainbow', 'jet', 'nipy_spectral', 'gist_rainbow', 
+                               'gist_ncar', 'hsv', 'prism', 'flag', 'tab20c'],
+            'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 
+                                    'twilight', 'twilight_shifted', 'turbo'],
+            'Publication': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 
+                           'RdBu', 'Spectral', 'coolwarm', 'seismic', 'BrBG']
+        }
+        
+        # Publication quality settings
+        if publication_quality:
+            plt.rcParams.update({
+                'font.size': 12,
+                'axes.titlesize': 16,
+                'axes.labelsize': 14,
+                'xtick.labelsize': 12,
+                'ytick.labelsize': 12,
+                'legend.fontsize': 11,
+                'figure.dpi': 300,
+                'figure.autolayout': False,
+                'savefig.dpi': 300,
+                'savefig.bbox': 'tight',
+                'savefig.pad_inches': 0.1,
+                'axes.grid': True,
+                'grid.alpha': 0.3,
+                'grid.linestyle': '--',
+                'grid.linewidth': 0.5,
+            })
+        
+        # Create figure with dynamic grid layout
+        fig = plt.figure(figsize=figsize, dpi=300, constrained_layout=True)
+        
+        # Define grid layout with proper spacing
+        if publication_quality:
+            # Use constrained layout for automatic spacing
+            fig.set_constrained_layout_pads(w_pad=0.02, h_pad=0.02, hspace=0.02, wspace=0.02)
+            
+            # Create GridSpec with proper ratios
+            gs = fig.add_gridspec(
+                nrows=4, ncols=4, 
+                height_ratios=[1, 1, 0.8, 0.8],
+                width_ratios=[1, 1, 1, 0.3],
+                hspace=0.15,  # Horizontal space between rows
+                wspace=0.12   # Vertical space between columns
+            )
+        else:
+            gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
         
         # Determine vmin and vmax for consistent scaling
         all_values = [interpolated_fields[component]]
@@ -1741,19 +1798,51 @@ class HeatMapVisualizer:
             gt_field = source_fields[ground_truth_index].get(component)
             if gt_field is not None:
                 all_values.append(gt_field)
+        
+        # Calculate statistics for colorbar limits
         vmin = min(np.nanmin(field) for field in all_values)
         vmax = max(np.nanmax(field) for field in all_values)
         
-        # 1. Interpolated result (top left)
+        # Handle extreme values for colormaps like diverging
+        if cmap_name in EXTENDED_COLORMAPS['Diverging']:
+            # For diverging colormaps, center at 0 if appropriate
+            if vmin < 0 and vmax > 0:
+                max_abs = max(abs(vmin), abs(vmax))
+                vmin, vmax = -max_abs, max_abs
+        
+        # 1. Interpolated result (top left) - Larger panel
         ax1 = fig.add_subplot(gs[0, 0])
         im1 = ax1.imshow(interpolated_fields[component], cmap=cmap_name,
-                        vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
-        plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-        ax1.set_title(f'Interpolated Result\nθ = {target_angle:.1f}°, {defect_type}',
-                     fontsize=16, fontweight='bold')
-        ax1.set_xlabel('X Position')
-        ax1.set_ylabel('Y Position')
-        ax1.grid(True, alpha=0.2)
+                        vmin=vmin, vmax=vmax, aspect='equal', 
+                        interpolation='bicubic', origin='lower')
+        
+        # Add colorbar with proper positioning
+        cbar1 = plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04, 
+                            location='right', shrink=0.8)
+        cbar1.set_label(f"{component.replace('_', ' ').title()} (GPa)", 
+                       fontsize=12, fontweight='bold')
+        cbar1.ax.tick_params(labelsize=10)
+        
+        # Enhanced title with defect type
+        title1 = f'Interpolated Result\nθ = {target_angle:.1f}°\nDefect: {defect_type}'
+        ax1.set_title(title1, fontsize=14, fontweight='bold', pad=12)
+        ax1.set_xlabel('X Position (a.u.)', fontsize=12, fontweight='bold')
+        ax1.set_ylabel('Y Position (a.u.)', fontsize=12, fontweight='bold')
+        
+        # Add grid with subtle styling
+        ax1.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+        
+        # Add scale bar if dimensions are meaningful
+        if interpolated_fields[component].shape[0] > 50:
+            # Add scale bar (assuming 1 pixel = 1 nm)
+            scale_length = interpolated_fields[component].shape[1] // 10
+            ax1.plot([10, 10 + scale_length], 
+                    [interpolated_fields[component].shape[0] - 15, 
+                     interpolated_fields[component].shape[0] - 15], 
+                    'k-', linewidth=2, solid_capstyle='butt')
+            ax1.text(10 + scale_length/2, interpolated_fields[component].shape[0] - 25, 
+                    f'{scale_length} px', ha='center', fontsize=9, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
         
         # 2. Ground truth comparison (top center)
         ax2 = fig.add_subplot(gs[0, 1])
@@ -1762,22 +1851,34 @@ class HeatMapVisualizer:
             if gt_field is not None:
                 gt_theta = source_info['theta_degrees'][ground_truth_index]
                 gt_distance = source_info['distances'][ground_truth_index]
+                gt_defect = source_fields[ground_truth_index].get('source_params', {}).get('defect_type', 'Unknown')
+                
                 im2 = ax2.imshow(gt_field, cmap=cmap_name,
-                                vmin=vmin, vmax=vmax, aspect='equal', interpolation='bilinear', origin='lower')
-                plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04, label=f"{component.replace('_', ' ').title()} (GPa)")
-                ax2.set_title(f'Ground Truth\nθ = {gt_theta:.1f}° (Δ={gt_distance:.1f}°)',
-                             fontsize=16, fontweight='bold')
-                ax2.set_xlabel('X Position')
-                ax2.set_ylabel('Y Position')
-                ax2.grid(True, alpha=0.2)
+                                vmin=vmin, vmax=vmax, aspect='equal', 
+                                interpolation='bicubic', origin='lower')
+                
+                cbar2 = plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04,
+                                    location='right', shrink=0.8)
+                cbar2.set_label(f"{component.replace('_', ' ').title()} (GPa)", 
+                               fontsize=12, fontweight='bold')
+                cbar2.ax.tick_params(labelsize=10)
+                
+                # Enhanced title with defect type
+                title2 = f'Ground Truth\nθ = {gt_theta:.1f}°\nΔθ = {gt_distance:.1f}°\nDefect: {gt_defect}'
+                ax2.set_title(title2, fontsize=14, fontweight='bold', pad=12)
+                ax2.set_xlabel('X Position (a.u.)', fontsize=12, fontweight='bold')
+                ax2.set_ylabel('Y Position (a.u.)', fontsize=12, fontweight='bold')
+                ax2.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
             else:
                 ax2.text(0.5, 0.5, f'Component "{component}"\nmissing in ground truth',
-                        ha='center', va='center', fontsize=14, fontweight='bold')
+                        ha='center', va='center', fontsize=11, fontweight='bold',
+                        transform=ax2.transAxes)
                 ax2.set_axis_off()
         else:
-            ax2.text(0.5, 0.5, 'Select Ground Truth Source',
-                    ha='center', va='center', fontsize=14, fontweight='bold')
-            ax2.set_title('Ground Truth Selection', fontsize=16, fontweight='bold')
+            ax2.text(0.5, 0.5, 'Select Ground Truth Source\nfrom dropdown menu',
+                    ha='center', va='center', fontsize=11, fontweight='bold',
+                    transform=ax2.transAxes)
+            ax2.set_title('Ground Truth Selection', fontsize=14, fontweight='bold')
             ax2.set_axis_off()
         
         # 3. Difference plot (top right)
@@ -1786,35 +1887,54 @@ class HeatMapVisualizer:
             gt_field = source_fields[ground_truth_index].get(component)
             if gt_field is not None:
                 diff_field = interpolated_fields[component] - gt_field
-                max_diff = np.max(np.abs(diff_field))
-                im3 = ax3.imshow(diff_field, cmap='RdBu_r',
-                                vmin=-max_diff, vmax=max_diff, aspect='equal',
-                                interpolation='bilinear', origin='lower')
-                plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04, label='Difference (GPa)')
-                ax3.set_title(f'Difference\nMax Abs Error: {max_diff:.3f} GPa',
-                             fontsize=16, fontweight='bold')
-                ax3.set_xlabel('X Position')
-                ax3.set_ylabel('Y Position')
-                ax3.grid(True, alpha=0.2)
+                max_abs_diff = np.max(np.abs(diff_field))
                 
-                # Calculate and display error metrics
+                # Use diverging colormap for difference plot
+                diff_cmap = 'RdBu_r' if max_abs_diff > 0 else 'viridis'
+                
+                im3 = ax3.imshow(diff_field, cmap=diff_cmap,
+                                vmin=-max_abs_diff if max_abs_diff > 0 else None,
+                                vmax=max_abs_diff if max_abs_diff > 0 else None,
+                                aspect='equal', interpolation='bicubic', origin='lower')
+                
+                cbar3 = plt.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04,
+                                    location='right', shrink=0.8)
+                cbar3.set_label('Difference (GPa)', fontsize=12, fontweight='bold')
+                cbar3.ax.tick_params(labelsize=10)
+                
+                # Calculate error metrics
                 mse = np.mean(diff_field**2)
                 mae = np.mean(np.abs(diff_field))
                 rmse = np.sqrt(mse)
-                error_text = (f"MSE: {mse:.4f}\n"
-                             f"MAE: {mae:.4f}\n"
-                             f"RMSE: {rmse:.4f}")
-                ax3.text(0.05, 0.95, error_text, transform=ax3.transAxes,
-                        fontsize=12, fontweight='bold', verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+                rms_percent = (rmse / (vmax - vmin)) * 100 if (vmax - vmin) > 0 else 0
+                
+                title3 = f'Difference Map\nMax Abs Error: {max_abs_diff:.3f} GPa'
+                ax3.set_title(title3, fontsize=14, fontweight='bold', pad=12)
+                ax3.set_xlabel('X Position (a.u.)', fontsize=12, fontweight='bold')
+                ax3.set_ylabel('Y Position (a.u.)', fontsize=12, fontweight='bold')
+                ax3.grid(True, alpha=0.2, linestyle='--', linewidth=0.3)
+                
+                # Add error metrics in a nicely formatted box
+                error_text = (f"MSE: {mse:.4f} GPa²\n"
+                             f"MAE: {mae:.4f} GPa\n"
+                             f"RMSE: {rmse:.4f} GPa\n"
+                             f"RMS%: {rms_percent:.1f}%")
+                
+                # Place error box in upper left corner
+                ax3.text(0.02, 0.98, error_text, transform=ax3.transAxes,
+                        fontsize=9, fontweight='bold', verticalalignment='top',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                alpha=0.9, edgecolor='gray', linewidth=0.5))
             else:
                 ax3.text(0.5, 0.5, 'Ground truth missing\nfor difference plot',
-                        ha='center', va='center', fontsize=14, fontweight='bold')
+                        ha='center', va='center', fontsize=11, fontweight='bold',
+                        transform=ax3.transAxes)
                 ax3.set_axis_off()
         else:
             ax3.text(0.5, 0.5, 'Difference will appear\nwhen ground truth is selected',
-                    ha='center', va='center', fontsize=14, fontweight='bold')
-            ax3.set_title('Difference Analysis', fontsize=16, fontweight='bold')
+                    ha='center', va='center', fontsize=11, fontweight='bold',
+                    transform=ax3.transAxes)
+            ax3.set_title('Difference Analysis', fontsize=14, fontweight='bold')
             ax3.set_axis_off()
         
         # 4. Weight distribution analysis (Middle Left) - ENHANCED
@@ -1823,52 +1943,133 @@ class HeatMapVisualizer:
             # Plot Final Attention Weights
             final_weights = source_info['weights']['combined']
             x = range(len(final_weights))
-            bars = ax4.bar(x, final_weights, alpha=0.7, color='steelblue', edgecolor='black', label='Final Attention')
+            
+            # Sort by weight for better visualization
+            sorted_indices = np.argsort(final_weights)[::-1]
+            sorted_weights = np.array(final_weights)[sorted_indices]
+            sorted_x = np.arange(len(sorted_weights))
+            
+            bars = ax4.bar(sorted_x, sorted_weights, alpha=0.7, color='steelblue', 
+                          edgecolor='black', linewidth=0.5, label='Attention Weights')
+            
+            # Color bars by defect type if available
+            if 'source_fields' in source_info:
+                defect_colors = {
+                    'Twin': '#FF6B6B',    # Red
+                    'ISF': '#4ECDC4',     # Teal
+                    'ESF': '#FFD166',     # Yellow
+                    'No Defect': '#95A5A6' # Gray
+                }
+                
+                for i, idx in enumerate(sorted_indices):
+                    if idx < len(source_info['source_fields']):
+                        src = source_info['source_fields'][idx]
+                        defect = src.get('source_params', {}).get('defect_type', 'Unknown')
+                        color = defect_colors.get(defect, 'steelblue')
+                        bars[i].set_color(color)
+                        bars[i].set_alpha(0.8)
+            
+            # Highlight ground truth if applicable
+            if ground_truth_index is not None:
+                if ground_truth_index in sorted_indices:
+                    gt_pos = np.where(sorted_indices == ground_truth_index)[0][0]
+                    bars[gt_pos].set_edgecolor('red')
+                    bars[gt_pos].set_linewidth(2)
+                    bars[gt_pos].set_alpha(1.0)
             
             # Overlay Spatial Kernel for comparison
             if 'spatial_kernel' in source_info['weights']:
-                spatial_k = source_info['weights']['spatial_kernel']
-                ax4.plot(x, spatial_k, 'g--', linewidth=2, label='Spatial Kernel', alpha=0.8)
+                spatial_k = np.array(source_info['weights']['spatial_kernel'])[sorted_indices]
+                ax4.plot(sorted_x, spatial_k, 'g-', linewidth=1.5, marker='o', 
+                        markersize=4, label='Spatial Kernel', alpha=0.8)
             
-            ax4.set_xlabel('Source Index')
-            ax4.set_ylabel('Weight')
-            ax4.set_title('Attention vs Spatial Kernel', fontsize=16, fontweight='bold')
-            ax4.grid(True, alpha=0.3, axis='y')
-            ax4.legend()
+            ax4.set_xlabel('Source Index (sorted by weight)', fontsize=11, fontweight='bold')
+            ax4.set_ylabel('Weight Value', fontsize=11, fontweight='bold')
+            ax4.set_title('Attention vs Spatial Kernel Distribution', 
+                         fontsize=13, fontweight='bold', pad=10)
+            ax4.grid(True, alpha=0.2, axis='y')
             
-            # Highlight ground truth if applicable
-            if ground_truth_index is not None and 0 <= ground_truth_index < len(bars):
-                bars[ground_truth_index].set_color('red')
-                bars[ground_truth_index].set_alpha(0.9)
+            # Smart legend placement
+            ax4.legend(loc='upper right', fontsize=9, framealpha=0.9,
+                      fancybox=True, shadow=False, borderpad=0.5)
+            
+            # Add horizontal line at mean weight
+            mean_weight = np.mean(sorted_weights)
+            ax4.axhline(y=mean_weight, color='gray', linestyle='--', 
+                       alpha=0.5, linewidth=1, label=f'Mean: {mean_weight:.3f}')
+            
+            # Add entropy value
+            if 'entropy' in source_info['weights']:
+                entropy = source_info['weights']['entropy']
+                ax4.text(0.02, 0.98, f'Entropy: {entropy:.3f}', 
+                        transform=ax4.transAxes, fontsize=9, fontweight='bold',
+                        verticalalignment='top',
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8))
         
-        # 5. Angular distribution of sources (Middle Center)
+        # 5. Angular distribution of sources (Middle Center) - ENHANCED
         ax5 = fig.add_subplot(gs[1, 1], projection='polar')
         if 'theta_degrees' in source_info and 'distances' in source_info:
             # Convert angles to radians for polar plot
             angles_rad = np.radians(source_info['theta_degrees'])
             distances = source_info['distances']
+            weights = np.array(source_info['weights']['combined'])
             
-            # Plot sources as points with size proportional to final weight
-            weights = source_info['weights']['combined']
-            sizes = 100 * np.array(weights) / (np.max(weights) + 1e-8)  # Normalize sizes
+            # Normalize sizes for better visualization
+            sizes = 50 + 150 * weights / (np.max(weights) + 1e-8)
             
-            scatter = ax5.scatter(angles_rad, distances,
-                                s=sizes, alpha=0.7, c='blue', edgecolors='black')
+            # Color by defect type
+            defect_colors_polar = {
+                'Twin': '#E74C3C',    # Bright Red
+                'ISF': '#3498DB',     # Blue
+                'ESF': '#F39C12',     # Orange
+                'No Defect': '#7F8C8D' # Gray
+            }
+            
+            # Get defect types for coloring
+            colors = []
+            for i in range(len(angles_rad)):
+                if i < len(source_info.get('source_fields', [])):
+                    src = source_info['source_fields'][i]
+                    defect = src.get('source_params', {}).get('defect_type', 'Unknown')
+                    colors.append(defect_colors_polar.get(defect, '#3498DB'))
+                else:
+                    colors.append('#3498DB')
+            
+            # Plot sources as points
+            scatter = ax5.scatter(angles_rad, distances, s=sizes, alpha=0.7, 
+                                 c=colors, edgecolors='black', linewidths=0.5,
+                                 zorder=3)
             
             # Plot target angle
             target_rad = np.radians(target_angle)
-            ax5.scatter(target_rad, 0, s=200, c='red', marker='*', edgecolors='black', label='Target')
+            ax5.scatter(target_rad, 0, s=200, c='#2ECC71', marker='*', 
+                       edgecolors='black', linewidth=1, zorder=4, label='Target')
             
             # Plot habit plane (54.7°)
             habit_rad = np.radians(54.7)
-            ax5.axvline(habit_rad, color='green', alpha=0.5, linestyle='--', label='Habit Plane (54.7°)')
+            ax5.axvline(habit_rad, color='#9B59B6', alpha=0.6, linestyle='--', 
+                       linewidth=1.5, label='Habit Plane (54.7°)', zorder=2)
             
-            ax5.set_title('Angular Distribution of Sources', fontsize=16, fontweight='bold', pad=20)
+            # Customize polar plot
             ax5.set_theta_zero_location('N')  # 0° at top
-            ax5.set_theta_direction(-1)  # Clockwise
-            ax5.legend(loc='upper right', fontsize=10)
+            ax5.set_theta_direction(-1)       # Clockwise
+            ax5.set_ylim(0, max(distances) * 1.1 if max(distances) > 0 else 1)
+            ax5.set_title('Angular Distribution of Sources\n(Color by Defect Type)', 
+                         fontsize=13, fontweight='bold', pad=20)
+            
+            # Add radial grid
+            ax5.grid(True, alpha=0.3)
+            
+            # Smart legend placement outside the polar plot
+            ax5.legend(loc='upper left', bbox_to_anchor=(1.05, 1), 
+                      fontsize=9, framealpha=0.9, borderpad=0.5)
+            
+            # Add angle labels with improved formatting
+            ax5.set_xticks(np.radians([0, 45, 90, 135, 180, 225, 270, 315]))
+            ax5.set_xticklabels(['0°', '45°', '90°', '135°', '180°', '225°', '270°', '315°'], 
+                               fontsize=9)
         
-        # 6. Component comparison (Middle Right)
+        # 6. Statistical comparison (Middle Right)
         ax6 = fig.add_subplot(gs[1, 2])
         components = ['von_mises', 'sigma_hydro', 'sigma_mag']
         component_names = ['Von Mises', 'Hydrostatic', 'Stress Magnitude']
@@ -1883,236 +2084,282 @@ class HeatMapVisualizer:
                         'component': comp,
                         'max': stats['max'],
                         'mean': stats['mean'],
-                        'std': stats['std']
+                        'std': stats['std'],
+                        'min': stats.get('min', 0)
                     })
         
         if stats_data:
             x = np.arange(len(components))
-            width = 0.25
+            width = 0.22
             
-            # Plot max values
-            max_values = [stats['max'] for stats in stats_data]
-            ax6.bar(x - width, max_values, width, label='Max', color='red', alpha=0.7)
+            # Colors for different metrics
+            metric_colors = ['#E74C3C', '#3498DB', '#2ECC71', '#F39C12']  # Red, Blue, Green, Orange
             
-            # Plot mean values
-            mean_values = [stats['mean'] for stats in stats_data]
-            ax6.bar(x, mean_values, width, label='Mean', color='blue', alpha=0.7)
+            # Plot each metric
+            max_bars = ax6.bar(x - 1.5*width, [s['max'] for s in stats_data], 
+                              width, label='Max', color=metric_colors[0], 
+                              alpha=0.8, edgecolor='black', linewidth=0.5)
             
-            # Plot std values
-            std_values = [stats['std'] for stats in stats_data]
-            ax6.bar(x + width, std_values, width, label='Std', color='green', alpha=0.7)
+            mean_bars = ax6.bar(x - 0.5*width, [s['mean'] for s in stats_data], 
+                               width, label='Mean', color=metric_colors[1], 
+                               alpha=0.8, edgecolor='black', linewidth=0.5)
             
-            ax6.set_xlabel('Stress Component')
-            ax6.set_ylabel('Value (GPa)')
-            ax6.set_title('Component Statistics Comparison', fontsize=16, fontweight='bold')
+            std_bars = ax6.bar(x + 0.5*width, [s['std'] for s in stats_data], 
+                              width, label='Std Dev', color=metric_colors[2], 
+                              alpha=0.8, edgecolor='black', linewidth=0.5)
+            
+            min_bars = ax6.bar(x + 1.5*width, [s['min'] for s in stats_data], 
+                              width, label='Min', color=metric_colors[3], 
+                              alpha=0.8, edgecolor='black', linewidth=0.5)
+            
+            # Add value labels on top of bars
+            def add_value_labels(ax, bars):
+                for bar in bars:
+                    height = bar.get_height()
+                    if height != 0:
+                        ax.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+                               f'{height:.2f}', ha='center', va='bottom', 
+                               fontsize=8, fontweight='bold')
+            
+            add_value_labels(ax6, max_bars)
+            add_value_labels(ax6, mean_bars)
+            add_value_labels(ax6, std_bars)
+            add_value_labels(ax6, min_bars)
+            
+            ax6.set_xlabel('Stress Component', fontsize=11, fontweight='bold')
+            ax6.set_ylabel('Value (GPa)', fontsize=11, fontweight='bold')
+            ax6.set_title('Component Statistics Comparison', 
+                         fontsize=13, fontweight='bold', pad=10)
             ax6.set_xticks(x)
-            ax6.set_xticklabels(component_names)
-            ax6.legend()
-            ax6.grid(True, alpha=0.3)
+            ax6.set_xticklabels(component_names, rotation=15, ha='right', fontsize=10)
+            
+            # Place legend at upper center
+            ax6.legend(loc='upper center', bbox_to_anchor=(0.5, -0.1), 
+                      ncol=4, fontsize=9, framealpha=0.9)
+            
+            ax6.grid(True, alpha=0.2, axis='y')
+            
+            # Set y-limit with some padding
+            y_max = max([s['max'] for s in stats_data]) * 1.15
+            ax6.set_ylim(0, y_max)
         
-        # 7. Defect Type Gating Visualization (Bottom Left)
+        # 7. Defect Type Distribution (Bottom Left)
         ax7 = fig.add_subplot(gs[2, 0])
-        if 'weights' in source_info and 'defect_mask' in source_info['weights']:
-            defect_masks = source_info['weights']['defect_mask']
-            
-            # Group by defect type
-            defect_types_in_data = []
-            for src in source_info.get('source_fields', []):
-                dt = src.get('source_params', {}).get('defect_type', 'Unknown')
-                if dt not in defect_types_in_data:
-                    defect_types_in_data.append(dt)
-            
-            x_pos = np.arange(len(defect_masks))
-            ax7.bar(x_pos, defect_masks, color='purple', alpha=0.6, label='Defect Mask')
-            
-            # Highlight active defect types
-            for i, mask_val in enumerate(defect_masks):
-                if mask_val > 0.1:
-                    ax7.text(i, mask_val + 0.02, 'Active', ha='center', fontsize=8, fontweight='bold')
-            
-            ax7.set_xlabel('Source Index')
-            ax7.set_ylabel('Gating Weight')
-            ax7.set_title('Defect Type Hard Gating', fontsize=16, fontweight='bold')
-            ax7.set_ylim([0, 1.1])
-            ax7.legend()
         
-        # 8. Spatial Correlation (Bottom Center/Right Span)
-        ax8 = fig.add_subplot(gs[2, 1:])
+        # Count defect types from sources
+        defect_counts = {}
+        defect_types = []
+        
+        if 'source_fields' in source_info:
+            for src in source_info['source_fields']:
+                defect = src.get('source_params', {}).get('defect_type', 'Unknown')
+                defect_counts[defect] = defect_counts.get(defect, 0) + 1
+                defect_types.append(defect)
+        
+        if defect_counts:
+            defects = list(defect_counts.keys())
+            counts = list(defect_counts.values())
+            
+            # Colors for different defect types
+            defect_colors_bar = {
+                'Twin': '#E74C3C',
+                'ISF': '#3498DB',
+                'ESF': '#F39C12',
+                'No Defect': '#7F8C8D',
+                'Unknown': '#95A5A6'
+            }
+            
+            colors = [defect_colors_bar.get(d, '#3498DB') for d in defects]
+            
+            bars = ax7.bar(defects, counts, color=colors, alpha=0.8, 
+                          edgecolor='black', linewidth=0.5)
+            
+            # Add count labels on bars
+            for bar, count in zip(bars, counts):
+                height = bar.get_height()
+                ax7.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                        str(count), ha='center', va='bottom', 
+                        fontsize=10, fontweight='bold')
+            
+            ax7.set_xlabel('Defect Type', fontsize=11, fontweight='bold')
+            ax7.set_ylabel('Count', fontsize=11, fontweight='bold')
+            ax7.set_title('Defect Type Distribution in Source Data', 
+                         fontsize=13, fontweight='bold', pad=10)
+            ax7.grid(True, alpha=0.2, axis='y')
+            
+            # Highlight current target defect type
+            if defect_type in defects:
+                idx = defects.index(defect_type)
+                bars[idx].set_alpha(1.0)
+                bars[idx].set_linewidth(2)
+                bars[idx].set_edgecolor('red')
+                
+                # Add annotation
+                ax7.text(idx/len(defects), 0.98, 'Target', 
+                        transform=ax7.transAxes, fontsize=9, fontweight='bold',
+                        verticalalignment='top', ha='center',
+                        bbox=dict(boxstyle='round,pad=0.2', facecolor='yellow', alpha=0.8))
+        else:
+            ax7.text(0.5, 0.5, 'No defect type information\navailable in source data',
+                    ha='center', va='center', fontsize=11, fontweight='bold',
+                    transform=ax7.transAxes)
+            ax7.set_title('Defect Type Distribution', fontsize=13, fontweight='bold')
+            ax7.set_axis_off()
+        
+        # 8. Correlation Analysis (Bottom Center)
+        ax8 = fig.add_subplot(gs[2, 1])
         if ground_truth_index is not None and 0 <= ground_truth_index < len(source_fields):
             gt_field = source_fields[ground_truth_index].get(component)
             if gt_field is not None:
                 interp_flat = interpolated_fields[component].flatten()
                 gt_flat = gt_field.flatten()
                 
-                # Create scatter plot
-                ax8.scatter(gt_flat, interp_flat, alpha=0.5, s=10)
+                # Create scatter plot with transparency
+                scatter = ax8.scatter(gt_flat, interp_flat, alpha=0.4, s=10, 
+                                     c='blue', edgecolors='none')
                 
-                # Add correlation line
+                # Add perfect correlation line
                 min_val = min(np.min(gt_flat), np.min(interp_flat))
                 max_val = max(np.max(gt_flat), np.max(interp_flat))
-                ax8.plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Perfect Correlation')
+                ax8.plot([min_val, max_val], [min_val, max_val], 
+                        'r--', linewidth=1.5, label='Perfect Correlation', alpha=0.7)
                 
                 # Calculate correlation coefficient
                 from scipy.stats import pearsonr
                 try:
-                    corr_coef, _ = pearsonr(gt_flat, interp_flat)
+                    mask = np.isfinite(gt_flat) & np.isfinite(interp_flat)
+                    if np.sum(mask) > 1:
+                        corr_coef, p_value = pearsonr(gt_flat[mask], interp_flat[mask])
+                    else:
+                        corr_coef, p_value = 0.0, 1.0
                 except:
-                    corr_coef = 0.0
+                    corr_coef, p_value = 0.0, 1.0
                 
-                ax8.set_xlabel(f'Ground Truth {component.replace("_", " ").title()} (GPa)')
-                ax8.set_ylabel(f'Interpolated {component.replace("_", " ").title()} (GPa)')
-                ax8.set_title(f'Spatial Correlation Analysis\nPearson: {corr_coef:.3f}', fontsize=16, fontweight='bold')
+                # Calculate R²
+                if len(gt_flat) > 1 and len(interp_flat) > 1:
+                    ss_res = np.sum((interp_flat - gt_flat) ** 2)
+                    ss_tot = np.sum((gt_flat - np.mean(gt_flat)) ** 2)
+                    r_squared = 1 - (ss_res / (ss_tot + 1e-10))
+                else:
+                    r_squared = 0.0
+                
+                # Calculate bias
+                bias = np.mean(interp_flat - gt_flat)
+                
+                ax8.set_xlabel(f'Ground Truth {component.replace("_", " ").title()} (GPa)', 
+                              fontsize=11, fontweight='bold')
+                ax8.set_ylabel(f'Interpolated {component.replace("_", " ").title()} (GPa)', 
+                              fontsize=11, fontweight='bold')
+                
+                title8 = f'Correlation Analysis\nR = {corr_coef:.3f} (p = {p_value:.2e})'
+                ax8.set_title(title8, fontsize=13, fontweight='bold', pad=10)
+                
                 ax8.grid(True, alpha=0.3)
-                ax8.legend()
                 
-                # Add stats box
-                mse = np.mean((interp_flat - gt_flat)**2)
-                mae = np.mean(np.abs(interp_flat - gt_flat))
-                stats_text = (f'MSE: {mse:.4f}\nMAE: {mae:.4f}\nPearson: {corr_coef:.3f}')
-                ax8.text(0.05, 0.95, stats_text, transform=ax8.transAxes,
-                        fontsize=12, fontweight='bold', verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-        plt.suptitle(f'Theory-Informed Interpolation - Target θ={target_angle:.1f}°, {defect_type}',
-                    fontsize=24, fontweight='bold', y=0.98)
-        plt.tight_layout()
+                # Add legend at lower right
+                ax8.legend(loc='lower right', fontsize=9, framealpha=0.9)
+                
+                # Add statistics box
+                stats_text = (f"R² = {r_squared:.4f}\n"
+                             f"Bias = {bias:.4f} GPa\n"
+                             f"n = {len(gt_flat)}")
+                
+                ax8.text(0.02, 0.98, stats_text, transform=ax8.transAxes,
+                        fontsize=9, fontweight='bold', verticalalignment='top',
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                                alpha=0.9, edgecolor='gray', linewidth=0.5))
+        
+        # 9. Colormap Visualization (Right Column - Vertical)
+        ax9 = fig.add_subplot(gs[:, 3])  # Takes the entire right column
+        
+        # Display colormap gradient
+        gradient = np.linspace(0, 1, 256).reshape(1, -1)
+        ax9.imshow(gradient, aspect='auto', cmap=cmap_name, extent=[0, 1, 0, 1])
+        
+        # Add title and labels
+        ax9.set_title(f'Colormap: {cmap_name}', fontsize=14, fontweight='bold', pad=10)
+        ax9.set_xlabel('Normalized Value', fontsize=11, fontweight='bold')
+        ax9.set_ylabel('', fontsize=11)
+        
+        # Remove y-ticks
+        ax9.set_yticks([])
+        
+        # Add value labels
+        ax9.text(-0.1, 0.5, f'{vmin:.2f}', transform=ax9.transAxes,
+                va='center', ha='right', fontsize=10, fontweight='bold')
+        ax9.text(1.1, 0.5, f'{vmax:.2f}', transform=ax9.transAxes,
+                va='center', ha='left', fontsize=10, fontweight='bold')
+        
+        # Add current component information
+        comp_info = f"Component: {component.replace('_', ' ').title()}\n"
+        comp_info += f"Range: {vmin:.3f} to {vmax:.3f} GPa\n"
+        comp_info += f"Defect: {defect_type}"
+        
+        ax9.text(0.5, -0.05, comp_info, transform=ax9.transAxes,
+                ha='center', va='top', fontsize=9, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9))
+        
+        # 10. Metadata Panel (Bottom Right)
+        ax10 = fig.add_subplot(gs[2, 2])
+        ax10.axis('off')
+        
+        # Prepare metadata text
+        metadata_text = []
+        
+        # Interpolation metadata
+        metadata_text.append("INTERPOLATION METADATA")
+        metadata_text.append("=" * 25)
+        metadata_text.append(f"Target Angle: {target_angle:.1f}°")
+        metadata_text.append(f"Target Defect: {defect_type}")
+        metadata_text.append(f"Number of Sources: {len(source_info.get('theta_degrees', []))}")
+        metadata_text.append(f"Grid Size: {interpolated_fields[component].shape}")
+        
+        # Attention metadata
+        if 'weights' in source_info:
+            metadata_text.append("")
+            metadata_text.append("ATTENTION METADATA")
+            metadata_text.append("=" * 25)
+            metadata_text.append(f"Entropy: {source_info['weights'].get('entropy', 0):.3f}")
+            
+            weights = source_info['weights'].get('combined', [])
+            if weights:
+                metadata_text.append(f"Max Weight: {max(weights):.3f}")
+                metadata_text.append(f"Min Weight: {min(weights):.3f}")
+                metadata_text.append(f"Mean Weight: {np.mean(weights):.3f}")
+        
+        # Ground truth metadata
+        if ground_truth_index is not None:
+            metadata_text.append("")
+            metadata_text.append("GROUND TRUTH")
+            metadata_text.append("=" * 25)
+            metadata_text.append(f"Source Index: {ground_truth_index}")
+            if ground_truth_index < len(source_info.get('theta_degrees', [])):
+                metadata_text.append(f"Angle: {source_info['theta_degrees'][ground_truth_index]:.1f}°")
+                metadata_text.append(f"Distance: {source_info['distances'][ground_truth_index]:.1f}°")
+        
+        # Display metadata
+        metadata_str = "\n".join(metadata_text)
+        ax10.text(0.02, 0.98, metadata_str, transform=ax10.transAxes,
+                 fontsize=8, fontfamily='monospace', verticalalignment='top',
+                 bbox=dict(boxstyle='round,pad=0.3', facecolor='whitesmoke', 
+                         alpha=0.9, edgecolor='gray', linewidth=0.5))
+        
+        # Add timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ax10.text(0.02, 0.02, f"Generated: {timestamp}", transform=ax10.transAxes,
+                 fontsize=7, fontstyle='italic', alpha=0.7)
+        
+        # Add super title
+        suptitle = f"Theory-Informed Interpolation Analysis - Target θ = {target_angle:.1f}°, {defect_type}"
+        plt.suptitle(suptitle, fontsize=20, fontweight='bold', y=0.98)
+        
+        # Apply constrained layout for optimal spacing
+        if publication_quality:
+            plt.tight_layout()
+            fig.subplots_adjust(top=0.93)  # Adjust top margin for suptitle
+        
         return fig
     
-    def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
-                                     cmap_name='viridis', width=900, height=700,
-                                     target_angle=None, defect_type=None):
-        """Create interactive 3D surface plot with Plotly"""
-        try:
-            # Validate colormap
-            if cmap_name not in px.colors.named_colorscales():
-                cmap_name = 'viridis'
-            
-            # Create meshgrid
-            x = np.arange(stress_field.shape[1])
-            y = np.arange(stress_field.shape[0])
-            X, Y = np.meshgrid(x, y)
-            
-            # Create hover text
-            hover_text = []
-            for i in range(stress_field.shape[0]):
-                row_text = []
-                for j in range(stress_field.shape[1]):
-                    row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa")
-                hover_text.append(row_text)
-            
-            # Create 3D surface trace
-            surface_trace = go.Surface(
-                z=stress_field,
-                x=X,
-                y=Y,
-                colorscale=cmap_name,
-                contours={
-                    "z": {"show": True, "usecolormap": True, "highlightcolor": "limegreen", "project": {"z": True}}
-                },
-                hoverinfo='text',
-                text=hover_text
-            )
-            
-            # Create figure
-            fig = go.Figure(data=[surface_trace])
-            
-            # Enhanced title
-            title_str = title
-            if target_angle is not None and defect_type is not None:
-                title_str = f"{title}<br>θ = {target_angle:.1f}°, Defect: {defect_type}"
-            
-            # Update layout with publication styling
-            fig.update_layout(
-                title=dict(
-                    text=title_str,
-                    font=dict(size=24, family="Arial Black", color='darkblue'),
-                    x=0.5,
-                    y=0.95
-                ),
-                width=width,
-                height=height,
-                scene=dict(
-                    xaxis=dict(
-                        title=dict(text="X Position", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    yaxis=dict(
-                        title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    zaxis=dict(
-                        title=dict(text="Stress (GPa)", font=dict(size=18, family="Arial", color="black")),
-                        tickfont=dict(size=14),
-                        gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
-                    ),
-                    camera=dict(
-                        eye=dict(x=1.5, y=1.5, z=1.0)
-                    ),
-                    aspectratio=dict(x=1, y=1, z=0.7)
-                ),
-                plot_bgcolor='white',
-                paper_bgcolor='white',
-                margin=dict(l=0, r=0, t=100, b=0)
-            )
-            
-            return fig
-        
-        except Exception as e:
-            st.error(f"Error creating 3D surface: {e}")
-            fig = go.Figure()
-            fig.add_annotation(text="Error creating 3D surface", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
-            return fig
-    
-    def create_angular_orientation_plot(self, target_angle_deg, defect_type="Unknown",
-                                       figsize=(8, 8), show_habit_plane=True):
-        """Create polar plot showing angular orientation"""
-        fig = plt.figure(figsize=figsize, dpi=300)
-        ax = fig.add_subplot(111, projection='polar')
-        
-        # Convert target angle to radians
-        theta_rad = np.radians(target_angle_deg)
-        
-        # Plot defect orientation as a red arrow
-        ax.arrow(theta_rad, 0.8, 0, 0.6, width=0.02,
-                color='red', alpha=0.8, label=f'Defect Orientation: {target_angle_deg:.1f}°')
-        
-        # Plot habit plane orientation (54.7°) if requested
-        if show_habit_plane:
-            habit_plane_rad = np.radians(54.7)
-            ax.arrow(habit_plane_rad, 0.8, 0, 0.6, width=0.02,
-                    color='blue', alpha=0.5, label='Habit Plane (54.7°)')
-        
-        # Plot cardinal directions
-        for angle, label in [(0, '0°'), (90, '90°'), (180, '180°'), (270, '270°')]:
-            ax.axvline(np.radians(angle), color='gray', linestyle='--', alpha=0.3)
-        
-        # Customize plot
-        ax.set_title(f'Defect Orientation\nθ = {target_angle_deg:.1f}°, {defect_type}',
-                    fontsize=20, fontweight='bold', pad=20)
-        ax.set_theta_zero_location('N')  # 0° at top
-        ax.set_theta_direction(-1)  # Clockwise
-        ax.set_ylim(0, 1.5)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc='upper right', fontsize=12, framealpha=0.9)
-        
-        # Add annotation for angular difference from habit plane
-        if show_habit_plane:
-            angular_diff = abs(target_angle_deg - 54.7)
-            angular_diff = min(angular_diff, 360 - angular_diff)  # Handle cyclic nature
-            ax.annotate(f'Δθ = {angular_diff:.1f}°\nfrom habit plane',
-                       xy=(theta_rad, 1.2), xytext=(theta_rad, 1.4),
-                       arrowprops=dict(arrowstyle='->', color='green', alpha=0.7),
-                       fontsize=12, fontweight='bold',
-                       ha='center', va='center',
-                       bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.7))
-        
-        plt.tight_layout()
-        return fig
     
     def create_comparison_heatmaps(self, stress_fields_dict, cmap_name='viridis',
                                  figsize=(18, 6), titles=None, target_angle=None, defect_type=None):
