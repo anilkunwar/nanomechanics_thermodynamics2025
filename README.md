@@ -275,6 +275,9 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress51-streamlit-red)](https://stress-mediated-diffusion51.streamlit.app/) (hydrostatic stress mediated diffusion)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention )
+
+
 
 
 
