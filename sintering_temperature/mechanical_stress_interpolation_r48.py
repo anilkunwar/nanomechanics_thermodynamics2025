@@ -2274,16 +2274,12 @@ class HeatMapVisualizer:
         
         return fig
     
-    
+    #
     def create_interactive_3d_surface(self, stress_field, title="3D Stress Surface",
-                                     cmap_name='viridis', width=900, height=700,
-                                     target_angle=None, defect_type=None):
-        """Create interactive 3D surface plot with Plotly"""
+                                 cmap_name='viridis', width=900, height=700,
+                                 target_angle=None, defect_type=None):
+        """Create interactive 3D surface plot with Plotly with proper colormap handling"""
         try:
-            # Validate colormap
-            if cmap_name not in px.colors.named_colorscales():
-                cmap_name = 'viridis'
-            
             # Create meshgrid
             x = np.arange(stress_field.shape[1])
             y = np.arange(stress_field.shape[0])
@@ -2294,21 +2290,158 @@ class HeatMapVisualizer:
             for i in range(stress_field.shape[0]):
                 row_text = []
                 for j in range(stress_field.shape[1]):
-                    row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa")
+                    if target_angle is not None:
+                        row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa<br>θ: {target_angle:.1f}°")
+                    else:
+                        row_text.append(f"X: {j}, Y: {i}<br>Stress: {stress_field[i, j]:.4f} GPa")
                 hover_text.append(row_text)
             
-            # Create 3D surface trace
-            surface_trace = go.Surface(
-                z=stress_field,
-                x=X,
-                y=Y,
-                colorscale=cmap_name,
-                contours={
-                    "z": {"show": True, "usecolormap": True, "highlightcolor": "limegreen", "project": {"z": True}}
-                },
-                hoverinfo='text',
-                text=hover_text
-            )
+            # Define colormap mapping for Plotly - FIXED with comprehensive mapping
+            plotly_colormap_mapping = {
+                # Sequential colormaps
+                'viridis': 'Viridis',
+                'plasma': 'Plasma',
+                'inferno': 'Inferno',
+                'magma': 'Magma',
+                'cividis': 'Cividis',
+                'turbo': 'Turbo',
+                'hot': 'Hot',
+                'afmhot': 'Hot',
+                'gist_heat': 'Hot',
+                'copper': 'copper',
+                'summer': 'summer',
+                'spring': 'spring',
+                'autumn': 'autumn',
+                'winter': 'winter',
+                'bone': 'greys',
+                'gray': 'greys',
+                'pink': 'pink',
+                'gist_gray': 'greys',
+                'gist_yarg': 'greys',
+                'binary': 'greys',
+                'gist_earth': 'earth',
+                'terrain': 'earth',
+                'ocean': 'deep',
+                'gist_stern': 'viridis',
+                'gnuplot': 'viridis',
+                'gnuplot2': 'viridis',
+                'CMRmap': 'viridis',
+                'cubehelix': 'viridis',
+                'brg': 'rainbow',
+                'gist_rainbow': 'rainbow',
+                'rainbow': 'rainbow',
+                'jet': 'jet',
+                'nipy_spectral': 'rainbow',
+                'gist_ncar': 'rainbow',
+                'hsv': 'hsv',
+                
+                # Diverging colormaps
+                'RdBu': 'RdBu',
+                'RdYlBu': 'RdYlBu',
+                'Spectral': 'Spectral',
+                'coolwarm': 'RdBu',
+                'bwr': 'RdBu',
+                'seismic': 'RdBu',
+                'BrBG': 'BrBG',
+                'PiYG': 'PiYG',
+                'PRGn': 'PRGn',
+                'PuOr': 'PuOr',
+                'RdGy': 'RdGy',
+                'RdYlGn': 'RdYlGn',
+                
+                # Qualitative colormaps
+                'tab10': 'Set1',
+                'tab20': 'Set2',
+                'Set1': 'Set1',
+                'Set2': 'Set2',
+                'Set3': 'Set3',
+                'tab20b': 'Set2',
+                'tab20c': 'Set3',
+                'Pastel1': 'Pastel1',
+                'Pastel2': 'Pastel2',
+                'Paired': 'Paired',
+                'Accent': 'Accent',
+                'Dark2': 'Dark2',
+                
+                # Special cases
+                'twilight': 'viridis',
+                'twilight_shifted': 'viridis',
+                'flag': 'Set1',
+                'prism': 'Set1',
+                'Wistia': 'YlOrRd'
+            }
+            
+            # Handle reverse colormaps
+            is_reverse = cmap_name.endswith('_r')
+            base_cmap = cmap_name[:-2] if is_reverse else cmap_name
+            
+            # Get the mapped colormap
+            if base_cmap in plotly_colormap_mapping:
+                plotly_cmap = plotly_colormap_mapping[base_cmap]
+                if is_reverse:
+                    plotly_cmap = f"{plotly_cmap}_r"
+            else:
+                # Fallback to Viridis
+                plotly_cmap = 'Viridis' if not is_reverse else 'Viridis_r'
+            
+            # Create surface trace with PROPER colormap handling
+            try:
+                surface_trace = go.Surface(
+                    z=stress_field,
+                    x=X,
+                    y=Y,
+                    colorscale=plotly_cmap,
+                    opacity=0.9,
+                    contours={
+                        "z": {
+                            "show": True,
+                            "usecolormap": True,
+                            "project": {"z": True},
+                            "highlightcolor": "limegreen",
+                            "width": 2
+                        }
+                    },
+                    hoverinfo='text',
+                    text=hover_text,
+                    colorbar=dict(
+                        title=dict(
+                            text="Stress (GPa)",
+                            font=dict(size=16, family='Arial', color='black')
+                        ),
+                        tickfont=dict(size=14),
+                        thickness=25,
+                        len=0.8
+                    )
+                )
+            except Exception as e:
+                print(f"Warning: Could not use colormap {plotly_cmap}, falling back to 'Viridis'. Error: {e}")
+                surface_trace = go.Surface(
+                    z=stress_field,
+                    x=X,
+                    y=Y,
+                    colorscale='Viridis',
+                    opacity=0.9,
+                    contours={
+                        "z": {
+                            "show": True,
+                            "usecolormap": True,
+                            "project": {"z": True},
+                            "highlightcolor": "limegreen",
+                            "width": 2
+                        }
+                    },
+                    hoverinfo='text',
+                    text=hover_text,
+                    colorbar=dict(
+                        title=dict(
+                            text="Stress (GPa)",
+                            font=dict(size=16, family='Arial', color='black')
+                        ),
+                        tickfont=dict(size=14),
+                        thickness=25,
+                        len=0.8
+                    )
+                )
             
             # Create figure
             fig = go.Figure(data=[surface_trace])
@@ -2330,25 +2463,28 @@ class HeatMapVisualizer:
                 height=height,
                 scene=dict(
                     xaxis=dict(
-                        title=dict(text="X Position", font=dict(size=18, family="Arial", color="black")),
+                        title=dict(text="X Position", font=dict(size=18, color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
+                        backgroundcolor='white',
+                        showbackground=True
                     ),
                     yaxis=dict(
-                        title=dict(text="Y Position", font=dict(size=18, family="Arial", color="black")),
+                        title=dict(text="Y Position", font=dict(size=18, color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
+                        backgroundcolor='white',
+                        showbackground=True
                     ),
                     zaxis=dict(
-                        title=dict(text="Stress (GPa)", font=dict(size=18, family="Arial", color="black")),
+                        title=dict(text="Stress (GPa)", font=dict(size=18, color="black")),
                         tickfont=dict(size=14),
                         gridcolor='rgb(200, 200, 200)',
-                        backgroundcolor='white'
+                        backgroundcolor='white',
+                        showbackground=True
                     ),
                     camera=dict(
-                        eye=dict(x=1.5, y=1.5, z=1.0)
+                        eye=dict(x=1.5, y=1.5, z=1.2)
                     ),
                     aspectratio=dict(x=1, y=1, z=0.7)
                 ),
@@ -2357,10 +2493,30 @@ class HeatMapVisualizer:
                 margin=dict(l=0, r=0, t=100, b=0)
             )
             
+            # Add annotation for key statistics
+            max_stress = np.max(stress_field)
+            min_stress = np.min(stress_field)
+            mean_stress = np.mean(stress_field)
+            
+            fig.add_annotation(
+                text=f"Max: {max_stress:.2f} GPa<br>Min: {min_stress:.2f} GPa<br>Mean: {mean_stress:.2f} GPa",
+                xref="paper", yref="paper",
+                x=0.02, y=0.98,
+                showarrow=False,
+                font=dict(size=12, color="black", family="Arial"),
+                align="left",
+                bgcolor="white",
+                bordercolor="black",
+                borderwidth=1,
+                borderpad=4
+            )
+            
             return fig
         
         except Exception as e:
             st.error(f"Error creating 3D surface: {e}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             fig = go.Figure()
             fig.add_annotation(text="Error creating 3D surface", xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
             return fig
