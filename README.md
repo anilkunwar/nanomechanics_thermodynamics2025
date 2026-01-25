@@ -267,6 +267,9 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa47-streamlit-red)](https:///mechanicalstress-interpolation-at-theta47.streamlit.app/) (advanced v46)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa48-streamlit-red)](https:///mechanicalstress-interpolation-at-theta48.streamlit.app/) (advanced v47 with visualization enhancement in stress visualization)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa49-streamlit-red)](https:///mechanicalstress-interpolation-at-theta49.streamlit.app/) (advanced v45 for comparison dashboard )
 
 
 
