@@ -21,6 +21,7 @@ from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
 from scipy.ndimage import zoom
 import re
+import time
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -1098,11 +1099,12 @@ class HeatMapVisualizer:
     def create_attention_statistics(self, weights, source_info, figsize=(12, 8),
                                     title="Attention Distribution Statistics"):
         """
-        Create comprehensive statistics plots for attention weights
+        Create comprehensive statistics plots for attention weights - FIXED VERSION
         """
         combined_weights = np.array(weights['combined'])
         spatial_kernel = np.array(weights['spatial_kernel'])
         defect_mask = np.array(weights['defect_mask'])
+        entropy = weights['entropy']
         
         # Create subplot figure
         fig = make_subplots(
@@ -1110,11 +1112,13 @@ class HeatMapVisualizer:
             subplot_titles=(
                 'Attention Weight Distribution',
                 'Spatial Kernel vs Combined Attention',
-                'Cumulative Attention Distribution',
-                'Entropy Analysis'
+                'Cumulative Attention Distribution'
             ),
-            specs=[[{"secondary_y": False}, {"secondary_y": False}],
-                   [{"secondary_y": False}, {"secondary_y": False}]]
+            # Specify subplot types where needed
+            specs=[[{"type": "xy"}, {"type": "xy"}],
+                   [{"type": "xy"}, {"type": "bar"}]],
+            vertical_spacing=0.15,
+            horizontal_spacing=0.1
         )
         
         # 1. Weight distribution histogram
@@ -1186,31 +1190,26 @@ class HeatMapVisualizer:
                      annotation_text="90% threshold", annotation_position="bottom right", row=2, col=1)
         fig.add_vline(x=threshold_idx+1, line_dash="dash", line_color="red", row=2, col=1)
         
-        # 4. Entropy analysis
-        entropy = weights['entropy']
+        # 4. Entropy analysis as a simple bar chart (replacing the problematic indicator)
+        entropy_normalized = entropy / np.log(len(combined_weights) or 1)
         
-        # Create gauge chart for entropy
-        entropy_gauge = go.Indicator(
-            mode="gauge+number",
-            value=entropy,
-            domain={'x': [0, 1], 'y': [0, 1]},
-            title={'text': "Attention Entropy", 'font': {'size': 14}},
-            gauge={
-                'axis': {'range': [0, np.log(len(combined_weights) or 1)]},
-                'bar': {'color': "darkblue"},
-                'steps': [
-                    {'range': [0, np.log(len(combined_weights) or 1)*0.3], 'color': "lightgreen"},
-                    {'range': [np.log(len(combined_weights) or 1)*0.3, np.log(len(combined_weights) or 1)*0.7], 'color': "yellow"},
-                    {'range': [np.log(len(combined_weights) or 1)*0.7, np.log(len(combined_weights) or 1)], 'color': "red"}
-                ],
-                'threshold': {
-                    'line': {'color': "black", 'width': 4},
-                    'thickness': 0.75,
-                    'value': entropy
-                }
-            }
+        # Create a bar chart that shows entropy level
+        entropy_bar = go.Bar(
+            x=['Entropy'],
+            y=[entropy_normalized],
+            marker=dict(
+                color=['red' if entropy_normalized > 0.7 else 'yellow' if entropy_normalized > 0.3 else 'green'],
+                line=dict(color='black', width=1)
+            ),
+            text=[f"{entropy:.3f}"],
+            textposition='outside',
+            hovertemplate=f'Entropy: {entropy:.3f}<br>Normalized: {entropy_normalized:.3f}<br>Ideal range: Low to Medium'
         )
-        fig.add_trace(entropy_gauge, row=2, col=2)
+        fig.add_trace(entropy_bar, row=2, col=2)
+        
+        # Add reference lines for entropy interpretation
+        fig.add_hline(y=0.3, line_dash="dash", line_color="green", row=2, col=2)
+        fig.add_hline(y=0.7, line_dash="dash", line_color="red", row=2, col=2)
         
         # Update layout
         fig.update_layout(
@@ -1218,7 +1217,13 @@ class HeatMapVisualizer:
             height=800,
             width=1000,
             showlegend=False,
-            template='plotly_white'
+            template='plotly_white',
+            annotations=[
+                dict(text="Low Entropy = More focused attention", x=0.85, y=0.1, 
+                     xref="paper", yref="paper", showarrow=False, font=dict(size=10)),
+                dict(text="High Entropy = More spread attention", x=0.85, y=0.05, 
+                     xref="paper", yref="paper", showarrow=False, font=dict(size=10))
+            ]
         )
         
         # Update axes labels
@@ -1228,6 +1233,8 @@ class HeatMapVisualizer:
         fig.update_yaxes(title_text="Combined Attention", row=1, col=2)
         fig.update_xaxes(title_text="Number of Top Sources", row=2, col=1)
         fig.update_yaxes(title_text="Cumulative Attention", row=2, col=1)
+        fig.update_xaxes(showticklabels=False, title_text="", row=2, col=2)
+        fig.update_yaxes(title_text="Normalized Entropy", range=[0, 1], row=2, col=2)
         
         return fig
     
@@ -1283,7 +1290,7 @@ class HeatMapVisualizer:
             line=dict(color='green', width=2, dash='dot')
         ))
         
-        # Update layout
+        # Update layout with proper polar configuration
         fig.update_layout(
             polar=dict(
                 radialaxis=dict(
@@ -1296,7 +1303,7 @@ class HeatMapVisualizer:
                     rotation=90,  # Start from top
                     direction='clockwise',
                     tickfont=dict(size=12),
-                    title='Angle (degrees)'
+                    # No direct title for angular axis in Plotly polar plots
                 ),
                 bgcolor='rgba(240, 240, 240, 0.5)'
             ),
@@ -1317,6 +1324,17 @@ class HeatMapVisualizer:
                 orientation="h"
             ),
             template='plotly_white'
+        )
+        
+        # Add annotation for angular axis title
+        fig.add_annotation(
+            text="Angle (degrees)",
+            x=0.5,
+            y=-0.1,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(size=14)
         )
         
         return fig
@@ -1521,7 +1539,7 @@ def main():
                 "Statistics Dashboard: Comprehensive Metrics",
                 "Attention Matrix: Source-to-Source Attention"
             ]
-            selected_viz = st.selectbox("Choose visualization type:", viz_options, index=0)
+            selected_viz = st.selectbox("Choose visualization type:", viz_options, index=4)
             
             # Visualization controls
             col_ctrl1, col_ctrl2 = st.columns(2)
@@ -1675,6 +1693,16 @@ def main():
             
             except Exception as e:
                 st.error(f"Error generating visualization: {e}")
+                # Additional specific error handling
+                if "indicator" in str(e):
+                    st.warning("Using alternative visualization due to compatibility issues with current Plotly version.")
+                if "title" in str(e) and "polar" in str(e):
+                    st.warning("Using fallback polar plot configuration due to Plotly API changes.")
+                
+                # Show error details in expander for debugging
+                with st.expander("🔍 View Error Details"):
+                    st.code(str(e))
+                
                 st.warning("Please try a different visualization type or check your data.")
             
             # Additional analysis section
