@@ -208,68 +208,72 @@ Comparison codes
 
 Sintering Temperature and Mechanical Stress
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa20-streamlit-red)](https:///mechanicalstress-sintering-temperature-prediction-a20.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa20-streamlit-red)](https://mechanicalstress-sintering-temperature-prediction-a20.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa21-streamlit-red)](https:///mechanicalstress-sintering-temperature-prediction-a21.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa21-streamlit-red)](https://mechanicalstress-sintering-temperature-prediction-a21.streamlit.app/) (Radar chart visualization of defect, interface and bulk Ag materials for theta  near 54.7 degrees, complete)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa22-streamlit-red)](https:///mechanicalstress-interpolation-at-theta22.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa22-streamlit-red)](https://mechanicalstress-interpolation-at-theta22.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa23-streamlit-red)](https:///mechanicalstress-interpolation-at-theta23.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa23-streamlit-red)](https://mechanicalstress-interpolation-at-theta23.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa24-streamlit-red)](https:///mechanicalstress-interpolation-at-theta24.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa24-streamlit-red)](https://mechanicalstress-interpolation-at-theta24.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa25-streamlit-red)](https:///mechanicalstress-interpolation-at-theta25.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
-
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa26-streamlit-red)](https:///mechanicalstress-interpolation-at-theta26.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface, R20 presented in more advanced form)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa27-streamlit-red)](https:///mechanicalstress-interpolation-at-theta27.streamlit.app/) (Focus on radar chart)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa28-streamlit-red)](https:///mechanicalstress-interpolation-at-theta28.streamlit.app/) (Focus on radar chart)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa29-streamlit-red)](https:///mechanicalstress-interpolation-at-theta29.streamlit.app/) (Focus on radar chart, The vacancy mediated diffusion is not correctly represented)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa30-streamlit-red)](https:///mechanicalstress-interpolation-at-theta30.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa31-streamlit-red)](https:///mechanicalstress-interpolation-at-theta31.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
-
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa32-streamlit-red)](https:///mechanicalstress-interpolation-at-theta32.streamlit.app/) (Focus on radar chart and improvement on r29, The vacancy mediated diffusion is not correctly represented)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa25-streamlit-red)](https://mechanicalstress-interpolation-at-theta25.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface)
 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa33-streamlit-red)](https:///mechanicalstress-interpolation-at-theta33.streamlit.app/) (Focus on radar chart and improvement on r20)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa26-streamlit-red)](https://mechanicalstress-interpolation-at-theta26.streamlit.app/) (Heatmap for mechanical stress profile at theta  near 54.7 degrees, complete and advanced, Interactive Heatmap and Interactive 3D Surface, R20 presented in more advanced form)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa27-streamlit-red)](https://mechanicalstress-interpolation-at-theta27.streamlit.app/) (Focus on radar chart)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa28-streamlit-red)](https://mechanicalstress-interpolation-at-theta28.streamlit.app/) (Focus on radar chart)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa29-streamlit-red)](https://mechanicalstress-interpolation-at-theta29.streamlit.app/) (Focus on radar chart, The vacancy mediated diffusion is not correctly represented)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa30-streamlit-red)](https://mechanicalstress-interpolation-at-theta30.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa31-streamlit-red)](https://mechanicalstress-interpolation-at-theta31.streamlit.app/) (More physics based insights, The vacancy mediated diffusion is not correctly represented)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa32-streamlit-red)](https://mechanicalstress-interpolation-at-theta32.streamlit.app/) (Focus on radar chart and improvement on r29, The vacancy mediated diffusion is not correctly represented)
 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa34-streamlit-red)](https:///mechanicalstress-interpolation-at-theta34.streamlit.app/) (Focus on radar chart and improvement on r24, with more knowledge on the mechanics and thermodynamics of diffusion; non-negative stresses interpolated perfectly but hydrostatic stress not interpolated well.)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa33-streamlit-red)](https://mechanicalstress-interpolation-at-theta33.streamlit.app/) (Focus on radar chart and improvement on r20)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa35-streamlit-red)](https:///mechanicalstress-interpolation-at-theta35.streamlit.app/) (Advanced interpolation scheme for hydrostatic stress; angular weightage i.e. larger weight for nearest neighbors)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa36-streamlit-red)](https:///mechanicalstress-interpolation-at-theta36.streamlit.app/) (Advanced interpolation scheme for hydrostatic stress; angular weightage i.e. larger weight for nearest neighbors)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa34-streamlit-red)](https://mechanicalstress-interpolation-at-theta34.streamlit.app/) (Focus on radar chart and improvement on r24, with more knowledge on the mechanics and thermodynamics of diffusion; non-negative stresses interpolated perfectly but hydrostatic stress not interpolated well.)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa37-streamlit-red)](https:///mechanicalstress-interpolation-at-theta37.streamlit.app/) 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa35-streamlit-red)](https://mechanicalstress-interpolation-at-theta35.streamlit.app/) (Advanced interpolation scheme for hydrostatic stress; angular weightage i.e. larger weight for nearest neighbors)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa38-streamlit-red)](https:///mechanicalstress-interpolation-at-theta38.streamlit.app/) (angular bracketing interpolator 1)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa36-streamlit-red)](https://mechanicalstress-interpolation-at-theta36.streamlit.app/) (Advanced interpolation scheme for hydrostatic stress; angular weightage i.e. larger weight for nearest neighbors)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa39-streamlit-red)](https:///mechanicalstress-interpolation-at-theta39.streamlit.app/) (angular bracketing interpolator 2)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa37-streamlit-red)](https://mechanicalstress-interpolation-at-theta37.streamlit.app/) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa40-streamlit-red)](https:///mechanicalstress-interpolation-at-theta40.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa38-streamlit-red)](https://mechanicalstress-interpolation-at-theta38.streamlit.app/) (angular bracketing interpolator 1)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa41-streamlit-red)](https:///mechanicalstress-interpolation-at-theta41.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa39-streamlit-red)](https://mechanicalstress-interpolation-at-theta39.streamlit.app/) (angular bracketing interpolator 2)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa42-streamlit-red)](https:///mechanicalstress-interpolation-at-theta42.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio,  visualization yet to be completed)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa40-streamlit-red)](https://mechanicalstress-interpolation-at-theta40.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa43-streamlit-red)](https:///mechanicalstress-interpolation-at-theta43.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio, complete visualization)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa41-streamlit-red)](https://mechanicalstress-interpolation-at-theta41.streamlit.app/) (basic, angular bracketing integrated for spatial information in the attention)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa44-streamlit-red)](https:///mechanicalstress-interpolation-at-theta44.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio, complete visualization, v43 is complete and v44 is just the visualization enhancement)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa42-streamlit-red)](https://mechanicalstress-interpolation-at-theta42.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio,  visualization yet to be completed)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa45-streamlit-red)](https:///mechanicalstress-interpolation-at-theta45.streamlit.app/) (only contains the dashboard for the comparison of AI interpolated results with the ground truth from phase field simulations) 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa43-streamlit-red)](https://mechanicalstress-interpolation-at-theta43.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio, complete visualization)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa46-streamlit-red)](https:///mechanicalstress-interpolation-at-theta46.streamlit.app/) (integration of enhanced comparison dashboard in the full code)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa44-streamlit-red)](https://mechanicalstress-interpolation-at-theta44.streamlit.app/) (advanced angular bracketing integrated for spatial information in the attention, Diffusion ratio, complete visualization, v43 is complete and v44 is just the visualization enhancement)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa47-streamlit-red)](https:///mechanicalstress-interpolation-at-theta47.streamlit.app/) (advanced v46)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa45-streamlit-red)](https://mechanicalstress-interpolation-at-theta45.streamlit.app/) (only contains the dashboard for the comparison of AI interpolated results with the ground truth from phase field simulations) 
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa48-streamlit-red)](https:///mechanicalstress-interpolation-at-theta48.streamlit.app/) (advanced v47 with visualization enhancement in stress visualization)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa46-streamlit-red)](https://mechanicalstress-interpolation-at-theta46.streamlit.app/) (integration of enhanced comparison dashboard in the full code)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa49-streamlit-red)](https:///mechanicalstress-interpolation-at-theta49.streamlit.app/) (advanced v45 for comparison dashboard )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa47-streamlit-red)](https://mechanicalstress-interpolation-at-theta47.streamlit.app/) (advanced v46)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa48-streamlit-red)](https://mechanicalstress-interpolation-at-theta48.streamlit.app/) (complete code, advanced v47 with visualization enhancement in stress visualization)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa49-streamlit-red)](https://mechanicalstress-interpolation-at-theta49.streamlit.app/) (advanced v45 for comparison dashboard )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa50-streamlit-red)](https://mechanicalstress-interpolation-at-theta50.streamlit.app/) (visualization of interpolated stress profile )
+
+[![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress51-streamlit-red)](https://stress-mediated-diffusion51.streamlit.app/) (hydrostatic stress mediated diffusion)
 
 
 
