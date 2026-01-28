@@ -277,6 +277,12 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts53-streamlit-red)](https://mechanicalstress-interpolation-at-theta53.streamlit.app/) (Model 48 with dimension label in nm)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts54-streamlit-red)](https://mechanicalstress-interpolation-at-theta54.streamlit.app/) (Model 49 with dimension label in nm)
+
+
+
 
 
 
