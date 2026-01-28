@@ -275,13 +275,15 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress51-streamlit-red)](https://stress-mediated-diffusion51.streamlit.app/) (hydrostatic stress mediated diffusion, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention, agnostic to the domain geometry's units)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts53-streamlit-red)](https://mechanicalstress-interpolation-at-theta53.streamlit.app/) (Model 48 with dimension label in nm)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa53-streamlit-red)](https://mechanicalstress-interpolation-at-theta53.streamlit.app/) (Model 48 with dimension label in nm)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts54-streamlit-red)](https://mechanicalstress-interpolation-at-theta54.streamlit.app/) (Model 49 with dimension label in nm)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa54-streamlit-red)](https://mechanicalstress-interpolation-at-theta54.streamlit.app/) (Model 49 with dimension label in nm)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa55-streamlit-red)](https://mechanicalstress-interpolation-at-theta55.streamlit.app/) (Model 50 with dimension label in nm )
 
+[![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress56-streamlit-red)](https://stress-mediated-diffusion56.streamlit.app/) (Model 51 with dimension label in nm)
 
 
 
