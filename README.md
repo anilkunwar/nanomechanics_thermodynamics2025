@@ -267,15 +267,15 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa47-streamlit-red)](https://mechanicalstress-interpolation-at-theta47.streamlit.app/) (advanced v46)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa48-streamlit-red)](https://mechanicalstress-interpolation-at-theta48.streamlit.app/) (complete code, advanced v47 with visualization enhancement in stress visualization)
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa48-streamlit-red)](https://mechanicalstress-interpolation-at-theta48.streamlit.app/) (complete code, advanced v47 with visualization enhancement in stress visualization, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa49-streamlit-red)](https://mechanicalstress-interpolation-at-theta49.streamlit.app/) (advanced v45 for comparison dashboard )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa49-streamlit-red)](https://mechanicalstress-interpolation-at-theta49.streamlit.app/) (advanced v45 for comparison dashboard, , the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa50-streamlit-red)](https://mechanicalstress-interpolation-at-theta50.streamlit.app/) (visualization of interpolated stress profile )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentioninterpolationa50-streamlit-red)](https://mechanicalstress-interpolation-at-theta50.streamlit.app/) (visualization of interpolated stress profile, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
 
-[![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress51-streamlit-red)](https://stress-mediated-diffusion51.streamlit.app/) (hydrostatic stress mediated diffusion)
+[![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress51-streamlit-red)](https://stress-mediated-diffusion51.streamlit.app/) (hydrostatic stress mediated diffusion, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm)
 
-[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention )
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts52-streamlit-red)](https://mechanicalstress-interpolation-at-theta52.streamlit.app/) (visualization of weights and coefficients of G-ADW Attention, the geometry is expressed in grid size 128 * 128 with delta x  = 0.1 nm )
 
 
 
