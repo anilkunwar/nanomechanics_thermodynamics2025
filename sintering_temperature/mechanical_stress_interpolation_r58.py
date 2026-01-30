@@ -101,7 +101,7 @@ class PhysicsParameters:
     @staticmethod
     def get_eigenstrain(defect_type: str) -> float:
         return PhysicsParameters.EIGENSTRAIN_VALUES.get(defect_type, 0.0)
-        
+    
     @staticmethod
     def get_theoretical_info(defect_type: str) -> Dict:
         return PhysicsParameters.THEORETICAL_BASIS.get(defect_type, {})
@@ -150,10 +150,10 @@ class DiffusionPhysics:
     @staticmethod
     def get_material_properties(material='Silver'):
         return DiffusionPhysics.MATERIAL_PROPERTIES.get(material, DiffusionPhysics.MATERIAL_PROPERTIES['Silver'])
-        
+    
     @staticmethod
     def compute_diffusion_enhancement(sigma_hydro_GPa, T_K=650, material='Silver',
-                                      model='physics_corrected', stress_unit='GPa'):
+                                     model='physics_corrected', stress_unit='GPa'):
         props = DiffusionPhysics.get_material_properties(material)
         Omega = props['atomic_volume']
         
@@ -236,7 +236,7 @@ class EnhancedSolutionLoader:
     def _ensure_directory(self):
         if not os.path.exists(self.solutions_dir):
             os.makedirs(self.solutions_dir, exist_ok=True)
-        
+    
     def scan_solutions(self) -> List[Dict[str, Any]]:
         all_files = []
         for ext in ['*.pkl', '*.pickle', '*.pt', '*.pth']:
@@ -308,7 +308,7 @@ class EnhancedSolutionLoader:
                             if isinstance(history[key], dict):
                                 history_list.append(history[key])
                         standardized['history'] = history_list
-                
+            
                 if 'metadata' in data:
                     standardized['metadata'].update(data['metadata'])
                     
@@ -339,10 +339,10 @@ class EnhancedSolutionLoader:
         
         if max_files:
             file_info = file_info[:max_files]
-            
+        
         if not file_info:
             return solutions
-            
+        
         for file_info_item in file_info:
             cache_key = file_info_item['filename']
             if use_cache and cache_key in self.cache:
@@ -408,7 +408,7 @@ class TransformerSpatialInterpolator:
     def debug_feature_dimensions(self, params_list, target_angle_deg):
         encoded = self.encode_parameters(params_list, target_angle_deg)
         return encoded.shape
-        
+    
     def compute_angular_bracketing_kernel(self, source_params, target_params):
         spatial_weights = []
         defect_mask = []
@@ -732,12 +732,12 @@ class TransformerSpatialInterpolator:
                                      6*(txy**2 + tyz**2 + tzx**2)))
             return von_mises
         return np.zeros((100, 100))
-        
+    
     def compute_hydrostatic(self, stress_fields):
         if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz']):
             return (stress_fields['sigma_xx'] + stress_fields['sigma_yy'] + stress_fields.get('sigma_zz', np.zeros_like(stress_fields['sigma_xx']))) / 3
         return np.zeros((100, 100))
-        
+    
     def _calculate_entropy(self, weights):
         weights = np.array(weights)
         weights = weights[weights > 0]
@@ -829,7 +829,7 @@ class HeatMapVisualizer:
             src_defect = src.get('source_params', {}).get('defect_type', 'Unknown')
             theta_deg = source_info['theta_degrees'][i]
             weight = weights['combined'][i]
-            
+        
             # Create unique label for source
             label = f"Source {i}: {src_defect} ({theta_deg:.1f}°)"
             labels.append(label)
@@ -884,30 +884,30 @@ class HeatMapVisualizer:
         for i, src in enumerate(source_params):
             src_theta = source_info['theta_degrees'][i]
             target_theta = target_params['theta']
-            
+        
             # Angular proximity (0 to 1)
             angle_diff = abs(src_theta - target_theta)
             angle_diff = min(angle_diff, 360 - angle_diff)
             angular_proximity = np.exp(-angle_diff / 30.0) # Scale factor
-            
+        
             # Defect match (0 or 1)
             src_defect = src.get('source_params', {}).get('defect_type', 'Unknown')
             target_defect = target_params['defect_type']
             defect_match = 1.0 if src_defect == target_defect else 0.0
-            
+        
             # Spatial kernel weight
             spatial_kernel = weights['spatial_kernel'][i]
-            
+        
             # Combined attention weight
             combined_attention = weights['combined'][i]
-            
+        
             sources_data.append([
                 angular_proximity,
                 defect_match,
                 spatial_kernel,
                 combined_attention
             ])
-            
+        
             source_names.append(f"Source {i}: {src_defect} ({src_theta:.1f}°)")
     
         # Create radar chart
@@ -920,7 +920,7 @@ class HeatMapVisualizer:
             # Close the polygon
             values = source_data + [source_data[0]]
             theta = dimensions + [dimensions[0]]
-            
+        
             fig.add_trace(go.Scatterpolar(
                 r=values,
                 theta=theta,
@@ -991,11 +991,11 @@ class HeatMapVisualizer:
             defect_type = src.get('source_params', {}).get('defect_type', 'Unknown')
             weight = weights['combined'][i]
             theta = source_info['theta_degrees'][i]
-            
+        
             if defect_type not in defect_weights:
                 defect_weights[defect_type] = 0
             defect_weights[defect_type] += weight
-            
+        
             # Add to lists for treemap
             defect_types.append(defect_type)
             thetas.append(theta)
@@ -1062,15 +1062,15 @@ class HeatMapVisualizer:
                 # Base attention on angular difference and defect match
                 theta_i = source_info['theta_degrees'][i]
                 theta_j = source_info['theta_degrees'][j]
-                
+            
                 angle_diff = abs(theta_i - theta_j)
                 angle_diff = min(angle_diff, 360 - angle_diff)
                 angular_proximity = np.exp(-angle_diff / 20.0)
-                
+            
                 defect_i = source_params[i].get('source_params', {}).get('defect_type', 'Unknown')
                 defect_j = source_params[j].get('source_params', {}).get('defect_type', 'Unknown')
                 defect_match = 1.0 if defect_i == defect_j else 0.1
-                
+            
                 attention_matrix[i, j] = angular_proximity * defect_match
     
         # Normalize rows
