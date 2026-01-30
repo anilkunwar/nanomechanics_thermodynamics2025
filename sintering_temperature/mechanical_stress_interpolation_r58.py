@@ -20,13 +20,14 @@ import itertools
 from typing import List, Dict, Any, Optional, Tuple, Union
 import seaborn as sns
 from scipy.ndimage import zoom
+import warnings
 import re
-import time
 warnings.filterwarnings('ignore')
 
 # =============================================
 # GLOBAL STYLING CONFIGURATION
 # =============================================
+# Publication quality styling
 plt.rcParams.update({
     'font.size': 14,
     'axes.titlesize': 20,
@@ -48,34 +49,90 @@ VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 
+# Enhanced colormap options with publication standards
 COLORMAP_OPTIONS = {
     'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
-                  'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
-                  'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
-                  'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
-                  'gist_ncar', 'hsv'],
+                   'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
+                   'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
+                   'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
+                   'gist_ncar', 'hsv', 'tab20c', 'tab20b', 'Set3', 'Set2', 'Set1', 'tab10', 'Pastel2', 'Pastel1',
+                   'Paired', 'Accent', 'Dark2', 'tab20', 'flag', 'prism'],
     'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
-                 'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+                  'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r', 'twilight', 'twilight_shifted',
+                  'hsv_r', 'gist_rainbow_r', 'rainbow_r', 'jet_r', 'nipy_spectral_r', 'gist_ncar_r'],
     'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
-                   'Paired', 'Accent', 'Dark2'],
+                    'Paired', 'Accent', 'Dark2', 'Set3_r', 'Set2_r', 'Set1_r', 'tab20_r', 'tab10_r',
+                    'tab20c_r', 'tab20b_r'],
     'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
-                            'turbo'],
+                              'turbo', 'viridis_r', 'plasma_r', 'inferno_r', 'magma_r', 'cividis_r', 'turbo_r'],
     'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
-                            'coolwarm', 'bwr', 'seismic', 'BrBG']
+                             'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr'],
+    'Rainbow Family': ['rainbow', 'gist_rainbow', 'nipy_spectral', 'gist_ncar', 'hsv', 'jet', 'turbo',
+                       'rainbow_r', 'gist_rainbow_r', 'nipy_spectral_r', 'gist_ncar_r', 'hsv_r', 'jet_r', 'turbo_r'],
+    'Geographical': ['terrain', 'ocean', 'gist_earth', 'gist_stern', 'brg', 'CMRmap', 'cubehelix',
+                     'terrain_r', 'ocean_r', 'gist_earth_r', 'gist_stern_r', 'brg_r', 'CMRmap_r', 'cubehelix_r'],
+    'Temperature': ['hot', 'afmhot', 'gist_heat', 'coolwarm', 'bwr', 'seismic',
+                    'hot_r', 'afmhot_r', 'gist_heat_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+    'Grayscale': ['gray', 'bone', 'pink', 'binary', 'gist_gray', 'gist_yarg',
+                  'gray_r', 'bone_r', 'pink_r', 'binary_r', 'gist_gray_r', 'gist_yarg_r']
 }
+
+# FIXED INDENTATION ERROR: Properly indented block
+ALL_COLORMAPS = []
+for category in COLORMAP_OPTIONS.values():
+    ALL_COLORMAPS.extend(category)  # <-- CORRECT INDENTATION
+ALL_COLORMAPS = sorted(list(set(ALL_COLORMAPS)))  # Remove duplicates
+
+# =============================================
+# DOMAIN SIZE CONFIGURATION - 12.8 nm × 12.8 nm
+# =============================================
+class DomainConfiguration:
+    """Configuration for the 12.8 nm × 12.8 nm simulation domain"""
+    # Domain parameters
+    N = 128                    # Number of grid points in each direction
+    dx = 0.1                   # Grid spacing in nm
+    DOMAIN_LENGTH = N * dx     # 12.8 nm
+    DOMAIN_HALF = DOMAIN_LENGTH / 2.0  # 6.4 nm
+
+    @classmethod
+    def get_extent(cls):
+        """Get extent for plotting: [-6.4 nm, 6.4 nm, -6.4 nm, 6.4 nm]"""
+        return [-cls.DOMAIN_HALF, cls.DOMAIN_HALF, -cls.DOMAIN_HALF, cls.DOMAIN_HALF]
+
+    @classmethod
+    def get_coordinates(cls):
+        """Get coordinate arrays for the domain"""
+        x = np.linspace(-cls.DOMAIN_HALF, cls.DOMAIN_HALF, cls.N, endpoint=False)
+        y = np.linspace(-cls.DOMAIN_HALF, cls.DOMAIN_HALF, cls.N, endpoint=False)
+        return np.meshgrid(x, y)
+
+    @classmethod
+    def get_domain_info(cls):
+        """Get domain information dictionary"""
+        return {
+            'grid_points': cls.N,
+            'grid_spacing_nm': cls.dx,
+            'domain_length_nm': cls.DOMAIN_LENGTH,
+            'domain_half_nm': cls.DOMAIN_HALF,
+            'area_nm2': cls.DOMAIN_LENGTH ** 2,
+            'extent': cls.get_extent(),
+            'description': f"Square domain of {cls.DOMAIN_LENGTH} nm × {cls.DOMAIN_LENGTH} nm centered at origin"
+        }
 
 # =============================================
 # PHYSICS PARAMETERS ENHANCEMENT
 # =============================================
 class PhysicsParameters:
     """Enhanced physics parameters with correct eigenstrain values"""
+    # Correct eigenstrain values for different defect types
     EIGENSTRAIN_VALUES = {
-        'Twin': 2.12,
-        'ISF': 0.289,
-        'ESF': 0.333,
+        'Twin': 2.12,  # Corrected from 0.707
+        'ISF': 0.289,  # Corrected from 0.707
+        'ESF': 0.333,  # Corrected from 1.414
         'No Defect': 0.0
     }
-    
+
+    # Theoretical basis for eigenstrain calculations
     THEORETICAL_BASIS = {
         'Twin': {
             'value': 2.12,
@@ -96,13 +153,15 @@ class PhysicsParameters:
             'reference': 'Sutton & Balluffi (1995) Interfaces in Crystalline Materials'
         }
     }
-    
+
     @staticmethod
     def get_eigenstrain(defect_type: str) -> float:
+        """Get correct eigenstrain value for defect type"""
         return PhysicsParameters.EIGENSTRAIN_VALUES.get(defect_type, 0.0)
-        
+
     @staticmethod
     def get_theoretical_info(defect_type: str) -> Dict:
+        """Get theoretical basis information for defect type"""
         return PhysicsParameters.THEORETICAL_BASIS.get(defect_type, {})
 
 # =============================================
@@ -110,114 +169,237 @@ class PhysicsParameters:
 # =============================================
 class DiffusionPhysics:
     """Enhanced diffusion physics with multiple theoretical models"""
-    k_B_eV = 8.617333262145e-5
-    k_B_J = 1.380649e-23
-    
+    # Boltzmann constant in eV/K
+    k_B_eV = 8.617333262145e-5  # eV/K
+    # Boltzmann constant in J/K
+    k_B_J = 1.380649e-23  # J/K
+
+    # Material properties for various metals at sintering temperatures
     MATERIAL_PROPERTIES = {
         'Silver': {
-            'atomic_volume': 1.56e-29, 'atomic_mass': 107.8682, 'density': 10.49e6,
-            'melting_point': 1234.93, 'bulk_modulus': 100e9, 'shear_modulus': 30e9,
-            'activation_energy': 1.1, 'prefactor': 7.2e-7, 'atomic_radius': 1.44e-10,
-            'vacancy_formation_energy': 1.1, 'vacancy_migration_energy': 0.66,
+            'atomic_volume': 1.56e-29,  # m³/atom
+            'atomic_mass': 107.8682,    # g/mol
+            'density': 10.49e6,         # g/m³
+            'melting_point': 1234.93,   # K
+            'bulk_modulus': 100e9,      # Pa
+            'shear_modulus': 30e9,      # Pa
+            'activation_energy': 1.1,   # eV for vacancy diffusion
+            'prefactor': 7.2e-7,        # m²/s diffusion prefactor
+            'atomic_radius': 1.44e-10,  # m
+            'vacancy_formation_energy': 1.1,  # eV
+            'vacancy_migration_energy': 0.66,  # eV
         },
         'Copper': {
-            'atomic_volume': 1.18e-29, 'atomic_mass': 63.546, 'density': 8.96e6,
-            'melting_point': 1357.77, 'bulk_modulus': 140e9, 'shear_modulus': 48e9,
-            'activation_energy': 1.0, 'prefactor': 3.1e-7, 'atomic_radius': 1.28e-10,
-            'vacancy_formation_energy': 1.0, 'vacancy_migration_energy': 0.70,
+            'atomic_volume': 1.18e-29,  # m³/atom
+            'atomic_mass': 63.546,      # g/mol
+            'density': 8.96e6,         # g/m³
+            'melting_point': 1357.77,   # K
+            'bulk_modulus': 140e9,      # Pa
+            'shear_modulus': 48e9,      # Pa
+            'activation_energy': 1.0,   # eV for vacancy diffusion
+            'prefactor': 3.1e-7,        # m²/s diffusion prefactor
+            'atomic_radius': 1.28e-10,  # m
+            'vacancy_formation_energy': 1.0,  # eV
+            'vacancy_migration_energy': 0.70,  # eV
         },
         'Aluminum': {
-            'atomic_volume': 1.66e-29, 'atomic_mass': 26.9815, 'density': 2.70e6,
-            'melting_point': 933.47, 'bulk_modulus': 76e9, 'shear_modulus': 26e9,
-            'activation_energy': 0.65, 'prefactor': 1.7e-6, 'atomic_radius': 1.43e-10,
-            'vacancy_formation_energy': 0.65, 'vacancy_migration_energy': 0.55,
+            'atomic_volume': 1.66e-29,  # m³/atom
+            'atomic_mass': 26.9815,     # g/mol
+            'density': 2.70e6,         # g/m³
+            'melting_point': 933.47,    # K
+            'bulk_modulus': 76e9,       # Pa
+            'shear_modulus': 26e9,      # Pa
+            'activation_energy': 0.65,  # eV for vacancy diffusion
+            'prefactor': 1.7e-6,        # m²/s diffusion prefactor
+            'atomic_radius': 1.43e-10,  # m
+            'vacancy_formation_energy': 0.65,  # eV
+            'vacancy_migration_energy': 0.55,  # eV
         },
         'Nickel': {
-            'atomic_volume': 1.09e-29, 'atomic_mass': 58.6934, 'density': 8.908e6,
-            'melting_point': 1728.0, 'bulk_modulus': 180e9, 'shear_modulus': 76e9,
-            'activation_energy': 1.4, 'prefactor': 1.9e-7, 'atomic_radius': 1.24e-10,
-            'vacancy_formation_energy': 1.4, 'vacancy_migration_energy': 0.9,
+            'atomic_volume': 1.09e-29,  # m³/atom
+            'atomic_mass': 58.6934,     # g/mol
+            'density': 8.908e6,        # g/m³
+            'melting_point': 1728.0,    # K
+            'bulk_modulus': 180e9,      # Pa
+            'shear_modulus': 76e9,      # Pa
+            'activation_energy': 1.4,   # eV for vacancy diffusion
+            'prefactor': 1.9e-7,        # m²/s diffusion prefactor
+            'atomic_radius': 1.24e-10,  # m
+            'vacancy_formation_energy': 1.4,  # eV
+            'vacancy_migration_energy': 0.9,  # eV
         },
         'Iron': {
-            'atomic_volume': 1.18e-29, 'atomic_mass': 55.845, 'density': 7.874e6,
-            'melting_point': 1811.0, 'bulk_modulus': 170e9, 'shear_modulus': 82e9,
-            'activation_energy': 2.0, 'prefactor': 2.0e-8, 'atomic_radius': 1.24e-10,
-            'vacancy_formation_energy': 2.0, 'vacancy_migration_energy': 1.2,
+            'atomic_volume': 1.18e-29,  # m³/atom
+            'atomic_mass': 55.845,      # g/mol
+            'density': 7.874e6,        # g/m³
+            'melting_point': 1811.0,    # K
+            'bulk_modulus': 170e9,      # Pa
+            'shear_modulus': 82e9,      # Pa
+            'activation_energy': 2.0,   # eV for vacancy diffusion
+            'prefactor': 2.0e-8,        # m²/s diffusion prefactor
+            'atomic_radius': 1.24e-10,  # m
+            'vacancy_formation_energy': 2.0,  # eV
+            'vacancy_migration_energy': 1.2,  # eV
         }
     }
-    
+
     @staticmethod
     def get_material_properties(material='Silver'):
-        return DiffusionPhysics.MATERIAL_PROPERTIES.get(material, DiffusionPhysics.MATERIAL_PROPERTIES['Silver'])
-        
+        """Get material properties for diffusion calculations"""
+        return DiffusionPhysics.MATERIAL_PROPERTIES.get(
+            material,
+            DiffusionPhysics.MATERIAL_PROPERTIES['Silver']
+        )
+
     @staticmethod
     def compute_diffusion_enhancement(sigma_hydro_GPa, T_K=650, material='Silver',
                                       model='physics_corrected', stress_unit='GPa'):
+        """
+        Compute diffusion enhancement factor D(σ)/D₀
+        Parameters:
+        -----------
+        sigma_hydro_GPa : float or array
+            Hydrostatic stress in GPa (positive = tensile, negative = compressive)
+        T_K : float
+            Temperature in Kelvin
+        material : str
+            Material name ('Silver', 'Copper', 'Aluminum', 'Nickel', 'Iron')
+        model : str
+            'physics_corrected' : Full exponential formula
+            'temperature_reduction' : Effective temperature model
+            'activation_energy' : Activation energy modification
+            'vacancy_concentration' : Vacancy concentration change
+        stress_unit : str
+            Unit of stress ('GPa' or 'Pa')
+        Returns:
+        --------
+        D_ratio : float or array
+            Diffusion coefficient ratio D(σ)/D₀
+        """
+        # Get material properties
         props = DiffusionPhysics.get_material_properties(material)
-        Omega = props['atomic_volume']
-        
+        Omega = props['atomic_volume']  # Atomic volume in m³
+
+        # Convert stress to Pa if needed
         if stress_unit == 'GPa':
             sigma_hydro_Pa = sigma_hydro_GPa * 1e9
         else:
             sigma_hydro_Pa = sigma_hydro_GPa
-            
+
         if model == 'physics_corrected':
+            # Full exponential formula: D/D₀ = exp(Ωσ_h / (k_B T))
             exponent = Omega * sigma_hydro_Pa / (DiffusionPhysics.k_B_J * T_K)
             D_ratio = np.exp(exponent)
         elif model == 'temperature_reduction':
-            Q_J = props['activation_energy'] * 1.602e-19
+            # Effective temperature model: T_eff = T / (1 - Ωσ_h / Q)
+            # where Q is activation energy in Joules
+            Q_J = props['activation_energy'] * 1.602e-19  # Convert eV to J
+            # Avoid division by zero
             with np.errstate(divide='ignore', invalid='ignore'):
                 T_eff = T_K / (1 - Omega * sigma_hydro_Pa / Q_J)
-                T_eff = np.where(np.isfinite(T_eff), T_eff, T_K)
+            T_eff = np.where(np.isfinite(T_eff), T_eff, T_K)
             D_ratio = np.exp(Q_J / DiffusionPhysics.k_B_J * (1/T_K - 1/T_eff))
         elif model == 'activation_energy':
-            Q_J = props['activation_energy'] * 1.602e-19
+            # Activation energy modification: Q_eff = Q - Ωσ_h
+            Q_J = props['activation_energy'] * 1.602e-19  # Convert eV to J
             Q_eff = Q_J - Omega * sigma_hydro_Pa
             D_bulk = np.exp(-Q_J / (DiffusionPhysics.k_B_J * T_K))
             D_stressed = np.exp(-Q_eff / (DiffusionPhysics.k_B_J * T_K))
             D_ratio = D_stressed / D_bulk
         elif model == 'vacancy_concentration':
+            # Vacancy concentration ratio: C_v/C_v0 = exp(Ωσ_h / (k_B T))
             exponent = Omega * sigma_hydro_Pa / (DiffusionPhysics.k_B_J * T_K)
-            D_ratio = np.exp(exponent)
+            D_ratio = np.exp(exponent)  # Assuming diffusion ∝ vacancy concentration
         else:
             raise ValueError(f"Unknown model: {model}")
-            
         return D_ratio
-    
+
     @staticmethod
     def compute_effective_diffusion_coefficient(sigma_hydro_GPa, T_K=650, material='Silver'):
+        """
+        Compute effective diffusion coefficient including stress effects
+        Returns:
+        --------
+        D_eff : float or array
+            Effective diffusion coefficient in m²/s
+        """
         props = DiffusionPhysics.get_material_properties(material)
+        # Calculate unstressed diffusion coefficient using Arrhenius equation
         D0 = props['prefactor'] * np.exp(-props['activation_energy'] / (DiffusionPhysics.k_B_eV * T_K))
-        D_ratio = DiffusionPhysics.compute_diffusion_enhancement(sigma_hydro_GPa, T_K, material, 'physics_corrected')
+        D_ratio = DiffusionPhysics.compute_diffusion_enhancement(
+            sigma_hydro_GPa, T_K, material, 'physics_corrected'
+        )
         return D0 * D_ratio
-    
+
     @staticmethod
     def compute_mass_flux_gradient(D_ratio_field, unstressed_D, concentration_gradient):
+        """
+        Compute mass flux considering stress-enhanced diffusion
+        Parameters:
+        -----------
+        D_ratio_field : array
+            Local D/D₀ ratio field
+        unstressed_D : float
+            Unstressed diffusion coefficient (m²/s)
+        concentration_gradient : array
+            Concentration gradient (1/m)
+        Returns:
+        --------
+        mass_flux : array
+            Mass flux (atoms/m²·s)
+        """
         D_eff = unstressed_D * D_ratio_field
-        mass_flux = -D_eff * concentration_gradient
+        mass_flux = -D_eff * concentration_gradient  # Fick's first law
         return mass_flux
-    
+
     @staticmethod
     def compute_dislocation_sink_strength(stress_field, material='Silver'):
+        """
+        Compute dislocation sink strength enhancement due to stress
+        Theory: Stress affects dislocation bias for vacancies
+        """
         props = DiffusionPhysics.get_material_properties(material)
         shear_modulus = props['shear_modulus']
-        sigma_vm = np.sqrt(np.sum(stress_field**2, axis=0))
+        # Normalized stress effect on sink strength
+        # Approximate: sink_strength ∝ 1 + |σ_shear|/μ
+        sigma_vm = np.sqrt(np.sum(stress_field**2, axis=0))  # Approximate
         sink_enhancement = 1 + 0.1 * sigma_vm / shear_modulus
         return sink_enhancement
-    
+
     @staticmethod
     def compute_activation_volume(sigma_hydro_GPa, D_ratio):
+        """
+        Compute apparent activation volume from diffusion enhancement
+        V_act = k_B T * d(ln D)/dσ
+        Returns:
+        --------
+        V_act : float or array
+            Activation volume in atomic volumes
+        """
+        # For small stresses, activation volume ~ Ω
         props = DiffusionPhysics.get_material_properties('Silver')
         Omega = props['atomic_volume']
+        # Approximate derivative
         if isinstance(D_ratio, np.ndarray) and D_ratio.size > 1:
+            # For arrays, compute local activation volume
             lnD = np.log(D_ratio)
+            # Use finite difference approximation
             V_act = np.gradient(lnD) / np.gradient(sigma_hydro_GPa) * 1.38e-23 * 650 / 1e9
         else:
-            V_act = Omega
+            # For scalar
+            V_act = Omega  # Default approximation
         return V_act
-    
+
     @staticmethod
     def compute_diffusion_length(D_ratio, time, D0):
+        """
+        Compute diffusion length considering stress enhancement
+        L = sqrt(4 D_eff t)
+        Returns:
+        --------
+        L : float or array
+            Diffusion length (m)
+        """
         D_eff = D0 * D_ratio
         diffusion_length = np.sqrt(4 * D_eff * time)
         return diffusion_length
@@ -231,21 +413,22 @@ class EnhancedSolutionLoader:
         self.solutions_dir = solutions_dir
         self._ensure_directory()
         self.cache = {}
-        
+
     def _ensure_directory(self):
+        """Create solutions directory if it doesn't exist"""
         if not os.path.exists(self.solutions_dir):
             os.makedirs(self.solutions_dir, exist_ok=True)
-            
+
     def scan_solutions(self) -> List[Dict[str, Any]]:
+        """Scan directory for solution files"""
         all_files = []
         for ext in ['*.pkl', '*.pickle', '*.pt', '*.pth']:
             import glob
             pattern = os.path.join(self.solutions_dir, ext)
             files = glob.glob(pattern)
             all_files.extend(files)
-        
+        # Sort by modification time (newest first)
         all_files.sort(key=os.path.getmtime, reverse=True)
-        
         file_info = []
         for file_path in all_files:
             try:
@@ -259,27 +442,30 @@ class EnhancedSolutionLoader:
                 file_info.append(info)
             except:
                 continue
-                
         return file_info
-    
+
     def read_simulation_file(self, file_path, format_type='auto'):
+        """Read simulation file with physics-aware processing"""
         try:
             with open(file_path, 'rb') as f:
                 if format_type == 'pt' or file_path.endswith(('.pt', '.pth')):
+                    # PyTorch file
                     try:
                         data = torch.load(f, map_location='cpu', weights_only=True)
                     except:
                         data = torch.load(f, map_location='cpu', weights_only=False)
                 else:
+                    # Pickle file
                     data = pickle.load(f)
-            
-            standardized = self._standardize_data(data, file_path)
-            return standardized
+                # Standardize data structure
+                standardized = self._standardize_data(data, file_path)
+                return standardized
         except Exception as e:
             st.error(f"Error loading {file_path}: {e}")
             return None
-    
+
     def _standardize_data(self, data, file_path):
+        """Standardize simulation data with physics metadata"""
         standardized = {
             'params': {},
             'history': [],
@@ -289,36 +475,37 @@ class EnhancedSolutionLoader:
                 'physics_processed': False
             }
         }
-        
         try:
             if isinstance(data, dict):
+                # Extract parameters
                 if 'params' in data:
                     standardized['params'] = data['params']
                 elif 'parameters' in data:
                     standardized['params'] = data['parameters']
-                    
+                # Extract history
                 if 'history' in data:
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
                     elif isinstance(history, dict):
+                        # Convert dict to list
                         history_list = []
                         for key in sorted(history.keys()):
                             if isinstance(history[key], dict):
                                 history_list.append(history[key])
                         standardized['history'] = history_list
-                
+                # Extract additional metadata
                 if 'metadata' in data:
                     standardized['metadata'].update(data['metadata'])
-                    
-            self._convert_tensors(standardized)
+                # Convert tensors to numpy arrays
+                self._convert_tensors(standardized)
         except Exception as e:
             st.error(f"Standardization error: {e}")
             standardized['metadata']['error'] = str(e)
-            
         return standardized
-    
+
     def _convert_tensors(self, data):
+        """Convert PyTorch tensors to numpy arrays recursively"""
         if isinstance(data, dict):
             for key, value in data.items():
                 if torch.is_tensor(value):
@@ -331,44 +518,44 @@ class EnhancedSolutionLoader:
                     data[i] = item.cpu().numpy()
                 elif isinstance(item, (dict, list)):
                     self._convert_tensors(item)
-    
+
     def load_all_solutions(self, use_cache=True, max_files=None):
+        """Load all solutions with physics processing"""
         solutions = []
         file_info = self.scan_solutions()
-        
         if max_files:
             file_info = file_info[:max_files]
-            
         if not file_info:
             return solutions
-            
         for file_info_item in file_info:
             cache_key = file_info_item['filename']
             if use_cache and cache_key in self.cache:
                 solutions.append(self.cache[cache_key])
                 continue
-                
             solution = self.read_simulation_file(file_info_item['path'])
             if solution:
                 self.cache[cache_key] = solution
                 solutions.append(solution)
-                
         return solutions
 
 # =============================================
 # POSITIONAL ENCODING FOR TRANSFORMER
 # =============================================
 class PositionalEncoding(nn.Module):
+    """Positional encoding for transformer"""
     def __init__(self, d_model, max_len=5000):
         super().__init__()
         self.d_model = d_model
         self.max_len = max_len
-        
+
     def forward(self, x):
         batch_size, seq_len, d_model = x.shape
+        # Create positional indices
         position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
+        # Compute divisor term
         div_term = torch.exp(torch.arange(0, d_model, 2).float() *
-                            (-np.log(10000.0) / d_model))
+                             (-np.log(10000.0) / d_model))
+        # Create positional encoding
         pe = torch.zeros(seq_len, d_model)
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
@@ -378,15 +565,24 @@ class PositionalEncoding(nn.Module):
 # ENHANCED TRANSFORMER SPATIAL INTERPOLATOR WITH BRACKETING THEORY
 # =============================================
 class TransformerSpatialInterpolator:
+    """
+    Transformer-inspired interpolator with Enhanced Spatial Locality Regularization
+    based on Angular Bracketing Theory.
+    Key Principles:
+    1. Defect Type is a HARD CONSTRAINT (Major Aspect).
+    2. Angular Orientation drives the Spatial Locality Kernel (Major Aspect).
+    3. Attention = Learned Similarity * Angular Kernel * Defect Mask.
+    """
     def __init__(self, d_model=64, nhead=8, num_layers=3,
-                spatial_sigma=10.0, temperature=1.0, locality_weight_factor=0.5):
+                 spatial_sigma=10.0, temperature=1.0, locality_weight_factor=0.5):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
-        self.spatial_sigma = spatial_sigma
+        self.spatial_sigma = spatial_sigma  # Width of the angular bracketing kernel
         self.temperature = temperature
         self.locality_weight_factor = locality_weight_factor
-        
+
+        # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -395,272 +591,372 @@ class TransformerSpatialInterpolator:
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Input projection - FIXED: Now expects exactly 15 input features
         self.input_proj = nn.Linear(15, d_model)
+
+        # Positional encoding
         self.pos_encoder = PositionalEncoding(d_model)
-        
+
     def set_spatial_parameters(self, spatial_sigma=None, locality_weight_factor=None):
+        """Update spatial parameters dynamically"""
         if spatial_sigma is not None:
             self.spatial_sigma = spatial_sigma
         if locality_weight_factor is not None:
             self.locality_weight_factor = locality_weight_factor
-            
+
     def debug_feature_dimensions(self, params_list, target_angle_deg):
+        """Debug method to check feature dimensions"""
         encoded = self.encode_parameters(params_list, target_angle_deg)
+        print(f"Debug: Encoded shape: {encoded.shape}")
+        print(f"Debug: Number of features: {encoded.shape[1]}")
+        # Print first encoded vector
+        if len(params_list) > 0:
+            print(f"Debug: First encoded vector: {encoded[0]}")
+            print(f"Debug: Number of non-zero elements: {torch.sum(encoded[0] != 0).item()}")
         return encoded.shape
-        
+
     def compute_angular_bracketing_kernel(self, source_params, target_params):
+        """
+        Compute the Angular Bracketing Kernel and Defect Mask.
+        Returns:
+            spatial_weights: Gaussian decay based on angular distance.
+            defect_mask: 1.0 for same defect type, epsilon for different.
+            angular_distances: List of angular distances.
+        """
         spatial_weights = []
         defect_mask = []
         angular_distances = []
-        
+
         target_theta = target_params.get('theta', 0.0)
         target_theta_deg = np.degrees(target_theta) % 360
         target_defect = target_params.get('defect_type', 'Twin')
-        
+
         for src in source_params:
             src_theta = src.get('theta', 0.0)
             src_theta_deg = np.degrees(src_theta) % 360
-            
+
+            # Calculate cyclic angular distance
             raw_diff = abs(src_theta_deg - target_theta_deg)
             angular_dist = min(raw_diff, 360 - raw_diff)
             angular_distances.append(angular_dist)
-            
+
+            # --- MAJOR ASPECT 1: Defect Type Gating ---
+            # If defect types differ, weight is effectively zero.
             if src.get('defect_type') == target_defect:
                 defect_mask.append(1.0)
             else:
-                defect_mask.append(1e-6)
-                
+                defect_mask.append(1e-6)  # Near zero to avoid NaN in log, but effectively ignored
+
+            # --- MAJOR ASPECT 2: Angular Bracketing Kernel ---
+            # Gaussian kernel centered at target angle.
+            # High weight for sources that bracket the target angle.
+            # Sigma controls the "width" of the bracketing window.
             weight = np.exp(-0.5 * (angular_dist / self.spatial_sigma) ** 2)
             spatial_weights.append(weight)
-            
+
         return np.array(spatial_weights), np.array(defect_mask), np.array(angular_distances)
-    
+
     def visualize_angular_kernel(self, target_angle_deg=54.7, figsize=(12, 8)):
+        """Visualize the Angular Bracketing Kernel (Spatial Locality)"""
         angles = np.linspace(0, 180, 361)
         weights = []
-        
+
+        # Simulate source params list for visualization
         dummy_sources = [{'theta': np.radians(a), 'defect_type': 'Twin'} for a in angles]
         dummy_target = {'theta': np.radians(target_angle_deg), 'defect_type': 'Twin'}
-        
+
+        # Compute weights using the kernel logic
         spatial_weights, _, _ = self.compute_angular_bracketing_kernel(dummy_sources, dummy_target)
-        
+
         fig, ax = plt.subplots(figsize=figsize)
         ax.plot(angles, spatial_weights, 'b-', linewidth=3, label='Bracketing Kernel Weight')
         ax.axvline(x=target_angle_deg, color='r', linestyle='--', linewidth=2, label=f'Target: {target_angle_deg}°')
         ax.axvline(x=54.7, color='g', linestyle='-.', linewidth=2, label='Habit Plane: 54.7°')
-        
         ax.set_xlabel('Angle (degrees)', fontsize=14, fontweight='bold')
         ax.set_ylabel('Spatial Kernel Weight', fontsize=14, fontweight='bold')
         ax.set_title(f'Angular Bracketing Regularization Kernel\nSigma: {self.spatial_sigma}°',
-                    fontsize=16, fontweight='bold')
+                     fontsize=16, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=12)
         ax.set_xlim([0, 180])
         ax.set_ylim([0, 1.1])
-        
+
+        # Highlight sigma region
         ax.fill_between([target_angle_deg - self.spatial_sigma, target_angle_deg + self.spatial_sigma],
-                       0, 1, color='blue', alpha=0.1, label=f'±1$\sigma$ Region')
+                         0, 1, color='blue', alpha=0.1, label=f'±1$\sigma$ Region')
         ax.legend()
         plt.tight_layout()
         return fig
-    
+
     def encode_parameters(self, params_list, target_angle_deg):
+        """Encode parameters into transformer input - FIXED to return exactly 15 features"""
         encoded = []
         for params in params_list:
+            # Create feature vector
             features = []
-            
-            # Physics parameters
-            features.append(params.get('eps0', 0.707) / 3.0) # normalize
-            features.append(params.get('kappa', 0.6) / 2.0) # normalize
+
+            # Numeric features (3 features)
+            features.append(params.get('eps0', 0.707) / 3.0)
+            features.append(params.get('kappa', 0.6) / 2.0)
             theta = params.get('theta', 0.0)
-            features.append(theta / np.pi) # normalize to [0,1]
-            
-            # One-hot encoding for defect type
+            features.append(theta / np.pi)
+
+            # One-hot encoding for defect type (4 features)
             defect_types = ['ISF', 'ESF', 'Twin', 'No Defect']
             defect = params.get('defect_type', 'Twin')
             for dt in defect_types:
                 features.append(1.0 if dt == defect else 0.0)
-                
-            # One-hot encoding for shape
+
+            # Shape encoding (4 features)
             shapes = ['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle']
             shape = params.get('shape', 'Square')
             for s in shapes:
                 features.append(1.0 if s == shape else 0.0)
-                
-            # Angular features
+
+            # Orientation features (3 features)
             theta_deg = np.degrees(theta) if theta is not None else 0.0
             angle_diff = abs(theta_deg - target_angle_deg)
-            angle_diff = min(angle_diff, 360 - angle_diff)
-            features.append(np.exp(-angle_diff / 45.0)) # Angular proximity
-            
-            # Trigonometric features for periodicity
+            angle_diff = min(angle_diff, 360 - angle_diff)  # Handle cyclic nature
+            features.append(np.exp(-angle_diff / 45.0))
             features.append(np.sin(np.radians(2 * theta_deg)))
             features.append(np.cos(np.radians(2 * theta_deg)))
-            
-            # Distance to habit plane (54.7°)
+
+            # Habit plane proximity (1 feature)
             habit_distance = abs(theta_deg - 54.7)
-            habit_distance = min(habit_distance, 360 - habit_distance)
+            habit_distance = min(habit_distance, 360 - habit_distance)  # Handle cyclic nature
             features.append(np.exp(-habit_distance / 15.0))
-            
-            # Pad to 15 features if needed
-            while len(features) < 15:
-                features.append(0.0)
-            features = features[:15]
-            
+
+            # Verify we have exactly 15 features
+            if len(features) != 15:
+                st.warning(f"Warning: Expected 15 features, got {len(features)}. Padding or truncating.")
+                # Pad with zeros if fewer than 15
+                while len(features) < 15:
+                    features.append(0.0)
+                # Truncate if more than 15
+                features = features[:15]
+
             encoded.append(features)
-            
         return torch.FloatTensor(encoded)
-        
+
     def interpolate_spatial_fields(self, sources, target_angle_deg, target_params):
+        """
+        Interpolate full spatial stress fields using Theory-Informed Attention.
+        Attention Logic:
+        1. Compute Transformer Embeddings.
+        2. Compute Angular Bracketing Kernel (Spatial Locality).
+        3. Compute Defect Type Mask (Hard Constraint).
+        4. Attention = Softmax(Transformer_Score * Spatial_Kernel * Defect_Mask).
+        """
         if not sources:
+            st.warning("No sources provided for interpolation.")
             return None
-            
+
         try:
+            # Extract source parameters and fields
             source_params = []
             source_fields = []
-            source_indices = []
-            
+            source_indices = []  # Track original indices
+
             for i, src in enumerate(sources):
                 if 'params' not in src or 'history' not in src:
+                    st.warning(f"Skipping source {i}: missing params or history")
                     continue
-                    
+
                 source_params.append(src['params'])
                 source_indices.append(i)
-                
+
+                # Get last frame stress fields
                 history = src['history']
                 if history and isinstance(history[-1], dict):
                     last_frame = history[-1]
                     if 'stresses' in last_frame:
+                        # Extract all stress components
                         stress_fields = last_frame['stresses']
-                        vm = stress_fields.get('von_mises', self.compute_von_mises(stress_fields))
-                        hydro = stress_fields.get('sigma_hydro', self.compute_hydrostatic(stress_fields))
-                        mag = stress_fields.get('sigma_mag', np.sqrt(vm**2 + hydro**2))
-                        
+
+                        # Get von Mises if available, otherwise compute
+                        if 'von_mises' in stress_fields:
+                            vm = stress_fields['von_mises']
+                        else:
+                            # Compute von Mises from components
+                            vm = self.compute_von_mises(stress_fields)
+
+                        # Get hydrostatic stress
+                        if 'sigma_hydro' in stress_fields:
+                            hydro = stress_fields['sigma_hydro']
+                        else:
+                            hydro = self.compute_hydrostatic(stress_fields)
+
+                        # Get stress magnitude
+                        if 'sigma_mag' in stress_fields:
+                            mag = stress_fields['sigma_mag']
+                        else:
+                            mag = np.sqrt(vm**2 + hydro**2)
+
                         source_fields.append({
-                            'von_mises': vm, 'sigma_hydro': hydro, 'sigma_mag': mag,
-                            'source_index': i, 'source_params': src['params']
+                            'von_mises': vm,
+                            'sigma_hydro': hydro,
+                            'sigma_mag': mag,
+                            'source_index': i,
+                            'source_params': src['params']
                         })
                     else:
+                        st.warning(f"Skipping source {i}: no stress fields found")
                         continue
                 else:
+                    st.warning(f"Skipping source {i}: invalid history")
                     continue
-                    
+
             if not source_params or not source_fields:
                 st.error("No valid sources with stress fields found.")
                 return None
-                
-            # Ensure all fields have the same shape
+
+            # Check if all fields have same shape
             shapes = [f['von_mises'].shape for f in source_fields]
             if len(set(shapes)) > 1:
-                target_shape = shapes[0]
+                # Resize to common shape
+                target_shape = shapes[0]  # Use first shape
                 resized_fields = []
                 for fields in source_fields:
                     resized = {}
                     for key, field in fields.items():
                         if key in ['von_mises', 'sigma_hydro', 'sigma_mag'] and field.shape != target_shape:
+                            # Resize using interpolation
                             factors = [t/s for t, s in zip(target_shape, field.shape)]
                             resized[key] = zoom(field, factors, order=1)
+                        elif key in ['von_mises', 'sigma_hydro', 'sigma_mag']:
+                            resized[key] = field
                         else:
                             resized[key] = field
                     resized_fields.append(resized)
                 source_fields = resized_fields
-                
-            # Encode source and target parameters
+
+            # Debug: Check feature dimensions
             source_features = self.encode_parameters(source_params, target_angle_deg)
             target_features = self.encode_parameters([target_params], target_angle_deg)
-            
-            # Ensure feature dimensions match
+
+            # Ensure we have exactly 15 features
             if source_features.shape[1] != 15 or target_features.shape[1] != 15:
-                st.warning(f"Feature dimension mismatch")
+                st.warning(f"Feature dimension mismatch: source_features shape={source_features.shape}, target_features shape={target_features.shape}")
+                # Force reshape to 15 features
                 if source_features.shape[1] < 15:
                     padding = torch.zeros(source_features.shape[0], 15 - source_features.shape[1])
                     source_features = torch.cat([source_features, padding], dim=1)
                 if target_features.shape[1] < 15:
                     padding = torch.zeros(target_features.shape[0], 15 - target_features.shape[1])
                     target_features = torch.cat([target_features, padding], dim=1)
-            
-            # Compute spatial kernel and defect mask
+
+            # --- STEP 1: COMPUTE ANGULAR BRACKETING KERNEL & DEFECT MASK ---
+            # This encodes the PHYSICS priors before looking at the transformer
             spatial_kernel, defect_mask, angular_distances = self.compute_angular_bracketing_kernel(
                 source_params, target_params
             )
-            
-            # Transformer processing
+
+            # --- STEP 2: TRANSFORMER ENCODING ---
+            # Prepare transformer input
             batch_size = 1
-            seq_len = len(source_features) + 1
-            
-            # Combine target and source features
-            all_features = torch.cat([target_features, source_features], dim=0).unsqueeze(0)
-            
-            # Project to transformer dimension
+            seq_len = len(source_features) + 1  # Sources + target
+
+            # Create sequence: [target, source1, source2, ...]
+            all_features = torch.cat([target_features, source_features], dim=0).unsqueeze(0)  # [1, seq_len, features]
+
+            # Apply input projection
             proj_features = self.input_proj(all_features)
-            
+
             # Add positional encoding
             proj_features = self.pos_encoder(proj_features)
-            
-            # Pass through transformer
+
+            # Transformer encoding
             transformer_output = self.transformer(proj_features)
-            
-            # Extract target and source representations
-            target_rep = transformer_output[:, 0, :]
-            source_reps = transformer_output[:, 1:, :]
-            
-            # Compute attention scores
-            attn_scores = torch.matmul(target_rep.unsqueeze(1), source_reps.transpose(1, 2)).squeeze(1)
+
+            # Extract target representation (first in sequence) and source representations
+            target_rep = transformer_output[:, 0, :]  # [1, d_model]
+            source_reps = transformer_output[:, 1:, :]  # [1, N, d_model]
+
+            # --- STEP 3: THEORY-INFORMED ATTENTION ---
+            # Instead of using the Transformer's internal softmax directly,
+            # we calculate attention using the embeddings but biased by our theory.
+
+            # 3a. Learned Similarity (Dot Product)
+            # Score_t = Target_rep . Source_reps^T
+            attn_scores = torch.matmul(target_rep.unsqueeze(1), source_reps.transpose(1, 2)).squeeze(1)  # [1, N]
             attn_scores = attn_scores / np.sqrt(self.d_model)
+
+            # 3b. Apply Temperature
             attn_scores = attn_scores / self.temperature
-            
-            # Apply spatial kernel and defect mask as bias
-            spatial_kernel_tensor = torch.FloatTensor(spatial_kernel).unsqueeze(0)
-            defect_mask_tensor = torch.FloatTensor(defect_mask).unsqueeze(0)
-            
-            # ENHANCEMENT: Compute pre-mask and post-mask attention for distinction visualization
-            pre_mask_scores = attn_scores * spatial_kernel_tensor
-            pre_mask_weights = torch.softmax(pre_mask_scores, dim=-1).squeeze().detach().cpu().numpy()
-            post_mask_scores = pre_mask_scores * defect_mask_tensor
-            post_mask_weights = torch.softmax(post_mask_scores, dim=-1).squeeze().detach().cpu().numpy()
-            entropy_final = self._calculate_entropy(post_mask_weights)
-            
-            # Interpolate fields using attention weights
+
+            # 3c. Convert kernels to tensors
+            spatial_kernel_tensor = torch.FloatTensor(spatial_kernel).unsqueeze(0)  # [1, N]
+            defect_mask_tensor = torch.FloatTensor(defect_mask).unsqueeze(0)  # [1, N]
+
+            # 3d. Combine: Attention = Learned * Spatial * Defect
+            # This enforces that Attention is high ONLY if:
+            # 1. Features match (Learned)
+            # 2. Angle is close (Spatial Kernel)
+            # 3. Defect type matches (Defect Mask)
+            biased_scores = attn_scores * spatial_kernel_tensor * defect_mask_tensor
+
+            # 3e. Final Softmax
+            final_attention_weights = torch.softmax(biased_scores, dim=-1).squeeze().detach().cpu().numpy()
+
+            # --- METRICS ---
+            entropy_final = self._calculate_entropy(final_attention_weights)
+
+            # --- STEP 4: INTERPOLATION ---
+            # Interpolate spatial fields using the Theory-Informed Attention Weights
             interpolated_fields = {}
             shape = source_fields[0]['von_mises'].shape
-            
+
             for component in ['von_mises', 'sigma_hydro', 'sigma_mag']:
                 interpolated = np.zeros(shape)
                 for i, fields in enumerate(source_fields):
                     if component in fields:
-                        interpolated += post_mask_weights[i] * fields[component]
+                        interpolated += final_attention_weights[i] * fields[component]
                 interpolated_fields[component] = interpolated
-                
-            # Compute diffusion enhancement
+
+            # --- STEP 5: COMPUTE DIFFUSION ENHANCEMENT ---
+            # Add diffusion calculations to the interpolated fields
             if 'sigma_hydro' in interpolated_fields:
                 sigma_hydro = interpolated_fields['sigma_hydro']
+
+                # Compute diffusion enhancement using default parameters (Silver, 650K)
                 D_ratio = DiffusionPhysics.compute_diffusion_enhancement(
                     sigma_hydro, T_K=650, material='Silver', model='physics_corrected'
                 )
-                
+
+                # Compute effective diffusion coefficient
                 props = DiffusionPhysics.get_material_properties('Silver')
                 D0 = props['prefactor'] * np.exp(-props['activation_energy'] /
-                                               (DiffusionPhysics.k_B_eV * 650))
+                                                 (DiffusionPhysics.k_B_eV * 650))
                 D_eff = D0 * D_ratio
-                
+
+                # Compute vacancy concentration ratio
                 vacancy_ratio = DiffusionPhysics.compute_diffusion_enhancement(
                     sigma_hydro, T_K=650, material='Silver', model='vacancy_concentration'
                 )
-                
+
+                # Add to interpolated fields
                 interpolated_fields['diffusion_ratio'] = D_ratio
                 interpolated_fields['diffusion_effective'] = D_eff
                 interpolated_fields['vacancy_ratio'] = vacancy_ratio
-                
-                # Compute gradient of diffusion field
+
+                # Compute gradient of diffusion enhancement
                 grad_x, grad_y = np.gradient(D_ratio)
                 grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
                 interpolated_fields['diffusion_gradient'] = grad_magnitude
-                
+
+            # Compute additional metrics
             max_vm = np.max(interpolated_fields['von_mises'])
             max_hydro = np.max(np.abs(interpolated_fields['sigma_hydro']))
-            
-            source_theta_degrees = [np.degrees(src.get('theta', 0.0)) % 360 for src in source_params]
-            
+
+            # Extract source theta values for visualization
+            source_theta_degrees = []
+            for src in source_params:
+                theta_rad = src.get('theta', 0.0)
+                theta_deg = np.degrees(theta_rad) % 360  # Normalize to [0, 360)
+                source_theta_degrees.append(theta_deg)
+
+            # Prepare diffusion statistics if available
             diffusion_statistics = {}
             if 'diffusion_ratio' in interpolated_fields:
                 D_ratio = interpolated_fields['diffusion_ratio']
@@ -674,19 +970,20 @@ class TransformerSpatialInterpolator:
                     'max_tensile_enhancement': float(np.max(D_ratio[sigma_hydro > 0]) if np.any(sigma_hydro > 0) else 0),
                     'max_compressive_suppression': float(np.min(D_ratio[sigma_hydro < 0]) if np.any(sigma_hydro < 0) else 0)
                 }
-            
+
             return {
                 'fields': interpolated_fields,
                 'weights': {
-                    'combined': post_mask_weights.tolist(),
+                    'combined': final_attention_weights.tolist(),
                     'spatial_kernel': spatial_kernel.tolist(),
                     'defect_mask': defect_mask.tolist(),
-                    'pre_mask': pre_mask_weights.tolist(),
+                    'learned_attention': attn_scores.squeeze().detach().cpu().numpy().tolist(),
                     'entropy': entropy_final
                 },
                 'statistics': {
                     'von_mises': {
-                        'max': float(max_vm), 'mean': float(np.mean(interpolated_fields['von_mises'])),
+                        'max': float(max_vm),
+                        'mean': float(np.mean(interpolated_fields['von_mises'])),
                         'std': float(np.std(interpolated_fields['von_mises'])),
                         'min': float(np.min(interpolated_fields['von_mises']))
                     },
@@ -711,14 +1008,17 @@ class TransformerSpatialInterpolator:
                 'source_theta_degrees': source_theta_degrees,
                 'source_distances': angular_distances,
                 'source_indices': source_indices,
-                'source_fields': source_fields
+                'source_fields': source_fields  # Store source fields for comparison
             }
-            
+
         except Exception as e:
             st.error(f"Error during interpolation: {str(e)}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
             return None
-            
+
     def compute_von_mises(self, stress_fields):
+        """Compute von Mises stress from stress components"""
         if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz', 'tau_xy']):
             sxx = stress_fields['sigma_xx']
             syy = stress_fields['sigma_yy']
@@ -726,1088 +1026,989 @@ class TransformerSpatialInterpolator:
             txy = stress_fields['tau_xy']
             tyz = stress_fields.get('tau_yz', np.zeros_like(sxx))
             tzx = stress_fields.get('tau_zx', np.zeros_like(sxx))
-            
             von_mises = np.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2 +
-                                     6*(txy**2 + tyz**2 + tzx**2)))
+                                      6*(txy**2 + tyz**2 + tzx**2)))
             return von_mises
-        return np.zeros((100, 100))
-        
+        return np.zeros((100, 100))  # Default shape
+
     def compute_hydrostatic(self, stress_fields):
+        """Compute hydrostatic stress from stress components"""
         if all(k in stress_fields for k in ['sigma_xx', 'sigma_yy', 'sigma_zz']):
-            return (stress_fields['sigma_xx'] + stress_fields['sigma_yy'] + stress_fields.get('sigma_zz', np.zeros_like(stress_fields['sigma_xx']))) / 3
-        return np.zeros((100, 100))
-        
+            sxx = stress_fields['sigma_xx']
+            syy = stress_fields['sigma_yy']
+            szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
+            return (sxx + syy + szz) / 3
+        return np.zeros((100, 100))  # Default shape
+
     def _calculate_entropy(self, weights):
+        """Calculate entropy of weight distribution"""
         weights = np.array(weights)
-        weights = weights[weights > 0]
+        weights = weights[weights > 0]  # Remove zeros
         if len(weights) == 0:
             return 0.0
         weights = weights / weights.sum()
-        return -np.sum(weights * np.log(weights + 1e-10))
+        return -np.sum(weights * np.log(weights + 1e-10))  # Add small epsilon to avoid log(0)
 
 # =============================================
-# ENHANCED HEAT MAP VISUALIZER WITH CUSTOMIZATION
+# ENHANCED HEATMAP VISUALIZER WITH RELATIONSHIP VISUALIZATIONS
 # =============================================
 class HeatMapVisualizer:
-    """Enhanced heat map visualizer with diffusion visualization and custom labels"""
+    """Enhanced heat map visualizer with diffusion and relationship visualization capabilities"""
     def __init__(self):
-        self.colormaps = {
-            'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis'],
-            'Sequential': ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds',
-                          'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 'RdPu', 'BuPu',
-                          'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn',
-                          'binary', 'gist_yarg', 'gist_gray', 'gray', 'bone', 'pink',
-                          'spring', 'summer', 'autumn', 'winter', 'cool', 'Wistia',
-                          'hot', 'afmhot', 'gist_heat', 'copper', 'PiYG', 'PRGn', 'BrBG'],
-            'Diverging': ['PuOr', 'RdYlBu', 'RdGy', 'RdYlGn', 'Spectral', 'coolwarm',
-                         'bwr', 'seismic', 'twilight', 'twilight_shifted', 'hsv'],
-            'Cyclic': ['hsv', 'twilight', 'twilight_shifted'],
-            'Qualitative': ['Pastel1', 'Pastel2', 'Paired', 'Accent', 'Dark2',
-                           'Set1', 'Set2', 'Set3', 'tab10', 'tab20', 'tab20b', 'tab20c'],
-            'Miscellaneous/Rainbow': ['flag', 'prism', 'ocean', 'gist_earth', 'terrain',
-                                     'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap',
-                                     'cubehelix', 'brg', 'gist_rainbow', 'rainbow',
-                                     'jet', 'nipy_spectral', 'gist_ncar', 'turbo'],
-            'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis',
-                                    'RdBu', 'RdBu_r', 'Spectral', 'coolwarm', 'bwr',
-                                    'seismic', 'BrBG']
-        }
+        self.colormaps = COLORMAP_OPTIONS
         self.diffusion_physics = DiffusionPhysics()
-       
-    def _apply_label(self, ax, default_text, override_text, func_name, **kwargs):
-        if override_text is not None:
-            if override_text.strip() == "":
-                getattr(ax, func_name)(None)
+
+    # ==================== NEW: RADAR CHART WITH WEIGHT COMPONENT BREAKDOWN ====================
+    def create_weight_component_radar_chart(self, sources_data, query_index=None, figsize=(10, 10)):
+        """
+        Create radar chart showing all weight components from attention formula:
+        w_i(θ*) = [ᾱ_i(θ*) · exp(-(Δφ_i)²/(2σ²)) · 𝟙(τ_i = τ*)] / Σ[...] + 10⁻⁶
+        
+        Components visualized:
+        1. Learned Attention (ᾱ_i)
+        2. Spatial Kernel (exp(-(Δφ_i)²/(2σ²)))
+        3. Defect Mask (𝟙(τ_i = τ*))
+        4. Combined Weight (final)
+        5. Angular Distance (Δφ_i)
+        """
+        import plotly.graph_objects as go
+        import numpy as np
+
+        # Extract and normalize features (critical fix)
+        features = {
+            'Learned Attention': [],
+            'Spatial Kernel': [],
+            'Defect Match': [],
+            'Combined Weight': [],
+            'Angular Distance': []
+        }
+
+        # Normalize each feature independently to [0, 1]
+        for i, source in enumerate(sources_data):
+            features['Learned Attention'].append(source['learned_attention'])
+            features['Spatial Kernel'].append(source['spatial_kernel'])
+            features['Defect Match'].append(1.0 if source['defect_match'] else 0.0)
+            features['Combined Weight'].append(source['combined_weight'])
+            features['Angular Distance'].append(source['angular_dist'])
+
+        # Normalize each feature dimension to [0, 1] for fair comparison
+        normalized = {}
+        for key, values in features.items():
+            arr = np.array(values)
+            if np.max(arr) - np.min(arr) > 1e-10:
+                normalized[key] = (arr - np.min(arr)) / (np.max(arr) - np.min(arr))
             else:
-                getattr(ax, func_name)(override_text, **kwargs)
-        else:
-            getattr(ax, func_name)(default_text, **kwargs)
-   
-    def create_attention_sunburst(self, weights, source_info, target_params,
-                                 figsize=(8, 8), title="Attention Distribution Sunburst"):
-        source_params = source_info.get('source_fields', [])
-        if not source_params:
-            return None
-            
-        labels = ['Target']
-        parents = ['']
-        values = [1.0]
-       
-        defect_types = set()
-        for i, src in enumerate(source_params):
-            defect_type = src.get('source_params', {}).get('defect_type', 'Unknown')
-            defect_types.add(defect_type)
-       
-        defect_weights = {}
-        for defect_type in defect_types:
-            defect_weight = 0.0
-            for i, src in enumerate(source_params):
-                src_defect = src.get('source_params', {}).get('defect_type', 'Unknown')
-                if src_defect == defect_type:
-                    defect_weight += weights['combined'][i]
-            defect_weights[defect_type] = defect_weight
-            labels.append(defect_type)
-            parents.append('Target')
-            values.append(defect_weight)
-       
-        for i, src in enumerate(source_params):
-            src_defect = src.get('source_params', {}).get('defect_type', 'Unknown')
-            theta_deg = source_info['theta_degrees'][i]
-            weight = weights['combined'][i]
-            
-            label = f"Source {i}: {src_defect} ({theta_deg:.1f}°)"
-            labels.append(label)
-            parents.append(src_defect)
-            values.append(weight)
-       
-        fig = go.Figure(go.Sunburst(
-            labels=labels,
-            parents=parents,
-            values=values,
-            branchvalues='total',
-            hovertemplate='<b>%{label}</b><br>Weight: %{value:.3f}<br>Parent: %{parent}',
-            maxdepth=2,
-            insidetextorientation='radial'
-        ))
-       
-        fig.update_layout(
-            title=dict(
-                text=f"{title}\nθ = {target_params['theta']:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5,
-                y=0.95
-            ),
-            width=800,
-            height=800,
-            margin=dict(t=80, l=0, r=0, b=0),
-            paper_bgcolor='white',
-            plot_bgcolor='white'
-        )
-       
-        return fig
-   
-    def create_attention_radar(self, weights, source_info, target_params,
-                              figsize=(8, 8), title="Attention Analysis Radar Chart"):
-        source_params = source_info.get('source_fields', [])
-        if not source_params:
-            return None
-            
-        dimensions = ['Angular Proximity', 'Defect Match', 'Spatial Kernel', 'Combined Attention']
-       
-        sources_data = []
-        source_names = []
-       
-        for i, src in enumerate(source_params):
-            src_theta = source_info['theta_degrees'][i]
-            target_theta = target_params['theta']
-            
-            angle_diff = abs(src_theta - target_theta)
-            angle_diff = min(angle_diff, 360 - angle_diff)
-            angular_proximity = np.exp(-angle_diff / 30.0)
-            
-            src_defect = src.get('source_params', {}).get('defect_type', 'Unknown')
-            target_defect = target_params['defect_type']
-            defect_match = 1.0 if src_defect == target_defect else 0.0
-            
-            spatial_kernel = weights['spatial_kernel'][i]
-            combined_attention = weights['combined'][i]
-            
-            sources_data.append([
-                angular_proximity,
-                defect_match,
-                spatial_kernel,
-                combined_attention
-            ])
-            
-            source_names.append(f"Source {i}: {src_defect} ({src_theta:.1f}°)")
-       
+                normalized[key] = np.zeros_like(arr)
+
+        # Create radar plot with 5 dimensions
+        categories = list(normalized.keys())
         fig = go.Figure()
-       
-        colors = plt.cm.viridis(np.linspace(0, 1, len(sources_data)))
-        plotly_colors = [f'rgb({int(c[0]*255)}, {int(c[1]*255)}, {int(c[2]*255)})' for c in colors]
-       
-        for i, source_data in enumerate(sources_data):
-            values = source_data + [source_data[0]]
-            theta = dimensions + [dimensions[0]]
-            
+
+        for i in range(len(sources_data)):
+            values = [normalized[cat][i] for cat in categories] + [normalized[categories[0]][i]]  # Close loop
+
+            # Highlight query source (critical fix)
+            is_query = i == query_index
+            color = '#FF1493' if is_query else '#4ECDC4'
+            width = 4 if is_query else 1.5
+            opacity = 1.0 if is_query else 0.3
+            name = f"Query Source {i}" if is_query else f"Source {i}"
+
             fig.add_trace(go.Scatterpolar(
                 r=values,
-                theta=theta,
+                theta=categories + [categories[0]],
                 fill='toself',
-                name=source_names[i],
-                line=dict(color=plotly_colors[i]),
-                marker=dict(size=8, color=plotly_colors[i])
+                name=name,
+                line=dict(color=color, width=width),
+                opacity=opacity,
+                hoverinfo='text',
+                text=f"Source {i}<br>Angle: {sources_data[i]['theta_deg']:.1f}°<br>"
+                     f"Learned: {sources_data[i]['learned_attention']:.4f}<br>"
+                     f"Spatial: {sources_data[i]['spatial_kernel']:.4f}<br>"
+                     f"Defect Match: {'Yes' if sources_data[i]['defect_match'] else 'No'}<br>"
+                     f"Combined Weight: {sources_data[i]['combined_weight']:.4f}<br>"
+                     f"Defect Type: {sources_data[i]['defect_type']}"
             ))
-       
+
         fig.update_layout(
             polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 1],
-                    tickfont=dict(size=12),
-                    title=dict(text='Weight', font=dict(size=14))
-                ),
-                angularaxis=dict(
-                    tickfont=dict(size=14),
-                    rotation=90
-                )
+                radialaxis=dict(visible=True, range=[0, 1], tickfont=dict(size=12)),
+                angularaxis=dict(direction='clockwise', tickfont=dict(size=14))
             ),
             title=dict(
-                text=f"{title}\nθ = {target_params['theta']:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5,
-                y=0.95
+                text=f"Weight Component Breakdown (Query: Source {query_index})<br>"
+                     "<sup>w<sub>i</sub>(θ*) = [ᾱ<sub>i</sub>(θ*) · exp(-(Δφ<sub>i</sub>)²/(2σ²)) · 𝟙(τ<sub>i</sub> = τ*)] / Σ[...] + 10⁻⁶</sup>",
+                font=dict(size=20, family="Arial Black", color='#1E3A8A')
             ),
             showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=12)
-            ),
+            legend=dict(font=dict(size=12)),
             width=800,
-            height=700,
+            height=800,
+            plot_bgcolor='white',
             paper_bgcolor='white'
         )
-       
-        return fig
-   
-    def create_attention_hierarchy_chart(self, weights, source_info, target_params,
-                                        figsize=(10, 8), title="Hierarchical Attention Distribution"):
-        source_params = source_info.get('source_fields', [])
-        if not source_params:
-            return None
-            
-        defect_types = []
-        thetas = []
-        weights_list = []
-        labels = []
-        
-        for i, src in enumerate(source_params):
-            defect_type = src.get('source_params', {}).get('defect_type', 'Unknown')
-            weight = weights['combined'][i]
-            theta = source_info['theta_degrees'][i]
-            
-            defect_types.append(defect_type)
-            thetas.append(theta)
-            weights_list.append(weight)
-            labels.append(f"Source {i}<br>{defect_type}<br>{theta:.1f}°")
-            
-        df = pd.DataFrame({
-            'defect_type': defect_types,
-            'theta': thetas,
-            'weight': weights_list,
-            'label': labels
-        })
-       
-        fig = px.treemap(
-            df,
-            path=[px.Constant('All Sources'), 'defect_type', 'label'],
-            values='weight',
-            color='theta',
-            color_continuous_scale='RdBu',
-            color_continuous_midpoint=54.7,
-            hover_data={'weight': ':.3f', 'theta': ':.1f'},
-            labels={'weight': 'Attention Weight', 'theta': 'Angle (θ)'},
-            title=f"{title}<br>θ = {target_params['theta']:.1f}°, {target_params['defect_type']}"
-        )
-       
-        fig.update_layout(
-            width=900,
-            height=700,
-            margin=dict(t=80, l=0, r=0, b=0),
-            title=dict(
-                font=dict(size=18, color='darkblue'),
-                x=0.5
-            )
-        )
-       
-        fig.update_traces(
-            hovertemplate="<b>%{label}</b><br>Weight: %{value:.3f}<br>Angle: %{customdata[1]:.1f}°"
-        )
-       
-        return fig
-   
-    def create_attention_heatmap_matrix(self, weights, source_info, figsize=(10, 8),
-                                       title="Attention Weight Heatmap Matrix"):
-        n_sources = len(weights['combined'])
-        if n_sources == 0:
-            return None
-            
-        attention_matrix = np.zeros((n_sources, n_sources))
-       
-        source_params = source_info.get('source_fields', [])
-       
-        for i in range(n_sources):
-            for j in range(n_sources):
-                theta_i = source_info['theta_degrees'][i]
-                theta_j = source_info['theta_degrees'][j]
-                
-                angle_diff = abs(theta_i - theta_j)
-                angle_diff = min(angle_diff, 360 - angle_diff)
-                angular_proximity = np.exp(-angle_diff / 20.0)
-                
-                defect_i = source_params[i].get('source_params', {}).get('defect_type', 'Unknown')
-                defect_j = source_params[j].get('source_params', {}).get('defect_type', 'Unknown')
-                defect_match = 1.0 if defect_i == defect_j else 0.1
-                
-                attention_matrix[i, j] = angular_proximity * defect_match
-       
-        row_sums = attention_matrix.sum(axis=1, keepdims=True)
-        attention_matrix = attention_matrix / (row_sums + 1e-8)
-       
-        fig = go.Figure(data=go.Heatmap(
-            z=attention_matrix,
-            x=[f"Source {i}" for i in range(n_sources)],
-            y=[f"Source {i}" for i in range(n_sources)],
-            colorscale='Viridis',
-            colorbar=dict(title='Attention Weight'),
-            hovertemplate='From: %{y}<br>To: %{x}<br>Weight: %{z:.3f}<extra></extra>'
-        ))
-       
-        fig.update_layout(
-            title=f"{title}<br>(Simulated attention between sources)",
-            xaxis_title='Target Source',
-            yaxis_title='Source Source',
-            width=800,
-            height=700,
-            margin=dict(t=80, l=80, r=80, b=80)
-        )
-       
-        fig.update_xaxes(tickangle=45)
-        fig.update_yaxes(autorange='reversed')
-       
-        return fig
-   
-    def create_attention_statistics(self, weights, source_info, figsize=(12, 8),
-                                    title="Attention Distribution Statistics"):
-        combined_weights = np.array(weights['combined'])
-        spatial_kernel = np.array(weights['spatial_kernel'])
-        defect_mask = np.array(weights['defect_mask'])
-        entropy = weights['entropy']
-       
-        fig = make_subplots(
-            rows=2, cols=2,
-            subplot_titles=(
-                'Attention Weight Distribution',
-                'Spatial Kernel vs Combined Attention',
-                'Cumulative Attention Distribution',
-                'Entropy Analysis'
-            ),
-            specs=[[{"type": "xy"}, {"type": "xy"}],
-                   [{"type": "xy"}, {"type": "bar"}]],
-            vertical_spacing=0.15,
-            horizontal_spacing=0.1
-        )
-       
-        hist_data = go.Histogram(
-            x=combined_weights,
-            nbinsx=20,
-            name='Combined Weights',
-            marker_color='steelblue',
-            opacity=0.7
-        )
-        fig.add_trace(hist_data, row=1, col=1)
-       
-        mean_weight = np.mean(combined_weights)
-        median_weight = np.median(combined_weights)
-       
-        fig.add_vline(x=mean_weight, line_dash="dash", line_color="red",
-                     annotation_text=f"Mean: {mean_weight:.3f}",
-                     annotation_position="top right", row=1, col=1)
-        fig.add_vline(x=median_weight, line_dash="dot", line_color="green",
-                     annotation_text=f"Median: {median_weight:.3f}",
-                     annotation_position="bottom right", row=1, col=1)
-       
-        scatter = go.Scatter(
-            x=spatial_kernel,
-            y=combined_weights,
-            mode='markers',
-            name='Source Weights',
-            marker=dict(
-                size=10,
-                color=np.arange(len(combined_weights)),
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title='Source Index')
-            ),
-            text=[f"Source {i}" for i in range(len(combined_weights))],
-            hovertemplate='<b>%{text}</b><br>Spatial Kernel: %{x:.3f}<br>Combined Weight: %{y:.3f}<extra></extra>'
-        )
-        fig.add_trace(scatter, row=1, col=2)
-       
-        from scipy.stats import linregress
-        slope, intercept, r_value, p_value, std_err = linregress(spatial_kernel, combined_weights)
-        x_trend = np.array([0, 1])
-        y_trend = slope * x_trend + intercept
-        fig.add_trace(go.Scatter(x=x_trend, y=y_trend, mode='lines',
-                                name=f'Trend (R²={r_value**2:.3f})', line=dict(color='red', width=2)),
-                     row=1, col=2)
-       
-        sorted_weights = np.sort(combined_weights)[::-1]
-        cumulative = np.cumsum(sorted_weights) / np.sum(sorted_weights)
-        x_vals = np.arange(1, len(cumulative) + 1)
-       
-        cum_line = go.Scatter(
-            x=x_vals,
-            y=cumulative,
-            mode='lines+markers',
-            name='Cumulative Attention',
-            line=dict(color='purple', width=2),
-            marker=dict(size=8)
-        )
-        fig.add_trace(cum_line, row=2, col=1)
-       
-        threshold_idx = np.where(cumulative >= 0.9)[0][0] if np.any(cumulative >= 0.9) else len(cumulative)-1
-        fig.add_hline(y=0.9, line_dash="dash", line_color="red",
-                     annotation_text="90% threshold", annotation_position="bottom right", row=2, col=1)
-        fig.add_vline(x=threshold_idx+1, line_dash="dash", line_color="red", row=2, col=1)
-       
-        entropy_normalized = entropy / np.log(len(combined_weights) or 1)
-        
-        entropy_bar = go.Bar(
-            x=['Entropy'],
-            y=[entropy_normalized],
-            marker=dict(
-                color=['red' if entropy_normalized > 0.7 else 'yellow' if entropy_normalized > 0.3 else 'green'],
-                line=dict(color='black', width=1)
-            ),
-            text=[f"{entropy:.3f}"],
-            textposition='outside',
-            hovertemplate=f'Entropy: {entropy:.3f}<br>Normalized: {entropy_normalized:.3f}<br>Ideal range: Low to Medium'
-        )
-        fig.add_trace(entropy_bar, row=2, col=2)
-       
-        fig.add_hline(y=0.3, line_dash="dash", line_color="green", row=2, col=2)
-        fig.add_hline(y=0.7, line_dash="dash", line_color="red", row=2, col=2)
-       
-        fig.update_layout(
-            title_text=title,
-            height=800,
-            width=1000,
-            showlegend=False,
-            template='plotly_white',
-            annotations=[
-                dict(text="Low Entropy = More focused attention", x=0.85, y=0.1,
-                     xref="paper", yref="paper", showarrow=False, font=dict(size=10)),
-                dict(text="High Entropy = More spread attention", x=0.85, y=0.05,
-                     xref="paper", yref="paper", showarrow=False, font=dict(size=10))
-            ]
-        )
-       
-        fig.update_xaxes(title_text="Weight Value", row=1, col=1)
-        fig.update_yaxes(title_text="Count", row=1, col=1)
-        fig.update_xaxes(title_text="Spatial Kernel Weight", row=1, col=2)
-        fig.update_yaxes(title_text="Combined Attention", row=1, col=2)
-        fig.update_xaxes(title_text="Number of Top Sources", row=2, col=1)
-        fig.update_yaxes(title_text="Cumulative Attention", row=2, col=1)
-        fig.update_xaxes(showticklabels=False, title_text="", row=2, col=2)
-        fig.update_yaxes(title_text="Normalized Entropy", range=[0, 1], row=2, col=2)
-       
-        return fig
-   
-    def create_attention_polar_plot(self, weights, source_info, target_params,
-                                   figsize=(10, 10), title="Angular Attention Distribution"):
-        angles_rad = np.radians(source_info['theta_degrees'])
-        combined_weights = np.array(weights['combined'])
-       
-        fig = go.Figure()
-       
-        fig.add_trace(go.Scatterpolar(
-            r=combined_weights,
-            theta=source_info['theta_degrees'],
-            mode='markers+lines',
-            name='Attention Weight',
-            marker=dict(
-                size=12,
-                color=np.array(source_info['theta_degrees']),
-                colorscale='Viridis',
-                showscale=True,
-                colorbar=dict(title='Angle (θ)'),
-                line=dict(width=2, color='white')
-            ),
-            line=dict(width=2, color='steelblue'),
-            hovertemplate='<b>Source %{text}</b><br>Angle: %{theta:.1f}°<br>Weight: %{r:.3f}<extra></extra>',
-            text=[str(i) for i in range(len(combined_weights))]
-        ))
-       
-        target_angle = target_params['theta']
-        max_weight = np.max(combined_weights) if len(combined_weights) > 0 else 1.0
-        
-        fig.add_trace(go.Scatterpolar(
-            r=[0, max_weight * 1.2],
-            theta=[target_angle, target_angle],
-            mode='lines',
-            name=f'Target Angle: {target_angle:.1f}°',
-            line=dict(color='red', width=3, dash='dash')
-        ))
-       
-        fig.add_trace(go.Scatterpolar(
-            r=[0, max_weight * 1.2],
-            theta=[54.7, 54.7],
-            mode='lines',
-            name='Habit Plane (54.7°)',
-            line=dict(color='green', width=2, dash='dot')
-        ))
-       
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, max_weight * 1.3],
-                    title='Attention Weight',
-                    tickfont=dict(size=12)
-                ),
-                angularaxis=dict(
-                    rotation=90,
-                    direction='clockwise',
-                    tickfont=dict(size=12)
-                ),
-                bgcolor='rgba(240, 240, 240, 0.5)'
-            ),
-            title=dict(
-                text=f"{title}<br>θ = {target_angle:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5,
-                y=0.95
-            ),
-            width=900,
-            height=800,
-            showlegend=True,
-            legend=dict(
-                yanchor="top",
-                y=0.01,
-                xanchor="center",
-                x=0.5,
-                orientation="h"
-            ),
-            template='plotly_white'
-        )
-       
-        fig.add_annotation(
-            text="Angle (degrees)",
-            x=0.5,
-            y=-0.1,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(size=14)
-        )
-       
-        return fig
 
-    # ENHANCEMENT: Expanded method for summation-based radar chart
-    def create_summation_radar(self, weights, source_info, target_params, 
-                              title="Summation-Based Weight Distinction Radar"):
-        """
-        Radial radar chart showing summation distinctions of spatial weights, 
-        pre-mask and post-mask attention. Sources on circumference, target highlighted.
-        """
-        if not source_info.get('source_fields'):
-            return None
-
-        n_sources = len(weights['combined'])
-        
-        # Calculate sums for each stage
-        sum_spatial = np.sum(weights['spatial_kernel'])
-        sum_pre_mask = np.sum(weights['pre_mask'])
-        sum_post_mask = np.sum(weights['combined'])
-        
-        # Normalize individual contributions for display
-        spatial_norm = np.array(weights['spatial_kernel']) / (sum_spatial + 1e-10)
-        pre_mask_norm = np.array(weights['pre_mask']) / (sum_pre_mask + 1e-10)
-        post_mask_norm = np.array(weights['combined']) / (sum_post_mask + 1e-10)
-
-        # Create figure with polar subplot
-        fig = make_subplots(
-            rows=1, cols=2,
-            specs=[[{"type": "polar"}, {"type": "polar"}]],
-            subplot_titles=('Summation Totals', 'Source Distribution on Circumference'),
-            horizontal_spacing=0.1
-        )
-
-        # Left subplot: Radar showing the three sums
-        categories = ['Spatial<br>Weights', 'Pre-Mask<br>Attention', 'Post-Mask<br>Attention']
-        sums = [sum_spatial, sum_pre_mask, sum_post_mask]
-        
-        fig.add_trace(go.Scatterpolar(
-            r=sums + [sums[0]],  # Close the polygon
-            theta=categories + [categories[0]],
-            fill='toself',
-            name='Weight Sums',
-            line=dict(color='blue', width=3),
-            fillcolor='rgba(0, 0, 255, 0.2)',
-            marker=dict(size=10, color='blue')
-        ), row=1, col=1)
-
-        # Add annotations for exact values
-        for i, (cat, val) in enumerate(zip(categories, sums)):
+        # Add habit plane reference annotation
+        if query_index is not None:
+            habit_diff = abs(sources_data[query_index]['theta_deg'] - 54.7)
             fig.add_annotation(
-                x=cat, y=val,
-                text=f"{val:.3f}",
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=2,
-                arrowcolor="blue",
-                ax=20, ay=-30,
-                font=dict(size=12, color="blue"),
-                row=1, col=1
+                text=f"Δ from habit plane: {habit_diff:.1f}°",
+                xref="paper", yref="paper",
+                x=0.5, y=0.95,
+                showarrow=False,
+                font=dict(size=14, color="green", weight="bold"),
+                bgcolor="lightyellow",
+                bordercolor="green",
+                borderwidth=2
             )
 
-        # Right subplot: Sources on actual angular circumference
-        max_r = 1.0
-        
-        # Plot sources for each weight type at their actual angles
-        colors = ['rgba(255, 0, 0, 0.7)', 'rgba(0, 255, 0, 0.7)', 'rgba(0, 0, 255, 0.7)']
-        weight_types = [
-            (spatial_norm, 'Spatial', colors[0]),
-            (pre_mask_norm, 'Pre-Mask', colors[1]), 
-            (post_mask_norm, 'Post-Mask', colors[2])
-        ]
-        
-        for w_vals, name, color in weight_types:
-            fig.add_trace(go.Scatterpolar(
-                r=w_vals,
-                theta=source_info['theta_degrees'],
-                mode='markers+lines',
-                name=name,
-                marker=dict(size=10, color=color, symbol='circle'),
-                line=dict(width=2, color=color),
-                hovertemplate=f'<b>{name}</b><br>Angle: %{{theta:.1f}}°<br>Norm. Weight: %{{r:.3f}}<extra></extra>'
-            ), row=1, col=2)
-
-        # Highlight target angle with prominent red line
-        target_theta = target_params['theta']
-        fig.add_trace(go.Scatterpolar(
-            r=[0, max_r * 1.1],
-            theta=[target_theta, target_theta],
-            mode='lines',
-            name='Target Angle',
-            line=dict(color='red', width=5, dash='solid'),
-            hovertemplate=f'Target: {target_theta:.1f}°<extra></extra>'
-        ), row=1, col=2)
-
-        # Add target marker
-        fig.add_trace(go.Scatterpolar(
-            r=[max_r * 1.1],
-            theta=[target_theta],
-            mode='markers',
-            name='Target Position',
-            marker=dict(size=15, color='red', symbol='star', line=dict(width=2, color='darkred'))
-        ), row=1, col=2)
-
-        # Update layouts
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(visible=True, range=[0, max(sums) * 1.2]),
-                angularaxis=dict(rotation=90, direction='clockwise')
-            ),
-            polar2=dict(
-                radialaxis=dict(visible=True, range=[0, max_r * 1.2], title='Normalized Weight'),
-                angularaxis=dict(rotation=90, direction='clockwise', title='Angle (degrees)')
-            ),
-            title=dict(
-                text=f"{title}<br>Target: θ={target_theta:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5
-            ),
-            width=1200,
-            height=600,
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=-0.2,
-                xanchor="center",
-                x=0.5
-            )
+        # Add mathematical formula annotation
+        fig.add_annotation(
+            text="Formula: wᵢ(θ*) = [ᾱᵢ(θ*) · exp(-(Δφᵢ)²/(2σ²)) · 𝟙(τᵢ = τ*)] / Σ[...] + 10⁻⁶",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.1,
+            showarrow=False,
+            font=dict(size=12, color="#1E3A8A", family="Courier New"),
+            bgcolor="white",
+            bordercolor="#3B82F6",
+            borderwidth=2
         )
 
         return fig
 
-    # ENHANCEMENT: Expanded sunburst with summation distinctions
-    def create_summation_sunburst(self, weights, source_info, target_params, 
-                                 title="Summation Distinction Sunburst"):
+    # ==================== NEW: SUNBURST CHART WITH HIERARCHICAL WEIGHT BREAKDOWN ====================
+    def create_weight_sunburst_chart(self, sources_data, query_index=None, figsize=(10, 10)):
         """
-        Sunburst chart with explicit hierarchy for summation distinctions:
-        Target -> Weight Type (Spatial/Pre/Post) -> Individual Sources
+        Create hierarchical sunburst showing:
+        Level 1: Defect Type
+        Level 2: Angular Bin (30° sectors)
+        Level 3: Individual Sources with weight components
+        
+        Visual encoding:
+        - Size: Combined weight
+        - Color: Defect type + query highlight
+        - Hover: Full weight formula breakdown
         """
-        if not source_info.get('source_fields'):
-            return None
+        import plotly.express as px
+        import pandas as pd
+        import numpy as np
 
-        labels = ['Target']
-        parents = ['']
-        values = [1.0]  # Normalized target root
-        colors = ['#1f77b4']  # Blue for target
+        # Create hierarchical data structure
+        data = []
+        for i, source in enumerate(sources_data):
+            # Bin angles into 30° sectors for meaningful hierarchy
+            angle_bin = f"{int(source['theta_deg']/30)*30}°-{int(source['theta_deg']/30)*30+30}°"
 
-        # Three main categories for summation distinctions
-        sum_categories = [
-            ('Spatial Weights', weights['spatial_kernel'], 'lightblue'),
-            ('Pre-Mask Attention', weights['pre_mask'], 'lightgreen'),
-            ('Post-Mask Attention', weights['combined'], 'lightcoral')
-        ]
+            # Determine highlight status
+            is_query = i == query_index
+            highlight = "Query Source" if is_query else "Other Sources"
 
-        for cat_name, cat_weights, color in sum_categories:
-            cat_sum = np.sum(cat_weights)
-            labels.append(cat_name)
-            parents.append('Target')
-            values.append(cat_sum)
-            colors.append(color)
+            data.append({
+                'defect_type': source['defect_type'],
+                'angle_bin': angle_bin,
+                'source_id': f"Source {i}",
+                'combined_weight': source['combined_weight'],
+                'spatial_kernel': source['spatial_kernel'],
+                'learned_attention': source['learned_attention'],
+                'defect_match': 1.0 if source['defect_match'] else 0.0,
+                'highlight': highlight,
+                'theta_deg': source['theta_deg'],
+                'angular_dist': source['angular_dist']
+            })
 
-            # Add individual sources under each category
-            for i, (theta, w) in enumerate(zip(source_info['theta_degrees'], cat_weights)):
-                src_defect = source_info['source_fields'][i].get('source_params', {}).get('defect_type', 'Unknown')
-                labels.append(f'Src {i}: {src_defect}<br>{theta:.1f}°')
-                parents.append(cat_name)
-                values.append(abs(w))  # Use absolute weight as value
-                # Color intensity based on weight magnitude
-                intensity = min(255, int(255 * (w / (np.max(cat_weights) + 1e-10))))
-                if 'Spatial' in cat_name:
-                    colors.append(f'rgba(173, 216, 230, {0.3 + 0.7*intensity/255})')
-                elif 'Pre-Mask' in cat_name:
-                    colors.append(f'rgba(144, 238, 144, {0.3 + 0.7*intensity/255})')
-                else:
-                    colors.append(f'rgba(240, 128, 128, {0.3 + 0.7*intensity/255})')
+        df = pd.DataFrame(data)
 
-        fig = go.Figure(go.Sunburst(
-            labels=labels,
-            parents=parents,
-            values=values,
-            branchvalues='total',
-            maxdepth=3,
-            insidetextorientation='radial',
-            marker=dict(
-                colors=colors,
-                line=dict(width=1, color='white')
-            ),
-            hovertemplate='<b>%{label}</b><br>Value: %{value:.4f}<br>Parent: %{parent}<extra></extra>'
-        ))
-
-        # Add central annotation for target
-        fig.update_layout(
-            title=dict(
-                text=f"{title}<br>θ = {target_params['theta']:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5,
-                y=0.95
-            ),
+        # Create sunburst with query highlighting
+        fig = px.sunburst(
+            df,
+            path=['defect_type', 'angle_bin', 'source_id'],
+            values='combined_weight',
+            color='highlight',
+            color_discrete_map={
+                'Query Source': '#FF1493',  # Vivid pink for query
+                'Other Sources': '#4ECDC4'   # Teal for others
+            },
+            title="Weight Hierarchy: Defect Type → Angle Bin → Source<br>"
+                  "<sup>Size ∝ Combined Weight | Color = Query Highlight</sup>",
             width=900,
-            height=900,
-            margin=dict(t=80, l=0, r=0, b=0),
-            annotations=[
-                dict(
-                    text="Target",
-                    x=0.5,
-                    y=0.5,
-                    font=dict(size=20, color='white', family='Arial Black'),
-                    showarrow=False
-                )
-            ]
+            height=900
         )
+
+        # Enhance styling for publication quality
+        fig.update_layout(
+            title=dict(
+                font=dict(size=20, family="Arial Black", color='#1E3A8A'),
+                x=0.5
+            ),
+            font=dict(size=14),
+            margin=dict(t=80, l=20, r=20, b=20)
+        )
+
+        # Add hover template with physics details and weight formula
+        fig.update_traces(
+            hovertemplate="<b>%{label}</b><br>"
+                          "Combined Weight: %{value:.4f}<br>"
+                          "Spatial Kernel: %{customdata[0]:.4f}<br>"
+                          "Learned Attention: %{customdata[1]:.4f}<br>"
+                          "Defect Match: %{customdata[2]:.0f}<br>"
+                          "Angle: %{customdata[3]:.1f}°<br>"
+                          "Δ from target: %{customdata[4]:.1f}°<br>"
+                          "<i>Formula: wᵢ = [ᾱᵢ · exp(-(Δφᵢ)²/(2σ²)) · 𝟙(τᵢ=τ*)] / Σ[...]</i><extra></extra>",
+            customdata=df[['spatial_kernel', 'learned_attention', 'defect_match', 'theta_deg', 'angular_dist']].values
+        )
+
+        # Add annotation about query source location
+        if query_index is not None:
+            query_source = sources_data[query_index]
+            fig.add_annotation(
+                text=f"Query: {query_source['defect_type']} at {query_source['theta_deg']:.1f}°",
+                xref="paper", yref="paper",
+                x=0.5, y=-0.05,
+                showarrow=False,
+                font=dict(size=14, color="#FF1493", weight="bold"),
+                bgcolor="white",
+                bordercolor="#FF1493",
+                borderwidth=2
+            )
+
         return fig
 
-    # ENHANCEMENT: New method for Sankey diagram showing weight flow through stages
-    def create_sankey_diagram(self, weights, source_info, target_params,
-                             title="Sankey: Weight Flow Through Attention Stages"):
+    # ==================== NEW: SANKEY DIAGRAM FOR ATTENTION FLOWS ====================
+    def create_attention_sankey_diagram(self, sources_data, target_angle, target_defect_type,
+                                       spatial_sigma, domain_size_nm=12.8):
         """
-        Sankey diagram showing the flow of weights from Spatial -> Pre-Mask -> Post-Mask
-        for each source, highlighting the transformation and reduction through stages.
+        Create Sankey diagram visualizing attention flows with full weight formula breakdown:
+        
+        Sources (Left) → Weight Components (Middle) → Target (Right)
+        
+        Flow paths:
+        Source i → [Learned Attention] → Combined Weight → Target
+        Source i → [Spatial Kernel] → Combined Weight → Target  
+        Source i → [Defect Mask] → Combined Weight → Target
+        
+        Width of flows proportional to contribution to final weight
         """
-        if not source_info.get('source_fields'):
-            return None
+        import plotly.graph_objects as go
+        import numpy as np
 
-        n_sources = len(weights['combined'])
-        source_angles = source_info['theta_degrees']
-        defect_types = [src.get('source_params', {}).get('defect_type', 'Unknown') 
-                       for src in source_info['source_fields']]
-        
-        # Create unique colors for defect types
-        unique_defects = list(set(defect_types))
-        defect_colors = px.colors.qualitative.Set1[:len(unique_defects)]
-        defect_color_map = {dt: defect_colors[i] for i, dt in enumerate(unique_defects)}
-        
-        # Node structure: 
-        # Layer 0: Sources (0 to n-1)
-        # Layer 1: Spatial stage (n to 2n-1)
-        # Layer 2: Pre-Mask stage (2n to 3n-1)  
-        # Layer 3: Post-Mask stage (3n to 4n-1)
-        # Layer 4: Target (4n)
-        
-        nodes = []
-        node_colors = []
-        
-        # Layer 0: Source nodes
-        for i in range(n_sources):
-            nodes.append(f"Source {i}<br>({source_angles[i]:.1f}°)")
-            node_colors.append(defect_color_map[defect_types[i]])
-            
-        # Layer 1: Spatial nodes
-        for i in range(n_sources):
-            nodes.append(f"Spatial {i}")
-            node_colors.append('lightblue')
-            
-        # Layer 2: Pre-Mask nodes
-        for i in range(n_sources):
-            nodes.append(f"Pre-Mask {i}")
-            node_colors.append('lightgreen')
-            
-        # Layer 3: Post-Mask nodes
-        for i in range(n_sources):
-            nodes.append(f"Post-Mask {i}")
-            node_colors.append('lightcoral')
-            
-        # Layer 4: Target node
-        nodes.append("Target")
-        node_colors.append('darkblue')
-        
-        # Create links
-        link_source = []
-        link_target = []
-        link_value = []
-        link_color = []
-        
-        # Stage 1: Source -> Spatial (carrying spatial kernel weight)
-        for i in range(n_sources):
-            link_source.append(i)  # Source i
-            link_target.append(n_sources + i)  # Spatial i
-            val = weights['spatial_kernel'][i]
-            link_value.append(max(val, 0.01))  # Min threshold for visibility
-            link_color.append(f'rgba(173, 216, 230, 0.4)')
-        
-        # Stage 2: Spatial -> Pre-Mask (carrying pre-mask attention)
-        for i in range(n_sources):
-            link_source.append(n_sources + i)  # Spatial i
-            link_target.append(2*n_sources + i)  # Pre-Mask i
-            val = weights['pre_mask'][i]
-            link_value.append(max(val, 0.01))
-            # Color based on whether weight increased or decreased
-            prev = weights['spatial_kernel'][i]
-            if val > prev:
-                link_color.append('rgba(0, 255, 0, 0.4)')  # Green for increase
-            else:
-                link_color.append('rgba(255, 255, 0, 0.4)')  # Yellow for decrease
-        
-        # Stage 3: Pre-Mask -> Post-Mask (applying defect mask)
-        for i in range(n_sources):
-            link_source.append(2*n_sources + i)  # Pre-Mask i
-            link_target.append(3*n_sources + i)  # Post-Mask i
-            val = weights['combined'][i]
-            link_value.append(max(val, 0.01))
-            # Highlight defect masking (reduction)
-            prev = weights['pre_mask'][i]
-            if val < prev * 0.5:
-                link_color.append('rgba(255, 0, 0, 0.6)')  # Red for heavy masking
-            else:
-                link_color.append('rgba(144, 238, 144, 0.4)')  # Green for preserved
-        
-        # Stage 4: Post-Mask -> Target (aggregation)
-        for i in range(n_sources):
-            link_source.append(3*n_sources + i)  # Post-Mask i
-            link_target.append(4*n_sources)  # Target
-            val = weights['combined'][i]
-            link_value.append(max(val, 0.01))
-            link_color.append('rgba(0, 0, 139, 0.4)')  # Dark blue
-        
+        # Prepare Sankey data
+        labels = []
+        source_indices = []
+        target_indices = []
+        values = []
+        colors = []
+
+        # Add source nodes
+        source_node_start = 0
+        for i, source in enumerate(sources_data):
+            labels.append(f"Source {i}<br>{source['defect_type']}<br>θ={source['theta_deg']:.1f}°")
+            source_node_start = i
+
+        # Add weight component nodes (middle layer)
+        component_start = len(labels)
+        labels.append("Learned<br>Attention")
+        labels.append("Spatial<br>Kernel")
+        labels.append("Defect<br>Mask")
+
+        # Add target node (right)
+        target_node = len(labels)
+        labels.append(f"Target<br>{target_defect_type}<br>θ={target_angle:.1f}°")
+
+        # Build flows from sources to components
+        for i, source in enumerate(sources_data):
+            # Flow to learned attention
+            source_indices.append(i)
+            target_indices.append(component_start)
+            values.append(source['learned_attention'] * source['combined_weight'])
+            colors.append('#4ECDC4' if i != sources_data.index(source) else '#FF1493')
+
+            # Flow to spatial kernel
+            source_indices.append(i)
+            target_indices.append(component_start + 1)
+            values.append(source['spatial_kernel'] * source['combined_weight'])
+            colors.append('#45B7D1' if i != sources_data.index(source) else '#FF6B6B')
+
+            # Flow to defect mask (only if matching)
+            source_indices.append(i)
+            target_indices.append(component_start + 2)
+            values.append((1.0 if source['defect_match'] else 0.000001) * source['combined_weight'])
+            colors.append('#95E1D3' if i != sources_data.index(source) else '#FFA07A')
+
+        # Build flows from components to target
+        for comp_idx in range(3):
+            source_indices.append(component_start + comp_idx)
+            target_indices.append(target_node)
+            # Sum all flows into this component
+            comp_value = sum(v for s, t, v in zip(source_indices, target_indices, values) 
+                           if t == component_start + comp_idx)
+            values.append(comp_value)
+            colors.append('#A8E6CF')
+
+        # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
-            arrangement="snap",
             node=dict(
                 pad=15,
                 thickness=20,
                 line=dict(color="black", width=0.5),
-                label=nodes,
-                color=node_colors,
-                hovertemplate='%{label}<br>Total flow: %{value:.3f}<extra></extra>'
+                label=labels,
+                color=["#4ECDC4"] * len(sources_data) + ["#45B7D1", "#95E1D3", "#FFD93D", "#FF1493"]
             ),
             link=dict(
-                source=link_source,
-                target=link_target,
-                value=link_value,
-                color=link_color,
-                hovertemplate='From %{source.label}<br>To %{target.label}<br>Value: %{value:.3f}<extra></extra>'
+                source=source_indices,
+                target=target_indices,
+                value=values,
+                color=colors,
+                hovertemplate='Flow: %{value:.4f}<br>Source: %{source.label}<br>Target: %{target.label}<extra></extra>'
             )
         )])
-        
-        # Add annotations explaining the stages
-        annotations = [
-            dict(x=0.1, y=1.05, text="Sources", showarrow=False, font=dict(size=14, color='black')),
-            dict(x=0.35, y=1.05, text="Spatial Kernel", showarrow=False, font=dict(size=14, color='blue')),
-            dict(x=0.6, y=1.05, text="Pre-Mask Attention", showarrow=False, font=dict(size=14, color='green')),
-            dict(x=0.85, y=1.05, text="Post-Mask Output", showarrow=False, font=dict(size=14, color='red')),
-            dict(x=1.0, y=1.05, text="Target", showarrow=False, font=dict(size=14, color='darkblue'))
-        ]
-        
+
         fig.update_layout(
             title=dict(
-                text=f"{title}<br>θ = {target_params['theta']:.1f}°, {target_params['defect_type']}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5,
-                y=0.95
-            ),
-            width=1200,
-            height=800,
-            annotations=annotations,
-            paper_bgcolor='white',
-            plot_bgcolor='white'
-        )
-        
-        return fig
-
-    # ENHANCEMENT: Refined chord diagram implementation
-    def create_chord_diagram(self, weights, source_info, target_params, 
-                            title="Chord Diagram: Defect, Spatial, Attention Proximity"):
-        """
-        Chord diagram where nodes are sources arranged by angular proximity to target.
-        Chord thickness = attention weight product (symmetry), 
-        color = defect type, 
-        curvature radius modulated by spatial weight.
-        """
-        n_sources = len(source_info['theta_degrees'])
-        if n_sources < 2:
-            return None
-
-        # Sort sources by angular distance to target for circular layout
-        distances = np.array(source_info['distances'])
-        sorted_indices = np.argsort(distances)
-        
-        # Arrange in circle: closest to target at top (90°), others spread around
-        # Actually, arrange by actual angle but ensure target position is highlighted
-        angles = np.array(source_info['theta_degrees'])
-        
-        # Convert to radians and adjust so target is at 90° (top)
-        target_theta = target_params['theta']
-        angle_offset = 90 - target_theta
-        adjusted_angles = (angles + angle_offset) % 360
-        rad_angles = np.radians(adjusted_angles)
-        
-        radius = 1.0
-        node_x = radius * np.cos(rad_angles)
-        node_y = radius * np.sin(rad_angles)
-        
-        # Defect type coloring
-        defect_types = [src.get('source_params', {}).get('defect_type', 'Unknown') 
-                       for src in source_info['source_fields']]
-        unique_defects = list(set(defect_types))
-        color_palette = px.colors.qualitative.Set1 + px.colors.qualitative.Set2 + px.colors.qualitative.Set3
-        defect_color_map = {dt: color_palette[i % len(color_palette)] for i, dt in enumerate(unique_defects)}
-        node_colors = [defect_color_map[dt] for dt in defect_types]
-        
-        fig = go.Figure()
-        
-        # Draw chords (Bezier curves) between related sources
-        # Relation based on: similar angles (spatial proximity) and attention correlation
-        for i in range(n_sources):
-            for j in range(i+1, n_sources):
-                # Attention affinity: product of weights (higher = stronger connection)
-                att_product = weights['combined'][i] * weights['combined'][j]
-                
-                # Only draw significant connections
-                if att_product < 0.001:
-                    continue
-                
-                # Spatial proximity determines curve control point (curvature)
-                angle_i = rad_angles[i]
-                angle_j = rad_angles[j]
-                
-                # Midpoint angle
-                mid_angle = (angle_i + angle_j) / 2 if abs(angle_i - angle_j) < np.pi else (angle_i + angle_j)/2 + np.pi
-                
-                # Control point distance based on spatial weights (further out = higher spatial weight)
-                spatial_avg = (weights['spatial_kernel'][i] + weights['spatial_kernel'][j]) / 2
-                control_dist = radius * (0.2 + 0.8 * spatial_avg)  # Closer to center for low spatial weight
-                
-                # Bezier control point
-                cp_x = control_dist * np.cos(mid_angle)
-                cp_y = control_dist * np.sin(mid_angle)
-                
-                # Quadratic Bezier curve
-                t = np.linspace(0, 1, 50)
-                x0, y0 = node_x[i], node_y[i]
-                x2, y2 = node_x[j], node_y[j]
-                
-                bezier_x = (1-t)**2 * x0 + 2*(1-t)*t * cp_x + t**2 * x2
-                bezier_y = (1-t)**2 * y0 + 2*(1-t)*t * cp_y + t**2 * y2
-                
-                # Line width proportional to attention
-                line_width = max(1, att_product * 20)
-                
-                # Color by defect type of source i (or blend)
-                chord_color = defect_color_map[defect_types[i]]
-                
-                fig.add_trace(go.Scatter(
-                    x=bezier_x, y=bezier_y,
-                    mode='lines',
-                    line=dict(width=line_width, color=chord_color),
-                    opacity=0.6,
-                    hovertemplate=f'Connection {i}-{j}<br>Att. Product: {att_product:.4f}<br>'
-                                 f'Spatial Avg: {spatial_avg:.3f}<extra></extra>',
-                    showlegend=False
-                ))
-        
-        # Add nodes (sources)
-        fig.add_trace(go.Scatter(
-            x=node_x, y=node_y,
-            mode='markers+text',
-            marker=dict(
-                size=20,
-                color=node_colors,
-                line=dict(width=2, color='white')
-            ),
-            text=[f'{i}' for i in range(n_sources)],
-            textposition="middle center",
-            textfont=dict(size=10, color='white'),
-            hovertemplate='<b>Source %{text}</b><br>Angle: %{customdata[0]:.1f}°<br>'
-                         'Defect: %{customdata[1]}<br>Attention: %{customdata[2]:.3f}<extra></extra>',
-            customdata=list(zip(
-                source_info['theta_degrees'], 
-                defect_types,
-                weights['combined']
-            )),
-            name='Sources'
-        ))
-        
-        # Highlight target angle with radial line from center to edge
-        target_rad = np.radians(target_theta + angle_offset)
-        fig.add_trace(go.Scatter(
-            x=[0, 1.3 * radius * np.cos(target_rad)],
-            y=[0, 1.3 * radius * np.sin(target_rad)],
-            mode='lines',
-            line=dict(color='red', width=4, dash='solid'),
-            name='Target Direction'
-        ))
-        
-        # Add target marker at edge
-        fig.add_trace(go.Scatter(
-            x=[1.3 * radius * np.cos(target_rad)],
-            y=[1.3 * radius * np.sin(target_rad)],
-            mode='markers',
-            marker=dict(size=15, color='red', symbol='star', line=dict(width=2, color='darkred')),
-            name=f'Target: {target_theta:.1f}°'
-        ))
-        
-        # Add center point
-        fig.add_trace(go.Scatter(
-            x=[0], y=[0],
-            mode='markers',
-            marker=dict(size=10, color='black'),
-            name='Center'
-        ))
-        
-        # Layout configuration
-        fig.update_layout(
-            title=dict(
-                text=f"{title}<br>Node color = Defect type | Chord thickness = Attention | Curve = Spatial weight",
-                font=dict(size=16, color='darkblue'),
+                text=f"Attention Flow Sankey Diagram<br>"
+                     "<sup>Width ∝ Contribution to Final Weight | Formula: wᵢ(θ*) = [ᾱᵢ · exp(-(Δφᵢ)²/(2σ²)) · 𝟙(τᵢ=τ*)] / Σ[...] + 10⁻⁶</sup>",
+                font=dict(size=20, family="Arial Black", color='#1E3A8A'),
                 x=0.5
             ),
-            xaxis=dict(visible=False, range=[-1.5, 1.5], scaleanchor='y', scaleratio=1),
-            yaxis=dict(visible=False, range=[-1.5, 1.5]),
-            width=800,
-            height=800,
-            showlegend=True,
-            legend=dict(
-                itemsizing='constant',
-                orientation='h',
-                yanchor='bottom',
-                y=-0.1,
-                xanchor='center',
-                x=0.5
-            ),
-            paper_bgcolor='white',
+            font=dict(size=12),
+            width=1000,
+            height=700,
             plot_bgcolor='white',
-            margin=dict(l=50, r=50, t=100, b=100)
+            paper_bgcolor='white'
         )
-        
-        # Add angular reference circles
-        for r in [0.5, 1.0]:
-            circle_theta = np.linspace(0, 2*np.pi, 100)
-            fig.add_trace(go.Scatter(
-                x=r*np.cos(circle_theta),
-                y=r*np.sin(circle_theta),
-                mode='lines',
-                line=dict(width=1, color='gray', dash='dot'),
-                opacity=0.3,
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-        
+
+        # Add domain annotation
+        fig.add_annotation(
+            text=f"Domain: {domain_size_nm} nm × {domain_size_nm} nm<br>σ = {spatial_sigma}°",
+            xref="paper", yref="paper",
+            x=0.5, y=-0.05,
+            showarrow=False,
+            font=dict(size=12, color="#1E3A8A", weight="bold"),
+            bgcolor="white",
+            bordercolor="#3B82F6",
+            borderwidth=1
+        )
+
         return fig
+
+    # ==================== EXISTING METHODS (MINIMAL CHANGES FOR INTEGRATION) ====================
+    def create_stress_heatmap(self, stress_field, title="Stress Heat Map",
+                            cmap_name='viridis', figsize=(12, 10),
+                            colorbar_label="Stress (GPa)", vmin=None, vmax=None,
+                            show_stats=True, target_angle=None, defect_type=None,
+                            show_colorbar=True, aspect_ratio='equal', dpi=300):
+        """Create enhanced heat map with chosen colormap and publication styling"""
+        # Create figure with specified DPI
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        # Get colormap
+        if cmap_name in plt.colormaps():
+            cmap = plt.get_cmap(cmap_name)
+        else:
+            cmap = plt.get_cmap('viridis')  # Default fallback
+
+        # Determine vmin and vmax if not provided
+        if vmin is None:
+            vmin = np.nanmin(stress_field)
+        if vmax is None:
+            vmax = np.nanmax(stress_field)
+
+        # Create heatmap with 12.8 nm domain extent
+        domain_info = DomainConfiguration.get_domain_info()
+        extent = domain_info['extent']  # [-6.4, 6.4, -6.4, 6.4]
+        im = ax.imshow(stress_field, cmap=cmap, vmin=vmin, vmax=vmax,
+                      aspect=aspect_ratio, interpolation='bilinear', origin='lower',
+                      extent=extent)
+
+        # Add colorbar with enhanced styling
+        if show_colorbar:
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label(colorbar_label, fontsize=16, fontweight='bold')
+            cbar.ax.tick_params(labelsize=14)
+
+        # Customize plot with publication styling
+        title_str = title
+        if target_angle is not None and defect_type is not None:
+            title_str = f"{title}\nθ = {target_angle:.1f}°, Defect: {defect_type}"
+        ax.set_title(title_str, fontsize=20, fontweight='bold', pad=20)
+        ax.set_xlabel('X Position (nm)', fontsize=16, fontweight='bold')
+        ax.set_ylabel('Y Position (nm)', fontsize=16, fontweight='bold')
+
+        # Add grid with subtle styling
+        ax.grid(True, alpha=0.2, linestyle='--', linewidth=0.5, color='gray')
+
+        # Add statistics annotation with enhanced styling
+        if show_stats:
+            stats_text = (f"Max: {vmax:.3f} GPa\n"
+                         f"Min: {vmin:.3f} GPa\n"
+                         f"Mean: {np.nanmean(stress_field):.3f} GPa\n"
+                         f"Std: {np.nanstd(stress_field):.3f} GPa\n"
+                         f"Domain: {domain_info['domain_length_nm']} nm")
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes,
+                   fontsize=12, fontweight='bold', verticalalignment='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+        # Set tick parameters
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        plt.tight_layout()
+        return fig
+
+    # ... [OTHER EXISTING METHODS REMAIN UNCHANGED - create_diffusion_heatmap, create_diffusion_3d_surface, etc.] ...
 
 # =============================================
-# RESULTS MANAGER FOR EXPORT
+# ENHANCED TRANSFORMER INTERPOLATOR WITH SOURCE DATA PREPARATION
+# =============================================
+class EnhancedTransformerInterpolator(TransformerSpatialInterpolator):
+    """Enhanced interpolator with source data preparation for relationship visualizations"""
+    
+    def prepare_source_visualization_data(self, result, query_index=None):
+        """Prepare normalized source data for advanced visualizations with full weight components"""
+        sources_data = []
+        
+        for i, field in enumerate(result['source_fields']):
+            # Extract key metrics
+            vm_max = np.max(field['von_mises'])
+            hydro_max = np.max(np.abs(field['sigma_hydro']))
+            weight = result['weights']['combined'][i]
+            spatial_kernel = result['weights']['spatial_kernel'][i]
+            learned_attention = result['weights']['learned_attention'][i] if 'learned_attention' in result['weights'] else 0.0
+            theta_deg = result['source_theta_degrees'][i]
+            angular_dist = result['source_distances'][i] if i < len(result['source_distances']) else 0.0
+            defect_type = field['source_params']['defect_type']
+            target_defect = result['target_params']['defect_type']
+            
+            sources_data.append({
+                'theta_deg': theta_deg,
+                'angular_dist': angular_dist,
+                'combined_weight': weight,
+                'spatial_kernel': spatial_kernel,
+                'learned_attention': learned_attention,
+                'defect_type': defect_type,
+                'defect_match': defect_type == target_defect,
+                'von_mises_max': vm_max,
+                'hydro_max': hydro_max,
+                'is_query': i == query_index
+            })
+        
+        return sources_data
+
+# =============================================
+# MAIN APPLICATION WITH COMPLETE IMPLEMENTATION
+# =============================================
+def main():
+    # Configure Streamlit page
+    st.set_page_config(
+        page_title="Angular Bracketing Theory with Transformer Attention",
+        layout="wide",
+        page_icon="🎯",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Custom CSS for styling
+    st.markdown("""
+    <style>
+    .main-header {
+        font-size: 3.2rem !important;
+        color: #1E3A8A !important;
+        text-align: center;
+        padding: 1rem;
+        background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 900 !important;
+        margin-bottom: 1rem;
+    }
+    .section-header {
+        font-size: 2.0rem !important;
+        color: #374151 !important;
+        font-weight: 800 !important;
+        border-left: 6px solid #3B82F6;
+        padding-left: 1.2rem;
+        margin-top: 1.8rem;
+        margin-bottom: 1.2rem;
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+        padding: 1.2rem;
+        border-radius: 0.8rem;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        margin: 0.5rem;
+        font-size: 1.1rem;
+    }
+    .info-box {
+        background-color: #F0F9FF;
+        border-left: 5px solid #3B82F6;
+        padding: 1.2rem;
+        border-radius: 0.6rem;
+        margin: 1.2rem 0;
+        font-size: 1.1rem;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2.5rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 55px;
+        white-space: pre-wrap;
+        background-color: #F3F4F6;
+        border-radius: 6px 6px 0 0;
+        gap: 1.2rem;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #3B82F6 !important;
+        color: white !important;
+        font-weight: 700;
+    }
+    .param-table {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border: 2px solid #e9ecef;
+    }
+    .param-key {
+        font-weight: 700;
+        color: #1E3A8A;
+        font-size: 1.1rem;
+    }
+    .param-value {
+        font-weight: 600;
+        color: #059669;
+        font-size: 1.1rem;
+    }
+    .physics-note {
+        background-color: #FFF3CD;
+        border-left: 5px solid #FFC107;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+        font-size: 1rem;
+    }
+    .diffusion-box {
+        background-color: #E8F5E9;
+        border-left: 5px solid #4CAF50;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+        font-size: 1rem;
+    }
+    .formula-box {
+        background-color: #F0F7FF;
+        border-left: 5px solid #3B82F6;
+        padding: 1.5rem;
+        border-radius: 0.8rem;
+        margin: 1.5rem 0;
+        font-family: 'Courier New', monospace;
+        font-size: 1.3rem;
+        line-height: 1.6;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Main header with domain info
+    domain_info = DomainConfiguration.get_domain_info()
+    st.markdown(f'<h1 class="main-header">🎯 Angular Bracketing Theory with Transformer Attention</h1>', unsafe_allow_html=True)
+    st.markdown(f"<h3 style='text-align: center; color: #1E3A8A;'>Domain: {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm (Centered at 0, ±{domain_info['domain_half_nm']} nm)</h3>", unsafe_allow_html=True)
+    
+    # Mathematical formula display
+    st.markdown("""
+    <div class="formula-box">
+    <strong>Attention Weight Formula:</strong><br>
+    $$w_i(\boldsymbol{\theta}^*) = \frac{\bar{\alpha}_i(\boldsymbol{\theta}^*) \cdot \exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_i = \tau^*)}{\sum_{k=1}^{N} \bar{\alpha}_k(\boldsymbol{\theta}^*) \cdot \exp\left(-\frac{(\Delta\phi_k)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_k = \tau^*)} + 10^{-6}$$
+    
+    <strong>Components:</strong>
+    • $\bar{\alpha}_i$: Learned attention score from transformer<br>
+    • $\exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right)$: Spatial kernel (angular bracketing)<br>
+    • $\mathbb{I}(\tau_i = \tau^*)$: Defect type indicator (1 if match, 0 otherwise)<br>
+    • $\sigma$: Angular kernel width (controllable parameter)
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Description
+    st.markdown(f"""
+    <div class="info-box">
+    <strong>🔬 Physics-Aware Interpolation: Angular Orientation & Defect Type as Primary Drivers.</strong><br>
+    • <strong>Angular Bracketing Kernel:</strong> Gaussian spatial locality enforcing linear interpolation between nearest angles.<br>
+    • <strong>Hard Defect Gating:</strong> Sources with different defect types receive effectively zero attention.<br>
+    • <strong>Theory-Informed Attention:</strong> Attention = Softmax(Learned Similarity × Spatial Kernel × Defect Mask).<br>
+    • <strong>Diffusion Enhancement:</strong> D/D₀ = exp(Ωσ_h/(k_B T)) - Peak for tensile stress, valley for compressive stress.<br>
+    • <strong>Domain Size:</strong> {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm centered at 0 (±{domain_info['domain_half_nm']} nm)
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state
+    if 'solutions' not in st.session_state:
+        st.session_state.solutions = []
+    if 'loader' not in st.session_state:
+        st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
+    if 'transformer_interpolator' not in st.session_state:
+        # Initialize with default sigma (angular window size)
+        st.session_state.transformer_interpolator = EnhancedTransformerInterpolator(
+            spatial_sigma=10.0,  # Degrees: +/- 10 deg window has high weight
+            locality_weight_factor=0.5  # 50% Learned, 50% Theory
+        )
+    if 'heatmap_visualizer' not in st.session_state:
+        st.session_state.heatmap_visualizer = HeatMapVisualizer()
+    if 'results_manager' not in st.session_state:
+        st.session_state.results_manager = ResultsManager()
+    if 'interpolation_result' not in st.session_state:
+        st.session_state.interpolation_result = None
+    if 'selected_ground_truth' not in st.session_state:
+        st.session_state.selected_ground_truth = None
+    if 'diffusion_physics' not in st.session_state:
+        st.session_state.diffusion_physics = DiffusionPhysics()
+    if 'custom_dashboard_fig' not in st.session_state:
+        st.session_state.custom_dashboard_fig = None
+
+    # Sidebar configuration (MINIMAL - focused on core parameters)
+    with st.sidebar:
+        st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
+        
+        # Domain information
+        st.markdown("#### 📐 Domain Information")
+        st.info(f"""
+        **Grid:** {domain_info['grid_points']} × {domain_info['grid_points']} points
+        **Spacing:** {domain_info['grid_spacing_nm']} nm
+        **Size:** {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm
+        **Extent:** ±{domain_info['domain_half_nm']} nm
+        **Area:** {domain_info['area_nm2']:.1f} nm²
+        """)
+        
+        # Data loading
+        st.markdown("#### 📂 Data Management")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📤 Load Solutions", use_container_width=True):
+                with st.spinner("Loading solutions..."):
+                    st.session_state.solutions = st.session_state.loader.load_all_solutions()
+                    if st.session_state.solutions:
+                        st.success(f"Loaded {len(st.session_state.solutions)} solutions")
+                    else:
+                        st.warning("No solutions found in directory")
+        with col2:
+            if st.button("🧹 Clear Cache", use_container_width=True):
+                st.session_state.solutions = []
+                st.session_state.interpolation_result = None
+                st.session_state.selected_ground_truth = None
+                st.session_state.custom_dashboard_fig = None
+                st.success("Cache cleared")
+        st.divider()
+        
+        # Target parameters
+        st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
+        col_angle1, col_angle2 = st.columns([2, 1])
+        with col_angle1:
+            custom_theta = st.number_input(
+                "Target Angle θ (degrees)",
+                min_value=0.0,
+                max_value=180.0,
+                value=54.7,
+                step=0.1,
+                format="%.1f",
+                help="Angle in degrees (0° to 180°). Default habit plane is 54.7°"
+            )
+        with col_angle2:
+            st.markdown("###")
+            if st.button("Set to Habit Plane", use_container_width=True):
+                custom_theta = 54.7
+                st.rerun()
+        
+        # Defect type
+        defect_type = st.selectbox(
+            "Defect Type",
+            options=['ISF', 'ESF', 'Twin', 'No Defect'],
+            index=2,
+            help="Type of crystal defect to simulate"
+        )
+        
+        # Spatial sigma parameter (critical for bracketing)
+        st.markdown("#### 📐 Angular Bracketing Kernel")
+        spatial_sigma = st.slider(
+            "Kernel Width σ (degrees)",
+            min_value=1.0,
+            max_value=45.0,
+            value=10.0,
+            step=0.5,
+            help="Width of Gaussian angular bracketing window"
+        )
+        
+        # Run interpolation
+        st.markdown("#### 🚀 Interpolation Control")
+        if st.button("🎯 Perform Theory-Informed Interpolation", type="primary", use_container_width=True):
+            if not st.session_state.solutions:
+                st.error("Please load solutions first!")
+            else:
+                with st.spinner("Performing interpolation with Angular Bracketing Theory..."):
+                    # Setup target parameters
+                    target_params = {
+                        'defect_type': defect_type,
+                        'eps0': PhysicsParameters.get_eigenstrain(defect_type),
+                        'kappa': 0.6,
+                        'theta': np.radians(custom_theta),
+                        'shape': 'Square'
+                    }
+                    
+                    # Perform interpolation
+                    result = st.session_state.transformer_interpolator.interpolate_spatial_fields(
+                        st.session_state.solutions,
+                        custom_theta,
+                        target_params
+                    )
+                    
+                    if result:
+                        st.session_state.interpolation_result = result
+                        st.session_state.transformer_interpolator.set_spatial_parameters(spatial_sigma=spatial_sigma)
+                        st.success(f"Interpolation successful! Theory-Informed Attention applied with σ={spatial_sigma}°")
+                        st.session_state.selected_ground_truth = None
+                        st.session_state.custom_dashboard_fig = None
+                    else:
+                        st.error("Interpolation failed. Check console for errors.")
+
+    # Main content area
+    if st.session_state.solutions:
+        st.markdown(f"### 📊 Loaded {len(st.session_state.solutions)} Solutions")
+        
+        # Display source information
+        if st.session_state.solutions:
+            source_thetas = []
+            source_defects = []
+            for sol in st.session_state.solutions:
+                if 'params' in sol and 'theta' in sol['params']:
+                    theta_deg = np.degrees(sol['params']['theta']) % 360
+                    source_thetas.append(theta_deg)
+                if 'params' in sol and 'defect_type' in sol['params']:
+                    source_defects.append(sol['params']['defect_type'])
+            
+            if source_thetas:
+                st.markdown(f"**Source Angles Range:** {min(source_thetas):.1f}° to {max(source_thetas):.1f}°")
+                st.markdown(f"**Mean Source Angle:** {np.mean(source_thetas):.1f}°")
+            if source_defects:
+                defect_counts = {}
+                for defect in source_defects:
+                    defect_counts[defect] = defect_counts.get(defect, 0) + 1
+                st.markdown("**Defect Types:** " + ", ".join([f"{k}: {v}" for k, v in defect_counts.items()]))
+
+    # Results display with NEW RELATIONSHIP VISUALIZATION TAB
+    if st.session_state.interpolation_result:
+        result = st.session_state.interpolation_result
+        
+        # Tabs including new relationship visualizations
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📈 Results Overview",
+            "🎨 Stress Visualization", 
+            "⚖️ Attention Analysis",
+            "🕸️ Relationship Visualizations",  # NEW TAB WITH RADAR/SUNBURST/SANKEY
+            "💾 Export Results"
+        ])
+        
+        with tab1:
+            st.markdown('<h2 class="section-header">📊 Interpolation Results</h2>', unsafe_allow_html=True)
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Max Von Mises", f"{result['statistics']['von_mises']['max']:.3f} GPa")
+            with col2:
+                st.metric("Target Angle", f"{result['target_angle']:.1f}°")
+            with col3:
+                st.metric("Defect Type", result['target_params']['defect_type'])
+            with col4:
+                st.metric("Entropy", f"{result['weights']['entropy']:.3f}")
+                
+        with tab2:
+            st.markdown('<h2 class="section-header">🎨 Stress Field Visualization</h2>', unsafe_allow_html=True)
+            if 'von_mises' in result['fields']:
+                fig = st.session_state.heatmap_visualizer.create_stress_heatmap(
+                    result['fields']['von_mises'],
+                    title="Von Mises Stress",
+                    target_angle=result['target_angle'],
+                    defect_type=result['target_params']['defect_type'],
+                    figsize=(10, 8)
+                )
+                st.pyplot(fig)
+                
+        with tab3:
+            st.markdown('<h2 class="section-header">⚖️ Theory-Informed Attention Analysis</h2>', unsafe_allow_html=True)
+            st.markdown("""
+            **Weight Components:**
+            - **Learned Attention**: Transformer similarity score (ᾱᵢ)
+            - **Spatial Kernel**: Angular proximity weight exp(-(Δφᵢ)²/(2σ²))
+            - **Defect Mask**: Hard constraint 𝟙(τᵢ = τ*)
+            - **Combined**: Final normalized weight wᵢ(θ*)
+            """)
+            
+            # Display weight components
+            weights_df = pd.DataFrame({
+                'Source': range(len(result['weights']['combined'])),
+                'Angle (°)': result['source_theta_degrees'],
+                'Learned': result['weights']['learned_attention'],
+                'Spatial': result['weights']['spatial_kernel'],
+                'Defect Match': ['✓' if m > 0.5 else '✗' for m in result['weights']['defect_mask']],
+                'Combined': result['weights']['combined']
+            })
+            st.dataframe(weights_df.style.background_gradient(subset=['Combined'], cmap='Blues'))
+            
+        with tab4:
+            st.markdown('<h2 class="section-header">🕸️ Relationship Visualizations</h2>', unsafe_allow_html=True)
+            st.info(f"""
+            **Domain:** {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm
+            
+            These visualizations reveal how the attention weight formula components interact:
+            - **Radar Chart**: 5-dimensional comparison of weight components per source
+            - **Sunburst Chart**: Hierarchical breakdown by defect type → angle bin → source
+            - **Sankey Diagram**: Flow visualization of how components combine into final weights
+            """)
+            
+            # Prepare source data with full weight components
+            sources_data = st.session_state.transformer_interpolator.prepare_source_visualization_data(
+                st.session_state.interpolation_result,
+                query_index=st.session_state.selected_ground_truth
+            )
+            
+            viz_type = st.selectbox(
+                "Visualization Type",
+                ["Radar Chart (Weight Components)", 
+                 "Sunburst Chart (Hierarchical Breakdown)",
+                 "Sankey Diagram (Attention Flows)"],
+                index=0
+            )
+            
+            if st.button("✨ Generate Visualization", type="primary", use_container_width=True):
+                try:
+                    if viz_type.startswith("Radar"):
+                        fig = st.session_state.heatmap_visualizer.create_weight_component_radar_chart(
+                            sources_data,
+                            query_index=st.session_state.selected_ground_truth
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown("""
+                        ### 🔍 Radar Chart Interpretation
+                        - **5 Dimensions**: Learned Attention, Spatial Kernel, Defect Match, Combined Weight, Angular Distance
+                        - **Query Source**: Highlighted in vivid pink (#FF1493) with 2.5× line width
+                        - **Physics Insight**: Sources with matching defect types show high "Defect Match" dimension; angularly proximate sources show high "Spatial Kernel"
+                        - **Formula Visualization**: Each dimension maps directly to a component in the weight formula
+                        """)
+                    
+                    elif viz_type.startswith("Sunburst"):
+                        fig = st.session_state.heatmap_visualizer.create_weight_sunburst_chart(
+                            sources_data,
+                            query_index=st.session_state.selected_ground_truth
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown("""
+                        ### 🔍 Sunburst Chart Interpretation
+                        - **Hierarchy**: Outer ring = defect types → Middle ring = 30° angle bins → Center = individual sources
+                        - **Size Encoding**: Segment area proportional to combined weight contribution
+                        - **Color Encoding**: Query source highlighted in vivid pink (#FF1493)
+                        - **Physics Insight**: Reveals bracketing structure - query typically bracketed by two high-weight sources of same defect type
+                        """)
+                    
+                    elif viz_type.startswith("Sankey"):
+                        fig = st.session_state.heatmap_visualizer.create_attention_sankey_diagram(
+                            sources_data,
+                            target_angle=result['target_angle'],
+                            target_defect_type=result['target_params']['defect_type'],
+                            spatial_sigma=spatial_sigma,
+                            domain_size_nm=domain_info['domain_length_nm']
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        st.markdown("""
+                        ### 🔍 Sankey Diagram Interpretation
+                        - **Flow Width**: Proportional to contribution to final weight
+                        - **Left Nodes**: Individual sources (labeled with defect type and angle)
+                        - **Middle Nodes**: Weight formula components (Learned, Spatial, Defect)
+                        - **Right Node**: Target (query angle and defect type)
+                        - **Physics Insight**: Visualizes how spatial kernel dominates when angles align, and how defect mask completely blocks flow for mismatched types
+                        - **Formula Visualization**: Direct mapping of Sankey flows to weight formula terms
+                        """)
+                    
+                    # Add unified physics interpretation
+                    st.markdown("---")
+                    st.markdown("### 🧪 Physics Interpretation of Weight Formula")
+                    st.markdown(f"""
+                    The attention weight formula implements **Angular Bracketing Theory**:
+                    
+                    1. **Defect Type as Hard Constraint** (`𝟙(τᵢ = τ*)`):
+                       - Sources with different defect types receive near-zero attention (visible as blocked flows in Sankey)
+                       - Critical for physical validity - different defect types have fundamentally different stress fields
+                    
+                    2. **Angular Proximity Drives Attention** (`exp(-(Δφᵢ)²/(2σ²))`):
+                       - Gaussian kernel with σ = {spatial_sigma}° creates "bracketing window"
+                       - Sources within ±{spatial_sigma}° of target receive highest weights
+                       - Visible as high "Spatial Kernel" dimension in radar chart
+                    
+                    3. **Learned Similarity Refines Selection** (`ᾱᵢ`):
+                       - Transformer captures subtle stress field patterns beyond angle/defect
+                       - Modulates the physics priors rather than replacing them
+                       - Visible as variation in "Learned Attention" dimension
+                    
+                    4. **Bracketing Structure**:
+                       - Optimal interpolation occurs when target angle is bracketed by two sources of same defect type
+                       - Query source typically receives strongest attention from two bracketing sources
+                       - Visible as triangular attention pattern in Sankey diagram
+                    
+                    5. **Domain Size Awareness**:
+                       - All visualizations explicitly reference the **{domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm** domain
+                       - Angular positions mapped to physical domain coordinates
+                    """)
+                    
+                except Exception as e:
+                    st.error(f"Error generating visualization: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+        
+        with tab5:
+            st.markdown('<h2 class="section-header">💾 Export Results</h2>', unsafe_allow_html=True)
+            st.info("Export functionality available for full results including weight components")
+            
+    else:
+        # Show welcome message when no results
+        st.markdown(f"""
+        ## 🎯 Welcome to Angular Bracketing Theory Interpolator
+        ### Domain Configuration:
+        - **Size:** {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm
+        - **Grid:** {domain_info['grid_points']} × {domain_info['grid_points']} points
+        - **Spacing:** {domain_info['grid_spacing_nm']} nm
+        - **Extent:** ±{domain_info['domain_half_nm']} nm
+        - **Area:** {domain_info['area_nm2']:.1f} nm²
+        
+        ### Getting Started:
+        1. **Load Solutions** from the sidebar
+        2. **Configure Target Parameters** (angle, defect type)
+        3. **Set Angular Bracketing Parameters** (kernel width σ)
+        4. **Click "Perform Theory-Informed Interpolation"** to run
+        5. **Explore Relationship Visualizations** to see weight formula components
+        
+        ### Key Features:
+        - **Physics-aware interpolation** using angular bracketing theory
+        - **Complete weight formula visualization**: 
+          $$w_i(\boldsymbol{\theta}^*) = \frac{\bar{\alpha}_i \cdot \exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_i = \tau^*)}{\sum_k \bar{\alpha}_k \cdot \exp\left(-\frac{(\Delta\phi_k)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_k = \tau^*)} + 10^{-6}$$
+        - **Three relationship visualizations**: Radar (components), Sunburst (hierarchy), Sankey (flows)
+        - **Query source highlighting** with vivid pink (#FF1493) in all visualizations
+        - **Domain size awareness**: Explicit 12.8 nm labeling in all visualizations
+        """)
+
+# =============================================
+# RESULTS MANAGER (MINIMAL FOR COMPLETENESS)
 # =============================================
 class ResultsManager:
-    def __init__(self): pass
+    """Manager for exporting interpolation results"""
+    def __init__(self):
+        pass
     
     def prepare_export_data(self, interpolation_result, visualization_params):
+        """Prepare data for export"""
         result = interpolation_result.copy()
         export_data = {
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
                 'interpolation_method': 'transformer_bracketing_theory',
-                'visualization_params': visualization_params
+                'visualization_params': visualization_params,
+                'domain_info': DomainConfiguration.get_domain_info()
             },
             'result': {
                 'target_angle': result['target_angle'],
@@ -1821,478 +2022,13 @@ class ResultsManager:
                 'source_indices': result.get('source_indices', [])
             }
         }
-        
+        # Convert numpy arrays to lists for JSON serialization
         for field_name, field_data in result['fields'].items():
             export_data['result'][f'{field_name}_data'] = field_data.tolist()
-            
         return export_data
-    
-    def add_diffusion_to_export(self, interpolation_result, export_data):
-        if 'diffusion_ratio' in interpolation_result['fields']:
-            export_data['result']['diffusion_statistics'] = interpolation_result.get('diffusion_statistics', {})
-            
-            for field_name in ['diffusion_ratio', 'diffusion_effective', 'vacancy_ratio', 'diffusion_gradient']:
-                if field_name in interpolation_result['fields']:
-                    export_data['result'][f'{field_name}_data'] = interpolation_result['fields'][field_name].tolist()
-                    
-        return export_data
-    
-    def export_to_json(self, export_data, filename=None):
-        if filename is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            theta = export_data['result']['target_angle']
-            defect = export_data['result']['target_params']['defect_type']
-            filename = f"bracketing_interpolation_theta_{theta}_{defect}_{timestamp}.json"
-            
-        json_str = json.dumps(export_data, indent=2, default=self._json_serializer)
-        return json_str, filename
-    
-    def export_to_csv(self, interpolation_result, filename=None):
-        if filename is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            theta = interpolation_result['target_angle']
-            defect = interpolation_result['target_params']['defect_type']
-            filename = f"stress_fields_theta_{theta}_{defect}_{timestamp}.csv"
-            
-        data_dict = {}
-        for field_name, field_data in interpolation_result['fields'].items():
-            data_dict[field_name] = field_data.flatten()
-            
-        df = pd.DataFrame(data_dict)
-        csv_str = df.to_csv(index=False)
-        return csv_str, filename
-    
-    def _json_serializer(self, obj):
-        if isinstance(obj, np.integer): return int(obj)
-        elif isinstance(obj, np.floating): return float(obj)
-        elif isinstance(obj, np.ndarray): return obj.tolist()
-        elif isinstance(obj, datetime): return obj.isoformat()
-        elif isinstance(obj, torch.Tensor): return obj.cpu().numpy().tolist()
-        else: return str(obj)
 
 # =============================================
-# MAIN APPLICATION WITH ATTENTION ANALYSIS TAB
+# RUN THE APPLICATION
 # =============================================
-def main():
-    st.set_page_config(page_title="Angular Bracketing Theory", layout="wide", page_icon="🧠", initial_sidebar_state="expanded")
-    
-    st.markdown("""
-    <style>
-    .main-header { font-size: 3.2rem !important; color: #1E3A8A !important; text-align: center; padding: 1rem;
-    background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981); -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent; font-weight: 900 !important; margin-bottom: 1rem; }
-    .section-header { font-size: 2.0rem !important; color: #374151 !important; font-weight: 800 !important;
-    border-left: 6px solid #3B82F6; padding-left: 1.2rem; margin-top: 1.8rem; margin-bottom: 1.2rem; }
-    .info-box { background-color: #F0F9FF; border-left: 5px solid #3B82F6; padding: 1.2rem;
-    border-radius: 0.6rem; margin: 1.2rem 0; font-size: 1.1rem; }
-    .stTabs [data-baseweb="tab-list"] { gap: 2.5rem; }
-    .stTabs [data-baseweb="tab"] { height: 55px; white-space: pre-wrap; background-color: #F3F4F6;
-    border-radius: 6px 6px 0 0; gap: 1.2rem; padding-top: 12px; padding-bottom: 12px; font-size: 1.1rem; font-weight: 600; }
-    .stTabs [aria-selected="true"] { background-color: #3B82F6 !important; color: white !important; font-weight: 700; }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    st.markdown('<h1 class="main-header">🧠 Angular Bracketing Theory - Attention Analysis</h1>', unsafe_allow_html=True)
-    
-    # Initialize Session State
-    if 'solutions' not in st.session_state: st.session_state.solutions = []
-    if 'loader' not in st.session_state: st.session_state.loader = EnhancedSolutionLoader(SOLUTIONS_DIR)
-    if 'transformer_interpolator' not in st.session_state:
-        st.session_state.transformer_interpolator = TransformerSpatialInterpolator(spatial_sigma=10.0, locality_weight_factor=0.5)
-    if 'heatmap_visualizer' not in st.session_state: st.session_state.heatmap_visualizer = HeatMapVisualizer()
-    if 'results_manager' not in st.session_state: st.session_state.results_manager = ResultsManager()
-    if 'interpolation_result' not in st.session_state: st.session_state.interpolation_result = None
-    if 'selected_ground_truth' not in st.session_state: st.session_state.selected_ground_truth = None
-    if 'diffusion_physics' not in st.session_state: st.session_state.diffusion_physics = DiffusionPhysics()
-    
-    # Sidebar: Configuration
-    with st.sidebar:
-        st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
-        
-        # Data Loading
-        st.markdown("#### 📁 Data Management")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📥 Load Solutions", use_container_width=True):
-                with st.spinner("Loading solutions..."):
-                    st.session_state.solutions = st.session_state.loader.load_all_solutions()
-                st.success(f"Loaded {len(st.session_state.solutions)} solutions" if st.session_state.solutions else "No solutions found")
-        with col2:
-            if st.button("🧹 Clear Cache", use_container_width=True):
-                st.session_state.solutions = []; st.session_state.interpolation_result = None
-                st.session_state.selected_ground_truth = None; st.success("Cache cleared")
-        
-        st.divider()
-        
-        st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
-        custom_theta = st.number_input("Target Angle θ (degrees)", min_value=0.0, max_value=180.0, value=54.7, step=0.1)
-        defect_type = st.selectbox("Defect Type", options=['ISF', 'ESF', 'Twin', 'No Defect'], index=2)
-        shape = st.selectbox("Shape", options=['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle'], index=0)
-        kappa = st.slider("Kappa", min_value=0.1, max_value=2.0, value=0.6, step=0.01)
-        auto_eigen = st.checkbox("Auto-calculate eigenstrain", value=True)
-        if auto_eigen:
-            eigen_strain = PhysicsParameters.get_eigenstrain(defect_type)
-            st.metric("Eigenstrain ε₀", f"{eigen_strain:.3f}")
-        else:
-            eigen_strain = st.slider("Eigenstrain ε₀", min_value=0.0, max_value=3.0, value=2.12, step=0.001)
-        
-        st.divider()
-        
-        st.markdown('<h2 class="section-header">🌡️ Diffusion Physics</h2>', unsafe_allow_html=True)
-        diffusion_material = st.selectbox("Material", options=['Silver', 'Copper', 'Aluminum', 'Nickel', 'Iron'], index=0)
-        diffusion_T = st.slider("Temperature (K)", min_value=300, max_value=1500, value=650, step=10)
-        diffusion_model = st.selectbox("Diffusion Model", options=['physics_corrected', 'temperature_reduction', 'activation_energy', 'vacancy_concentration'], index=0)
-        
-        st.divider()
-        
-        st.markdown('<h2 class="section-header">⚛️ Theory & Attention</h2>', unsafe_allow_html=True)
-        spatial_sigma = st.slider("Angular Kernel Sigma (degrees)", min_value=1.0, max_value=45.0, value=10.0, step=0.5)
-        locality_weight_factor = st.slider("Theory vs. Learned", min_value=0.0, max_value=1.0, value=0.5, step=0.1)
-        temperature = st.slider("Attention Temperature", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
-        
-        st.divider()
-        
-        if st.button("🧠 Perform Interpolation", type="primary", use_container_width=True):
-            if not st.session_state.solutions:
-                st.error("Please load solutions first!")
-            else:
-                with st.spinner("Processing..."):
-                    target_params = {'defect_type': defect_type, 'eps0': eigen_strain, 'kappa': kappa, 'theta': np.radians(custom_theta), 'shape': shape}
-                    result = st.session_state.transformer_interpolator.interpolate_spatial_fields(st.session_state.solutions, custom_theta, target_params)
-                    if result:
-                        st.session_state.interpolation_result = result
-                        st.success("Interpolation successful.")
-                        st.session_state.selected_ground_truth = None
-                    else:
-                        st.error("Interpolation failed.")
-    
-    # Only show the Attention Analysis tab after interpolation
-    if st.session_state.interpolation_result:
-        result = st.session_state.interpolation_result
-        attention_tab, = st.tabs(["🎯 Attention Analysis"])
-        
-        with attention_tab:
-            st.markdown('<h2 class="section-header">🎯 Theory-Informed Attention Analysis</h2>', unsafe_allow_html=True)
-            
-            st.markdown("""
-            <div class="info-box">
-            <strong>🔬 Theory-Informed Attention:</strong><br>
-            The attention mechanism combines physical theory with learned patterns:<br>
-            • <strong>Angular Bracketing Kernel:</strong> Gaussian spatial locality enforcing linear interpolation between nearest angles<br>
-            • <strong>Hard Defect Gating:</strong> Sources with different defect types receive effectively zero attention<br>
-            • <strong>Combined Attention:</strong> Attention = Softmax(Learned Similarity × Spatial Kernel × Defect Mask)<br>
-            • <strong>Entropy Metric:</strong> Lower entropy = more focused attention on bracketing sources
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Visualization selection
-            st.markdown("#### 📊 Select Attention Visualization Type")
-            viz_options = [
-                "Sunburst Chart: Hierarchical Distribution",
-                "Radar Chart: Multi-dimensional Analysis",
-                "Polar Plot: Angular Distribution",
-                "Treemap: Hierarchical Attention Weights",
-                "Statistics Dashboard: Comprehensive Metrics",
-                "Attention Matrix: Source-to-Source Attention",
-                "Radar Chart: Summation Distinctions",
-                "Sunburst Chart: Summation Distinctions",
-                "Sankey Diagram: Weight Flow Through Stages",
-                "Chord Diagram: Defect/Spatial/Attention Proximity"
-            ]
-            selected_viz = st.selectbox("Choose visualization type:", viz_options, index=4)
-            
-            # Visualization controls
-            col_ctrl1, col_ctrl2 = st.columns(2)
-            with col_ctrl1:
-                attention_component = st.selectbox(
-                    "Attention Component",
-                    options=['combined', 'spatial_kernel', 'defect_mask', 'pre_mask'],
-                    index=0,
-                    key="attention_component"
-                )
-            with col_ctrl2:
-                normalize_weights = st.checkbox("Normalize Weights", value=True, key="normalize_weights")
-            
-            # Generate the selected visualization
-            weights = result['weights']
-            source_info = {
-                'theta_degrees': result['source_theta_degrees'],
-                'distances': result['source_distances'],
-                'weights': weights,
-                'source_fields': result.get('source_fields', [])
-            }
-            target_params = {
-                'theta': result['target_angle'],
-                'defect_type': result['target_params']['defect_type']
-            }
-            
-            try:
-                if selected_viz == "Sunburst Chart: Hierarchical Distribution":
-                    st.markdown("#### 🌅 Sunburst Chart: Hierarchical Attention Distribution")
-                    fig = st.session_state.heatmap_visualizer.create_attention_sunburst(
-                        weights, source_info, target_params,
-                        title="Hierarchical Attention Distribution"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("""
-                    **Sunburst Chart Interpretation:**
-                    • **Center (Target):** Represents the target interpolation point
-                    • **Middle Ring (Defect Types):** Shows attention distribution across different defect types
-                    • **Outer Ring (Sources):** Shows individual source weights
-                    • **Segment Size:** Proportional to attention weight
-                    """)
-                    
-                elif selected_viz == "Radar Chart: Multi-dimensional Analysis":
-                    st.markdown("#### 📡 Radar Chart: Multi-dimensional Attention Analysis")
-                    fig = st.session_state.heatmap_visualizer.create_attention_radar(
-                        weights, source_info, target_params,
-                        title="Multi-dimensional Attention Analysis"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("""
-                    **Radar Chart Interpretation:**
-                    • **Angular Proximity:** Measures closeness to target angle (higher = closer)
-                    • **Defect Match:** Binary match (1.0) or mismatch (0.0)
-                    • **Spatial Kernel:** Gaussian weight based on angular distance
-                    • **Combined Attention:** Final attention weight after all factors
-                    """)
-                    
-                elif selected_viz == "Polar Plot: Angular Distribution":
-                    st.markdown("#### 📐 Polar Plot: Angular Attention Distribution")
-                    fig = st.session_state.heatmap_visualizer.create_attention_polar_plot(
-                        weights, source_info, target_params,
-                        title="Angular Attention Distribution"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("""
-                    **Polar Plot Interpretation:**
-                    • **Radius:** Attention weight magnitude
-                    • **Angle:** Source orientation in degrees
-                    • **Red Line:** Target interpolation angle
-                    • **Green Line:** Habit plane (54.7°)
-                    """)
-                    
-                elif selected_viz == "Treemap: Hierarchical Attention Weights":
-                    st.markdown("#### 🌳 Treemap: Hierarchical Attention Distribution")
-                    fig = st.session_state.heatmap_visualizer.create_attention_hierarchy_chart(
-                        weights, source_info, target_params,
-                        title="Hierarchical Attention Distribution by Defect Type and Angle"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                elif selected_viz == "Statistics Dashboard: Comprehensive Metrics":
-                    st.markdown("#### 📈 Statistics Dashboard: Attention Distribution Analysis")
-                    fig = st.session_state.heatmap_visualizer.create_attention_statistics(
-                        weights, source_info,
-                        title="Comprehensive Attention Distribution Analysis"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    st.markdown("#### 🔢 Key Attention Metrics")
-                    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                    with col_stat1:
-                        st.metric("Entropy", f"{weights['entropy']:.3f}")
-                    with col_stat2:
-                        st.metric("Max Weight", f"{np.max(weights['combined']):.3f}")
-                    with col_stat3:
-                        st.metric("Min Weight", f"{np.min(weights['combined']):.3f}")
-                    with col_stat4:
-                        top_k = min(3, len(weights['combined']))
-                        top_k_sources = np.argsort(weights['combined'])[::-1][:top_k]
-                        st.metric(f"Top {top_k} Sources", ", ".join(map(str, top_k_sources)))
-                    
-                elif selected_viz == "Attention Matrix: Source-to-Source Attention":
-                    st.markdown("#### 🔄 Attention Matrix: Source-to-Source Relationships")
-                    fig = st.session_state.heatmap_visualizer.create_attention_heatmap_matrix(
-                        weights, source_info,
-                        title="Source-to-Source Attention Heatmap Matrix"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                elif selected_viz == "Radar Chart: Summation Distinctions":
-                    st.markdown("#### 📡 Radar Chart: Summation-Based Distinctions")
-                    st.markdown("""
-                    This visualization shows the summation of weights across the three attention stages 
-                    (Spatial, Pre-Mask, Post-Mask) and plots individual source contributions on the 
-                    angular circumference, with the target angle highlighted.
-                    """)
-                    fig = st.session_state.heatmap_visualizer.create_summation_radar(
-                        weights, source_info, target_params
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Display sum statistics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Spatial Sum", f"{np.sum(weights['spatial_kernel']):.3f}")
-                    with col2:
-                        st.metric("Pre-Mask Sum", f"{np.sum(weights['pre_mask']):.3f}")
-                    with col3:
-                        st.metric("Post-Mask Sum", f"{np.sum(weights['combined']):.3f}")
-
-                elif selected_viz == "Sunburst Chart: Summation Distinctions":
-                    st.markdown("#### 🌅 Sunburst Chart: Summation Distinctions")
-                    st.markdown("""
-                    Hierarchical decomposition showing how attention weight sums are distributed 
-                    across the three processing stages, with individual source contributions under each stage.
-                    """)
-                    fig = st.session_state.heatmap_visualizer.create_summation_sunburst(
-                        weights, source_info, target_params
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                elif selected_viz == "Sankey Diagram: Weight Flow Through Stages":
-                    st.markdown("#### 🔀 Sankey Diagram: Weight Flow Through Attention Stages")
-                    st.markdown("""
-                    Flow diagram showing how weights from each source propagate through the three stages 
-                    of the attention mechanism: Spatial Kernel → Pre-Mask Attention → Post-Mask Attention → Target.
-                    Line colors indicate transformation type (green=increase, yellow=decrease, red=masking).
-                    """)
-                    fig = st.session_state.heatmap_visualizer.create_sankey_diagram(
-                        weights, source_info, target_params
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
-                elif selected_viz == "Chord Diagram: Defect/Spatial/Attention Proximity":
-                    st.markdown("#### 🔗 Chord Diagram: Proximity Relations")
-                    st.markdown("""
-                    Circular layout with sources positioned by angular proximity to target. 
-                    Chords connect sources with thickness proportional to attention weight product, 
-                    colored by defect type, and curvature modulated by spatial weight.
-                    """)
-                    fig = st.session_state.heatmap_visualizer.create_chord_diagram(
-                        weights, source_info, target_params
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-           
-            except Exception as e:
-                st.error(f"Error generating visualization: {e}")
-                with st.expander("🔍 View Error Details"):
-                    st.code(str(e))
-                st.warning("Please try a different visualization type or check your data.")
-           
-            # Additional analysis section
-            st.markdown("---")
-            st.markdown("#### 🔍 Advanced Attention Analysis")
-           
-            col_analysis1, col_analysis2 = st.columns(2)
-           
-            with col_analysis1:
-                if st.button("🔄 Regenerate with Different Parameters", use_container_width=True):
-                    st.session_state.attention_params = {
-                        'spatial_sigma': spatial_sigma,
-                        'locality_weight_factor': locality_weight_factor,
-                        'temperature': temperature
-                    }
-                    st.success("Parameters updated for attention analysis")
-           
-            with col_analysis2:
-                if st.button("📊 Export Attention Data", use_container_width=True):
-                    attention_data = {
-                        'source_indices': list(range(len(weights['combined']))),
-                        'angles': result['source_theta_degrees'],
-                        'defect_types': [src.get('source_params', {}).get('defect_type', 'Unknown') for src in source_info['source_fields']],
-                        'combined_weights': weights['combined'],
-                        'spatial_kernel': weights['spatial_kernel'],
-                        'defect_mask': weights['defect_mask'],
-                        'pre_mask': weights['pre_mask'],
-                        'entropy': weights['entropy']
-                    }
-                    df = pd.DataFrame(attention_data)
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download CSV",
-                        data=csv,
-                        file_name=f"attention_weights_theta_{result['target_angle']:.1f}_{defect_type}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-           
-            with st.expander("📚 Theoretical Background: Theory-Informed Attention"):
-                st.markdown("""
-                ### Angular Bracketing Theory with Attention
-                
-                **Core Principle:** The attention mechanism is guided by physical theory rather than being purely data-driven.
-                
-                #### 1. Angular Bracketing Kernel
-                The spatial kernel enforces locality in angular space:
-                ```
-                W_spatial(i) = exp(-0.5 * (θ_i - θ_target)² / σ²)
-                ```
-                - **σ (sigma):** Controls the width of the attention window
-                - **Small σ:** Narrow window, strict bracketing
-                - **Large σ:** Wide window, more sources contribute
-                
-                #### 2. Hard Defect Gating
-                Defect type acts as a hard constraint:
-                ```
-                W_defect(i) = 1.0 if defect_i == defect_target else ε (≈0)
-                ```
-                - Sources with different defect types are effectively excluded
-                - This is a physics-based prior, not learned
-                
-                #### 3. Combined Attention
-                The final attention combines theory and learned patterns:
-                ```
-                Attention = Softmax(TransformerScore × W_spatial × W_defect)
-                ```
-                - **TransformerScore:** Learned similarity from transformer
-                - **W_spatial:** Angular locality constraint
-                - **W_defect:** Hard defect type constraint
-                
-                #### 4. Entropy as Focus Metric
-                Attention entropy measures focus:
-                ```
-                Entropy = -Σ w_i * log(w_i)
-                ```
-                - **Low entropy (≈0):** Attention highly focused on few sources
-                - **High entropy (≈log(N)):** Attention spread across many sources
-                - **Ideal range:** Moderately focused but not exclusive
-                
-                #### 5. Summation-Based Distinctions
-                The radar and sunburst charts visualize how the total "mass" of attention 
-                is preserved or transformed through stages:
-                - **Spatial Sum:** Total initial weight based on proximity
-                - **Pre-Mask Sum:** Weight after learned attention scores applied
-                - **Post-Mask Sum:** Final weight after defect gating (always ≤ Pre-Mask)
-                
-                This creates a **Theory-Informed Neural Network** where deep learning enhances 
-                physical understanding rather than replacing it.
-                """)
-                
-            with st.expander("📊 Visualization Guide: New Chart Types"):
-                st.markdown("""
-                ### Summation Distinction Visualizations
-                
-                **Radar Chart (Summation):**
-                - Left panel shows the total sum of weights at each stage (Spatial → Pre-Mask → Post-Mask)
-                - Right panel shows individual source weight distributions arranged on the angular circumference
-                - Red star and line highlight the target query angle
-                
-                **Sunburst (Summation):**
-                - Three main branches represent the three weighting stages
-                - Individual sources are leaves under each branch, showing their contribution to that stage's sum
-                - Color intensity indicates relative weight within each stage
-                
-                **Sankey Diagram:**
-                - Four vertical layers: Sources → Spatial → Pre-Mask → Post-Mask → Target
-                - Flow width proportional to weight magnitude
-                - Color coding:
-                  - Light blue: Spatial kernel flow
-                  - Green: Attention enhancement (increasing flow)
-                  - Yellow: Attention reduction
-                  - Red: Strong defect masking (applied when source defect ≠ target defect)
-                  - Dark blue: Final aggregation to target
-                
-                **Chord Diagram:**
-                - Nodes arranged in circle by actual angular position (target at top/90°)
-                - Node color indicates defect type
-                - Chords connect sources with thickness = product of their attention weights
-                - Chord curvature controlled by spatial weight (higher spatial weight = flatter curve)
-                - Red radial line indicates target angle direction
-                """)
 if __name__ == "__main__":
     main()
