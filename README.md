@@ -287,6 +287,8 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/diffusionfromstress57-streamlit-red)](https://stress-mediated-diffusion57.streamlit.app/) (Model 51 with dimension label in nm, Same as Model 56)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts58-streamlit-red)](https://mechanicalstress-interpolation-at-theta58.streamlit.app/) (advanced visualization of weights and coefficients of G-ADW Attention, agnostic to the domain geometry's units)
+
 
 
 
