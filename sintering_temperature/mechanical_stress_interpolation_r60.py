@@ -137,6 +137,7 @@ class TransformerSpatialInterpolator:
     
     def interpolate_spatial_fields(self, sources, target_angle_deg, target_params):
         if not sources:
+            st.error("No sources provided for interpolation.")
             return None
         
         try:
@@ -239,7 +240,8 @@ class TransformerSpatialInterpolator:
                     'defect_weight': defect_w,
                     'attention_weight': attention_weight,
                     'combined_weight': combined_w,
-                    'target_defect_match': field['source_params'].get('defect_type') == target_params['defect_type']
+                    'target_defect_match': field['source_params'].get('defect_type') == target_params['defect_type'],
+                    'source_params': field['source_params']
                 })
             
             return {
@@ -259,7 +261,7 @@ class TransformerSpatialInterpolator:
             return None
 
 # =============================================
-# ENHANCED SANKEY VISUALIZER - FIXED VERSION
+# ENHANCED SANKEY VISUALIZER
 # =============================================
 class EnhancedSankeyVisualizer:
     def __init__(self):
@@ -274,12 +276,11 @@ class EnhancedSankeyVisualizer:
     
     def create_enhanced_sankey(
         self,
-        sources_ List[Dict[str, Any]],
+        sources_data: List[Dict[str, Any]],
         target_angle: float,
         target_defect: str,
-        target_shape: str,        # ADDED: Target shape parameter
-        target_kappa: float,      # ADDED: Target kappa parameter (FIXES KeyError)
         spatial_sigma: float,
+        target_params: Dict[str, Any],
         # CUSTOMIZATION PARAMETERS
         label_font_size: int = 16,
         title_font_size: int = 24,
@@ -294,12 +295,40 @@ class EnhancedSankeyVisualizer:
         show_link_labels: bool = True,
         link_line_width: float = 0.5
     ) -> go.Figure:
+        
+        # Check if sources_data is empty
+        if not sources_data:
+            st.error("No source data available for Sankey diagram.")
+            # Create an empty figure with error message
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No source data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=24, color="red")
+            )
+            fig.update_layout(
+                title="Error: No Data Available",
+                paper_bgcolor='white',
+                plot_bgcolor='white',
+                width=diagram_width,
+                height=diagram_height
+            )
+            return fig
+        
+        # Get target kappa safely
+        target_kappa = target_params.get('kappa', 0.6)
+        target_shape = target_params.get('shape', 'Square')
+        
         # Create nodes
         labels = ['Target']
-        for source in sources_
+        for source in sources_data:
             angle = source['theta_deg']
             defect = source['defect_type']
-            labels.append(f"S{source['source_index']}\n{defect}\n{angle:.1f}°")
+            # Get source kappa safely
+            source_kappa = source.get('source_params', {}).get('kappa', 0.6)
+            labels.append(f"S{source['source_index']}\n{defect}\n{angle:.1f}°\nκ={source_kappa:.2f}")
         
         component_start = len(labels)
         component_labels = ['Spatial Kernel', 'Defect Match', 'Attention Score', 'Combined Weight']
@@ -353,8 +382,12 @@ class EnhancedSankeyVisualizer:
             source_indices.append(component_start + comp_idx)
             target_indices.append(0)
             
-            comp_value = sum(v for s, t, v in zip(source_indices[:-4], target_indices[:-4], values[:-4])
-                           if t == component_start + comp_idx)
+            # Calculate component value safely
+            comp_value = 0
+            for s_idx, t_idx, val in zip(source_indices[:-4], target_indices[:-4], values[:-4]):
+                if t_idx == component_start + comp_idx:
+                    comp_value += val
+            
             values.append(comp_value * 0.5)
             
             base_colors = [
@@ -370,6 +403,7 @@ class EnhancedSankeyVisualizer:
         bg_color = 'rgb(30, 30, 30)' if use_dark_mode else 'rgba(245, 247, 250, 0.95)'
         paper_color = 'rgb(20, 20, 20)' if use_dark_mode else 'white'
         text_color = 'white' if use_dark_mode else '#2C3E50'
+        grid_color = 'rgba(255, 255, 255, 0.1)' if use_dark_mode else 'rgba(0, 0, 0, 0.1)'
         
         # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
@@ -407,8 +441,8 @@ class EnhancedSankeyVisualizer:
             title=dict(
                 text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>'
                      f'<span style="font-size: {title_font_size-4}px; font-weight: normal;">'
-                     f'Target: {target_angle}° {target_defect} | Shape: {target_shape} | '
-                     f'κ={target_kappa:.2f} | σ={spatial_sigma}°</span>',  # FIXED: Uses target_kappa parameter
+                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}° | '
+                     f'κ={target_kappa:.2f} | Shape: {target_shape}</span>',
                 font=dict(
                     family='Arial, sans-serif',
                     size=title_font_size,
@@ -447,7 +481,7 @@ class EnhancedSankeyVisualizer:
                 dict(
                     x=0.02, y=-0.08,
                     xref='paper', yref='paper',
-                    text='<b>COLOR CODING:</b>',
+                    text='<b style="font-size: 16px;">COLOR CODING:</b>',
                     showarrow=False,
                     font=dict(size=legend_font_size + 2, color=text_color, family='Arial', weight='bold')
                 ),
@@ -534,12 +568,16 @@ class SolutionLoader:
         standardized = {'params': {}, 'history': []}
         try:
             if isinstance(data, dict):
-                if 'params' in 
+                if 'params' in data:
                     standardized['params'] = data['params']
-                elif 'parameters' in 
+                elif 'parameters' in data:
                     standardized['params'] = data['parameters']
+                elif 'param' in data:
+                    standardized['params'] = data['param']
+                elif 'config' in data:
+                    standardized['params'] = data['config']
                 
-                if 'history' in 
+                if 'history' in data:
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
@@ -549,9 +587,28 @@ class SolutionLoader:
                             if isinstance(history[key], dict):
                                 history_list.append(history[key])
                         standardized['history'] = history_list
+                elif 'results' in data:
+                    standardized['history'] = [{'stresses': data['results']}]
+                elif 'stresses' in data:
+                    standardized['history'] = [{'stresses': data['stresses']}]
                 
                 # Convert tensors to numpy
                 self._convert_tensors(standardized)
+                
+                # Ensure required parameters exist
+                if 'theta' not in standardized['params']:
+                    standardized['params']['theta'] = 0.0
+                if 'defect_type' not in standardized['params']:
+                    standardized['params']['defect_type'] = 'Twin'
+                if 'eps0' not in standardized['params']:
+                    standardized['params']['eps0'] = PhysicsParameters.get_eigenstrain(
+                        standardized['params'].get('defect_type', 'Twin')
+                    )
+                if 'kappa' not in standardized['params']:
+                    standardized['params']['kappa'] = 0.6
+                if 'shape' not in standardized['params']:
+                    standardized['params']['shape'] = 'Square'
+                    
         except Exception as e:
             st.error(f"Standardization error: {e}")
         return standardized
@@ -577,12 +634,13 @@ class SolutionLoader:
         if max_files:
             file_info = file_info[:max_files]
         
-        st.info(f"📁 Found {len(file_info)} solution files. Loading all...")
+        if file_info:
+            st.info(f"📁 Found {len(file_info)} solution files. Loading all...")
         
         for i, info in enumerate(file_info):
             with st.spinner(f"Loading file {i+1}/{len(file_info)}: {info['filename']}"):
                 solution = self.load_solution(info['path'])
-                if solution and 'params' in solution and 'theta' in solution['params']:
+                if solution:
                     solutions.append(solution)
         
         return solutions
@@ -633,13 +691,20 @@ def main():
         padding-bottom: 0.5rem;
         margin-bottom: 1rem;
     }
+    .warning-box {
+        background: linear-gradient(135deg, #FFF3CD, #FFEAA7);
+        padding: 1rem;
+        border-radius: 10px;
+        border: 2px solid #FFC107;
+        margin: 1rem 0;
+    }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown('<h1 class="main-header">🌊 ENHANCED SANKEY VISUALIZATION - WEIGHT COMPONENTS</h1>', unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align: center; background: linear-gradient(135deg, #E0F7FA, #E3F2FD); padding: 1rem; border-radius: 10px; margin-bottom: 1.5rem;">
-        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel × Defect Mask × Learned Attention × Kappa (Material Parameter)
+        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel (Angular Bracketing) × Defect Mask (Hard Constraint) × Learned Attention × Kappa (Material Parameter)
     </div>
     """, unsafe_allow_html=True)
     
@@ -666,13 +731,43 @@ def main():
                 if st.session_state.solutions:
                     st.success(f"✅ Loaded {len(st.session_state.solutions)} solutions")
                     # Show summary
-                    angles = [np.degrees(sol['params']['theta']) % 360 for sol in st.session_state.solutions if 'theta' in sol['params']]
-                    defects = [sol['params'].get('defect_type', 'Unknown') for sol in st.session_state.solutions]
-                    shapes = [sol['params'].get('shape', 'Unknown') for sol in st.session_state.solutions]
-                    st.info(f"Angles: {min(angles):.1f}°–{max(angles):.1f}° | Defects: {', '.join(set(defects))} | Shapes: {', '.join(set(shapes))}")
+                    angles = []
+                    defects = []
+                    shapes = []
+                    kappas = []
+                    
+                    for sol in st.session_state.solutions:
+                        if 'params' in sol:
+                            params = sol['params']
+                            if 'theta' in params:
+                                angles.append(np.degrees(params['theta']) % 360)
+                            if 'defect_type' in params:
+                                defects.append(params['defect_type'])
+                            if 'shape' in params:
+                                shapes.append(params['shape'])
+                            if 'kappa' in params:
+                                kappas.append(params['kappa'])
+                    
+                    if angles:
+                        st.info(f"Angles: {min(angles):.1f}°–{max(angles):.1f}°")
+                    if defects:
+                        st.info(f"Defects: {', '.join(set(defects))}")
+                    if shapes:
+                        st.info(f"Shapes: {', '.join(set(shapes))}")
+                    if kappas:
+                        st.info(f"Kappa range: {min(kappas):.2f}–{max(kappas):.2f}")
                 else:
-                    st.warning(f"⚠️ No solution files found in: {SOLUTIONS_DIR}")
-                    st.info("💡 Place .pkl/.pt files with simulation results in the numerical_solutions directory")
+                    st.warning(f"⚠️ No valid solution files found in: {SOLUTIONS_DIR}")
+                    st.markdown("""
+                    <div class="warning-box">
+                    💡 <strong>Place .pkl/.pt files with simulation results in:</strong><br>
+                    <code>numerical_solutions/</code><br><br>
+                    <strong>Expected format:</strong><br>
+                    - Dictionary with 'params' and 'history' keys<br>
+                    - 'params' should include: theta, defect_type, eps0, kappa, shape<br>
+                    - 'history' should contain stress field data
+                    </div>
+                    """, unsafe_allow_html=True)
         
         st.divider()
         
@@ -709,7 +804,7 @@ def main():
             help="Geometry shape of the defect configuration"
         )
         
-        # KAPPA PARAMETER INPUT
+        # KAPPA PARAMETER INPUT (Learned from user request)
         target_kappa = st.number_input(
             "Kappa (κ) - Material Parameter",
             min_value=0.1,
@@ -860,16 +955,16 @@ def main():
                         target_params
                     )
                     
-                    if result:
+                    if result and result['sources_data']:
                         st.session_state.interpolation_result = result
                         st.success(f"✅ Interpolation complete! {len(result['sources_data'])} sources processed")
                         st.session_state.target_angle = target_angle
                         st.session_state.target_defect = target_defect
-                        st.session_state.target_shape = target_shape
-                        st.session_state.target_kappa = target_kappa
                         st.session_state.spatial_sigma = spatial_sigma
+                        st.session_state.target_kappa = target_kappa
+                        st.session_state.target_shape = target_shape
                     else:
-                        st.error("❌ Interpolation failed - check solution file format")
+                        st.error("❌ Interpolation failed - no valid sources found for the given parameters")
     
     # MAIN CONTENT AREA
     if not st.session_state.solutions:
@@ -919,32 +1014,54 @@ def main():
     st.markdown('<div class="config-section">', unsafe_allow_html=True)
     st.markdown("### 📊 Loaded Solutions Summary")
     col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
         st.metric("Total Solutions", len(st.session_state.solutions))
+    
     with col2:
-        angles = [np.degrees(sol['params']['theta']) % 360 for sol in st.session_state.solutions if 'theta' in sol['params']]
-        st.metric("Angle Range", f"{min(angles):.1f}°–{max(angles):.1f}°")
+        angles = []
+        for sol in st.session_state.solutions:
+            if 'params' in sol and 'theta' in sol['params']:
+                angles.append(np.degrees(sol['params']['theta']) % 360)
+        if angles:
+            st.metric("Angle Range", f"{min(angles):.1f}°–{max(angles):.1f}°")
+        else:
+            st.metric("Angle Range", "N/A")
+    
     with col3:
-        defects = [sol['params'].get('defect_type', 'Unknown') for sol in st.session_state.solutions]
-        st.metric("Defect Types", len(set(defects)))
+        defects = []
+        for sol in st.session_state.solutions:
+            if 'params' in sol and 'defect_type' in sol['params']:
+                defects.append(sol['params']['defect_type'])
+        if defects:
+            st.metric("Defect Types", len(set(defects)))
+        else:
+            st.metric("Defect Types", "N/A")
+    
     with col4:
-        shapes = [sol['params'].get('shape', 'Unknown') for sol in st.session_state.solutions]
-        st.metric("Shape Types", len(set(shapes)))
+        shapes = []
+        for sol in st.session_state.solutions:
+            if 'params' in sol and 'shape' in sol['params']:
+                shapes.append(sol['params']['shape'])
+        if shapes:
+            st.metric("Shape Types", len(set(shapes)))
+        else:
+            st.metric("Shape Types", "N/A")
+    
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Display Sankey diagram if interpolation performed
-    if st.session_state.interpolation_result:
+    if st.session_state.interpolation_result and st.session_state.interpolation_result['sources_data']:
         st.markdown('<div class="viz-container">', unsafe_allow_html=True)
         st.markdown("### 🌊 Enhanced Sankey Diagram: Attention Component Flow")
         
-        # Create and display diagram with current settings - FIXED: Pass target_kappa and target_shape
+        # Create and display diagram with current settings
         fig = st.session_state.visualizer.create_enhanced_sankey(
             sources_data=st.session_state.interpolation_result['sources_data'],
             target_angle=st.session_state.target_angle,
             target_defect=st.session_state.target_defect,
-            target_shape=st.session_state.target_shape,  # ADDED
-            target_kappa=st.session_state.target_kappa,  # ADDED (FIXES KeyError)
             spatial_sigma=st.session_state.spatial_sigma,
+            target_params=st.session_state.interpolation_result['target_params'],
             label_font_size=label_font_size,
             title_font_size=title_font_size,
             legend_font_size=legend_font_size,
@@ -965,13 +1082,34 @@ def main():
         # Weight table with KAPPA information
         st.markdown("### 📋 Weight Components Breakdown")
         df = pd.DataFrame(st.session_state.interpolation_result['sources_data'])
+        
+        # Ensure all required columns exist
+        required_columns = ['source_index', 'theta_deg', 'defect_type', 'angular_dist', 
+                           'spatial_weight', 'defect_weight', 'attention_weight', 
+                           'combined_weight', 'target_defect_match']
+        
+        for col in required_columns:
+            if col not in df.columns:
+                df[col] = 0.0
+        
+        # Add kappa column from source_params if available
+        df['kappa'] = df.apply(
+            lambda row: row.get('source_params', {}).get('kappa', 0.6) if isinstance(row.get('source_params'), dict) else 0.6,
+            axis=1
+        )
+        
+        # Display the dataframe
+        display_cols = ['source_index', 'theta_deg', 'defect_type', 'kappa', 'angular_dist', 
+                       'spatial_weight', 'defect_weight', 'attention_weight', 
+                       'combined_weight', 'target_defect_match']
+        
         st.dataframe(
-            df[['source_index', 'theta_deg', 'defect_type', 'angular_dist', 'spatial_weight', 
-                'defect_weight', 'attention_weight', 'combined_weight', 'target_defect_match']].style
+            df[display_cols].style
             .background_gradient(subset=['combined_weight'], cmap='viridis')
             .format({
                 'theta_deg': '{:.1f}°',
                 'angular_dist': '{:.1f}°',
+                'kappa': '{:.2f}',
                 'spatial_weight': '{:.4f}',
                 'defect_weight': '{:.2e}',
                 'attention_weight': '{:.4f}',
@@ -1011,6 +1149,9 @@ def main():
         - Physics priors (spatial + defect) modulate learned attention
         - Ensures physically valid interpolation while leveraging pattern recognition
         """)
+    elif st.session_state.interpolation_result and not st.session_state.interpolation_result['sources_data']:
+        st.warning("⚠️ Interpolation completed but no valid sources were found for the given parameters.")
+        st.info("Try adjusting the target parameters or load more diverse solution files.")
     else:
         st.info("👈 Configure target parameters in the sidebar (including **Shape** and **Kappa**) and click **'PERFORM INTERPOLATION'** to generate the Sankey diagram")
 
