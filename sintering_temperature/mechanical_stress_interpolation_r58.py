@@ -24,6 +24,7 @@ import re
 import time
 import networkx as nx
 import warnings
+from math import cos, sin, pi
 warnings.filterwarnings('ignore')
 
 # =============================================
@@ -50,21 +51,35 @@ VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
 
+# =============================================
+# EXTENSIVE COLORMAP LIBRARY (50+ COLORMAPS)
+# =============================================
 COLORMAP_OPTIONS = {
-    'Sequential': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'hot', 'afmhot', 'gist_heat',
-                  'copper', 'summer', 'Wistia', 'spring', 'autumn', 'winter', 'bone', 'gray', 'pink',
-                  'gist_gray', 'gist_yarg', 'binary', 'gist_earth', 'terrain', 'ocean', 'gist_stern', 'gnuplot',
-                  'gnuplot2', 'CMRmap', 'cubehelix', 'brg', 'gist_rainbow', 'rainbow', 'jet', 'nipy_spectral',
-                  'gist_ncar', 'hsv'],
+    'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'turbo', 'rocket', 'mako', 'flare', 'crest'],
+    'Sequential': ['Greys', 'Purples', 'Blues', 'Greens', 'Oranges', 'Reds', 'YlOrBr', 'YlOrRd', 'OrRd', 'PuRd', 
+                   'RdPu', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn', 'BuGn', 'YlGn', 'binary', 'gist_yarg', 
+                   'gist_gray', 'gray', 'bone', 'pink', 'spring', 'summer', 'autumn', 'winter', 'cool', 'Wistia', 
+                   'hot', 'afmhot', 'gist_heat', 'copper'],
     'Diverging': ['RdBu', 'RdYlBu', 'Spectral', 'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn', 'PuOr',
-                 'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+                  'RdGy', 'RdYlGn', 'Spectral_r', 'coolwarm_r', 'bwr_r', 'seismic_r'],
+    'Rainbow Family': ['rainbow', 'jet', 'gist_rainbow', 'nipy_spectral', 'gist_ncar', 'hsv', 'prism', 'flag',
+                       'rainbow_r', 'jet_r', 'gist_rainbow_r', 'nipy_spectral_r', 'gist_ncar_r', 'hsv_r'],
+    'Cyclic': ['hsv', 'twilight', 'twilight_shifted', 'phase'],
     'Qualitative': ['tab10', 'tab20', 'Set1', 'Set2', 'Set3', 'tab20b', 'tab20c', 'Pastel1', 'Pastel2',
-                   'Paired', 'Accent', 'Dark2'],
-    'Perceptually Uniform': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'twilight', 'twilight_shifted',
-                            'turbo'],
+                    'Paired', 'Accent', 'Dark2'],
+    'Geographical': ['terrain', 'ocean', 'gist_earth', 'gist_stern', 'brg', 'CMRmap', 'cubehelix',
+                     'terrain_r', 'ocean_r', 'gist_earth_r', 'gist_stern_r'],
+    'Temperature': ['hot', 'afmhot', 'gist_heat', 'coolwarm', 'bwr', 'seismic'],
+    'Specialized': ['gist_earth', 'gist_stern', 'gnuplot', 'gnuplot2', 'CMRmap', 'cubehelix', 'brg'],
     'Publication Standard': ['viridis', 'plasma', 'inferno', 'magma', 'cividis', 'RdBu', 'RdBu_r', 'Spectral',
-                            'coolwarm', 'bwr', 'seismic', 'BrBG']
+                             'coolwarm', 'bwr', 'seismic', 'BrBG', 'PiYG', 'PRGn']
 }
+
+# Create comprehensive list of all colormaps
+ALL_COLORMAPS = []
+for category in COLORMAP_OPTIONS.values():
+    ALL_COLORMAPS.extend(category)
+ALL_COLORMAPS = sorted(list(set(ALL_COLORMAPS)))  # Remove duplicates
 
 # =============================================
 # DOMAIN SIZE CONFIGURATION - 12.8 nm × 12.8 nm
@@ -517,12 +532,15 @@ class TransformerSpatialInterpolator:
                 
             source_theta_degrees = [np.degrees(src.get('theta', 0.0)) % 360 for src in source_params]
             
-            # Prepare weight analysis data
+            # Prepare weight analysis data with all components
             sources_data = []
             for i, (field, theta_deg, angular_dist, spatial_w, defect_w, combined_w) in enumerate(zip(
                 source_fields, source_theta_degrees, angular_distances, 
                 spatial_kernel, defect_mask, final_attention_weights
             )):
+                # Calculate attention weight (from transformer)
+                attention_weight = attn_scores.squeeze().detach().cpu().numpy()[i] if i < len(attn_scores.squeeze()) else 0.0
+                
                 sources_data.append({
                     'source_index': i,
                     'theta_deg': theta_deg,
@@ -530,6 +548,7 @@ class TransformerSpatialInterpolator:
                     'defect_type': field['source_params'].get('defect_type', 'Unknown'),
                     'spatial_weight': spatial_w,
                     'defect_weight': defect_w,
+                    'attention_weight': attention_weight,
                     'combined_weight': combined_w,
                     'target_defect_match': field['source_params'].get('defect_type') == target_params['defect_type'],
                     'is_query': False
@@ -589,24 +608,538 @@ class TransformerSpatialInterpolator:
         return -np.sum(weights * np.log(weights + 1e-10))
 
 # =============================================
-# ENHANCED WEIGHT VISUALIZER WITH ALL DIAGRAMS
+# ENHANCED WEIGHT VISUALIZER WITH ADVANCED DIAGRAMS
 # =============================================
 class WeightVisualizer:
     def __init__(self):
+        # Enhanced color scheme with high contrast
         self.color_scheme = {
-            'Twin': '#FF6B6B',
-            'ISF': '#4ECDC4',
-            'ESF': '#95E1D3',
-            'No Defect': '#FFD93D',
-            'Query': '#9D4EDD'
+            'Twin': '#FF6B6B',      # Bright Red
+            'ISF': '#4ECDC4',       # Turquoise
+            'ESF': '#95E1D3',       # Light Teal
+            'No Defect': '#FFD93D', # Bright Yellow
+            'Query': '#9D4EDD',     # Purple
+            'Spatial': '#36A2EB',   # Bright Blue
+            'Defect': '#FF6384',    # Pink
+            'Attention': '#4BC0C0', # Cyan
+            'Combined': '#9966FF'   # Purple
+        }
+        
+        # Font configuration for high readability
+        self.font_config = {
+            'family': 'Arial, sans-serif',
+            'size_title': 24,
+            'size_labels': 18,
+            'size_ticks': 14,
+            'color': '#2C3E50',
+            'weight': 'bold'
+        }
+        
+        # High contrast color maps for different visualizations
+        self.color_maps = {
+            'sankey': 'viridis',
+            'chord': 'plasma',
+            'radar': 'inferno',
+            'sunburst': 'magma',
+            'treemap': 'turbo',
+            'heatmap': 'jet'
         }
     
+    def get_colormap(self, cmap_name, n_colors=10):
+        """Get color palette from colormap"""
+        try:
+            cmap = plt.get_cmap(cmap_name)
+            return [f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})' 
+                   for r, g, b, _ in [cmap(i/n_colors) for i in range(n_colors)]]
+        except:
+            # Fallback to viridis
+            cmap = plt.get_cmap('viridis')
+            return [f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})' 
+                   for r, g, b, _ in [cmap(i/n_colors) for i in range(n_colors)]]
+    
+    def create_enhanced_sankey_diagram(self, sources_data, target_angle, target_defect, spatial_sigma):
+        """
+        Create enhanced Sankey diagram with improved fonts, contrast, and colors
+        """
+        # Create nodes for Sankey diagram
+        labels = ['Target']  # Start with target node
+        
+        # Add source nodes with enhanced labels
+        for source in sources_data:
+            angle = source['theta_deg']
+            defect = source['defect_type']
+            labels.append(f"S{source['source_index']}\n{defect}\n{angle:.1f}°")
+        
+        # Add component nodes
+        component_start = len(labels)
+        labels.extend(['Spatial Kernel', 'Defect Match', 'Attention Score', 'Combined Weight'])
+        
+        # Create links
+        source_indices = []
+        target_indices = []
+        values = []
+        colors = []
+        link_labels = []
+        
+        # Get vibrant color palette
+        color_palette = self.get_colormap(self.color_maps['sankey'], len(sources_data) + 4)
+        
+        # Links from sources to components
+        for i, source in enumerate(sources_data):
+            source_idx = i + 1  # +1 because index 0 is target
+            
+            # Get vibrant color for this source
+            source_color = color_palette[i % len(color_palette)]
+            
+            # Link to spatial kernel
+            source_indices.append(source_idx)
+            target_indices.append(component_start)
+            spatial_value = source['spatial_weight'] * 100  # Scale for visibility
+            values.append(spatial_value)
+            colors.append(f'rgba(54, 162, 235, 0.8)')  # Blue for spatial
+            link_labels.append(f"Spatial: {source['spatial_weight']:.3f}")
+            
+            # Link to defect match
+            source_indices.append(source_idx)
+            target_indices.append(component_start + 1)
+            defect_value = source['defect_weight'] * 100
+            values.append(defect_value)
+            colors.append(f'rgba(255, 99, 132, 0.8)')  # Pink for defect
+            link_labels.append(f"Defect: {source['defect_weight']:.3f}")
+            
+            # Link to attention score
+            source_indices.append(source_idx)
+            target_indices.append(component_start + 2)
+            attention_w = source.get('attention_weight', source['combined_weight'] * 0.5)
+            attention_value = attention_w * 100
+            values.append(attention_value)
+            colors.append(f'rgba(75, 192, 192, 0.8)')  # Cyan for attention
+            link_labels.append(f"Attention: {attention_w:.3f}")
+            
+            # Link to combined weight
+            source_indices.append(source_idx)
+            target_indices.append(component_start + 3)
+            combined_value = source['combined_weight'] * 100
+            values.append(combined_value)
+            colors.append(f'rgba(153, 102, 255, 0.8)')  # Purple for combined
+            link_labels.append(f"Combined: {source['combined_weight']:.3f}")
+        
+        # Links from components to target
+        for comp_idx, comp_name in enumerate(['Spatial', 'Defect', 'Attention', 'Combined']):
+            source_indices.append(component_start + comp_idx)
+            target_indices.append(0)  # Target node
+            
+            # Sum of all flows into this component
+            comp_value = sum(v for s, t, v in zip(source_indices, target_indices, values) 
+                           if t == component_start + comp_idx)
+            values.append(comp_value * 0.5)  # Reduce flow to target for visual clarity
+            
+            # Use component-specific colors
+            if comp_name == 'Spatial':
+                colors.append(f'rgba(54, 162, 235, 0.6)')
+            elif comp_name == 'Defect':
+                colors.append(f'rgba(255, 99, 132, 0.6)')
+            elif comp_name == 'Attention':
+                colors.append(f'rgba(75, 192, 192, 0.6)')
+            else:  # Combined
+                colors.append(f'rgba(153, 102, 255, 0.6)')
+            
+            link_labels.append(f"{comp_name} → Target")
+        
+        # Create enhanced Sankey diagram
+        fig = go.Figure(data=[go.Sankey(
+            node=dict(
+                pad=25,  # Increased padding
+                thickness=30,  # Thicker nodes
+                line=dict(color="black", width=2),  # Black border for contrast
+                label=labels,
+                color=["#FF6B6B"] +  # Target color (bright red)
+                      [color_palette[i % len(color_palette)] for i in range(len(sources_data))] +  # Source colors
+                      ["#36A2EB", "#FF6384", "#4BC0C0", "#9966FF"],  # Component colors
+                hoverinfo='label+value',
+                hoverlabel=dict(
+                    font=dict(
+                        family=self.font_config['family'],
+                        size=self.font_config['size_labels'],
+                        color='white'
+                    ),
+                    bgcolor='rgba(0,0,0,0.8)',
+                    bordercolor='white'
+                )
+            ),
+            link=dict(
+                source=source_indices,
+                target=target_indices,
+                value=values,
+                color=colors,
+                hovertemplate='<b>%{customdata}</b><br>Flow: %{value:.2f}<extra></extra>',
+                customdata=link_labels,
+                line=dict(width=0.5, color='rgba(255,255,255,0.3)')
+            )
+        )])
+        
+        # Enhanced layout with better fonts and contrast
+        fig.update_layout(
+            title=dict(
+                text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>Target: {target_angle}° {target_defect} | σ={spatial_sigma}°',
+                font=dict(
+                    family=self.font_config['family'],
+                    size=self.font_config['size_title'],
+                    color=self.font_config['color'],
+                    weight='bold'
+                ),
+                x=0.5,
+                y=0.95,
+                xanchor='center',
+                yanchor='top'
+            ),
+            font=dict(
+                family=self.font_config['family'],
+                size=self.font_config['size_labels'],
+                color=self.font_config['color']
+            ),
+            width=1400,  # Wider for better visibility
+            height=900,   # Taller for better visibility
+            plot_bgcolor='rgba(240, 240, 245, 0.9)',  # Light background
+            paper_bgcolor='white',
+            margin=dict(t=100, l=50, r=50, b=50),
+            hoverlabel=dict(
+                font=dict(
+                    family=self.font_config['family'],
+                    size=self.font_config['size_labels'],
+                    color='white'
+                ),
+                bgcolor='rgba(44, 62, 80, 0.9)',  # Dark background for hover
+                bordercolor='white'
+            )
+        )
+        
+        # Add annotations for color coding
+        annotations = [
+            dict(
+                x=0.02, y=1.05,
+                xref='paper', yref='paper',
+                text='<b>COLOR CODING:</b>',
+                showarrow=False,
+                font=dict(size=14, color='darkblue', weight='bold')
+            ),
+            dict(
+                x=0.02, y=1.02,
+                xref='paper', yref='paper',
+                text='• Spatial: <span style="color:#36A2EB">█</span>',
+                showarrow=False,
+                font=dict(size=12, color='#36A2EB')
+            ),
+            dict(
+                x=0.15, y=1.02,
+                xref='paper', yref='paper',
+                text='• Defect: <span style="color:#FF6384">█</span>',
+                showarrow=False,
+                font=dict(size=12, color='#FF6384')
+            ),
+            dict(
+                x=0.28, y=1.02,
+                xref='paper', yref='paper',
+                text='• Attention: <span style="color:#4BC0C0">█</span>',
+                showarrow=False,
+                font=dict(size=12, color='#4BC0C0')
+            ),
+            dict(
+                x=0.41, y=1.02,
+                xref='paper', yref='paper',
+                text='• Combined: <span style="color:#9966FF">█</span>',
+                showarrow=False,
+                font=dict(size=12, color='#9966FF')
+            )
+        ]
+        
+        fig.update_layout(annotations=annotations)
+        
+        return fig
+    
+    def create_enhanced_chord_diagram(self, sources_data, target_angle, target_defect):
+        """
+        Create enhanced chord diagram with target at center and weight components in different colors
+        """
+        # Create circular layout
+        n_sources = len(sources_data)
+        center_x, center_y = 0, 0
+        radius = 1.5
+        
+        # Calculate positions for sources in a circle
+        source_positions = []
+        for i in range(n_sources):
+            angle = 2 * pi * i / n_sources
+            x = center_x + radius * cos(angle)
+            y = center_y + radius * sin(angle)
+            source_positions.append((x, y))
+        
+        # Create figure
+        fig = go.Figure()
+        
+        # Add center target node (larger and highlighted)
+        fig.add_trace(go.Scatter(
+            x=[center_x],
+            y=[center_y],
+            mode='markers+text',
+            name='Target',
+            marker=dict(
+                size=50,
+                color=self.color_scheme['Query'],
+                symbol='star',
+                line=dict(width=3, color='white')
+            ),
+            text=[f'Target\n{target_defect}\n{target_angle}°'],
+            textposition="middle center",
+            textfont=dict(
+                size=16,
+                color='white',
+                weight='bold'
+            ),
+            hoverinfo='text',
+            hovertext=f'Target: {target_defect} at {target_angle}°'
+        ))
+        
+        # Add source nodes in circle
+        source_x = []
+        source_y = []
+        source_text = []
+        source_colors = []
+        source_sizes = []
+        
+        for i, source in enumerate(sources_data):
+            x, y = source_positions[i]
+            source_x.append(x)
+            source_y.append(y)
+            
+            # Node color based on defect type
+            defect_color = self.color_scheme.get(source['defect_type'], '#CCCCCC')
+            source_colors.append(defect_color)
+            
+            # Node size based on combined weight
+            node_size = 20 + source['combined_weight'] * 60
+            source_sizes.append(node_size)
+            
+            # Node text
+            source_text.append(
+                f"Source {i}<br>"
+                f"Defect: {source['defect_type']}<br>"
+                f"Angle: {source['theta_deg']:.1f}°<br>"
+                f"Combined: {source['combined_weight']:.3f}"
+            )
+        
+        # Add source nodes trace
+        fig.add_trace(go.Scatter(
+            x=source_x,
+            y=source_y,
+            mode='markers+text',
+            name='Sources',
+            marker=dict(
+                size=source_sizes,
+                color=source_colors,
+                line=dict(width=2, color='white')
+            ),
+            text=[f"S{i}" for i in range(n_sources)],
+            textposition="top center",
+            textfont=dict(size=12, color='white', weight='bold'),
+            hoverinfo='text',
+            hovertext=source_text
+        ))
+        
+        # Add connecting lines for each weight component
+        for i, source in enumerate(sources_data):
+            sx, sy = source_positions[i]
+            
+            # Calculate control points for curved lines
+            cx = (sx + center_x) / 2
+            cy = (sy + center_y) / 2
+            
+            # Normal for perpendicular offset
+            dx = center_x - sx
+            dy = center_y - sy
+            length = np.sqrt(dx*dx + dy*dy)
+            if length > 0:
+                nx = -dy / length * 0.3
+                ny = dx / length * 0.3
+            else:
+                nx, ny = 0, 0
+            
+            # Create curved paths for each component
+            t = np.linspace(0, 1, 50)
+            
+            # Spatial weight line (Blue)
+            spatial_curve_x = (1-t)**2 * sx + 2*(1-t)*t * (cx + nx*0.5) + t**2 * center_x
+            spatial_curve_y = (1-t)**2 * sy + 2*(1-t)*t * (cy + ny*0.5) + t**2 * center_y
+            spatial_width = max(1, source['spatial_weight'] * 15)
+            
+            fig.add_trace(go.Scatter(
+                x=spatial_curve_x,
+                y=spatial_curve_y,
+                mode='lines',
+                name=f'Source {i} - Spatial',
+                line=dict(
+                    width=spatial_width,
+                    color='rgba(54, 162, 235, 0.7)',  # Blue
+                    dash='solid'
+                ),
+                hoverinfo='text',
+                hovertext=f"Spatial Weight: {source['spatial_weight']:.3f}",
+                showlegend=False
+            ))
+            
+            # Defect weight line (Pink)
+            defect_curve_x = (1-t)**2 * sx + 2*(1-t)*t * (cx + nx*0) + t**2 * center_x
+            defect_curve_y = (1-t)**2 * sy + 2*(1-t)*t * (cy + ny*0) + t**2 * center_y
+            defect_width = max(1, source['defect_weight'] * 15)
+            
+            fig.add_trace(go.Scatter(
+                x=defect_curve_x,
+                y=defect_curve_y,
+                mode='lines',
+                name=f'Source {i} - Defect',
+                line=dict(
+                    width=defect_width,
+                    color='rgba(255, 99, 132, 0.7)',  # Pink
+                    dash='dot'
+                ),
+                hoverinfo='text',
+                hovertext=f"Defect Weight: {source['defect_weight']:.3f}",
+                showlegend=False
+            ))
+            
+            # Attention weight line (Cyan)
+            attention_w = source.get('attention_weight', source['combined_weight'] * 0.5)
+            attention_curve_x = (1-t)**2 * sx + 2*(1-t)*t * (cx - nx*0.5) + t**2 * center_x
+            attention_curve_y = (1-t)**2 * sy + 2*(1-t)*t * (cy - ny*0.5) + t**2 * center_y
+            attention_width = max(1, attention_w * 15)
+            
+            fig.add_trace(go.Scatter(
+                x=attention_curve_x,
+                y=attention_curve_y,
+                mode='lines',
+                name=f'Source {i} - Attention',
+                line=dict(
+                    width=attention_width,
+                    color='rgba(75, 192, 192, 0.7)',  # Cyan
+                    dash='dash'
+                ),
+                hoverinfo='text',
+                hovertext=f"Attention Weight: {attention_w:.3f}",
+                showlegend=False
+            ))
+            
+            # Combined weight line (Purple) - Thicker and on top
+            combined_curve_x = (1-t)**2 * sx + 2*(1-t)*t * (cx - nx*1.0) + t**2 * center_x
+            combined_curve_y = (1-t)**2 * sy + 2*(1-t)*t * (cy - ny*1.0) + t**2 * center_y
+            combined_width = max(2, source['combined_weight'] * 20)
+            
+            fig.add_trace(go.Scatter(
+                x=combined_curve_x,
+                y=combined_curve_y,
+                mode='lines',
+                name=f'Source {i} - Combined',
+                line=dict(
+                    width=combined_width,
+                    color='rgba(153, 102, 255, 0.8)',  # Purple
+                    dash='solid'
+                ),
+                hoverinfo='text',
+                hovertext=f"Combined Weight: {source['combined_weight']:.3f}",
+                showlegend=False
+            ))
+        
+        # Update layout for enhanced chord diagram
+        fig.update_layout(
+            title=dict(
+                text=f'<b>ENHANCED CHORD DIAGRAM: WEIGHT COMPONENT VISUALIZATION</b><br>Target: {target_angle}° {target_defect}',
+                font=dict(
+                    family=self.font_config['family'],
+                    size=self.font_config['size_title'],
+                    color=self.font_config['color'],
+                    weight='bold'
+                ),
+                x=0.5,
+                y=0.95
+            ),
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5,
+                font=dict(
+                    size=self.font_config['size_labels'],
+                    family=self.font_config['family']
+                ),
+                bgcolor='rgba(255, 255, 255, 0.8)',
+                bordercolor='black',
+                borderwidth=1
+            ),
+            width=1200,
+            height=1000,
+            plot_bgcolor='rgba(240, 240, 245, 0.9)',
+            paper_bgcolor='white',
+            hovermode='closest',
+            xaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                range=[-2.5, 2.5]
+            ),
+            yaxis=dict(
+                showgrid=False,
+                zeroline=False,
+                showticklabels=False,
+                range=[-2.5, 2.5]
+            )
+        )
+        
+        # Add legend annotations for line types
+        annotations = [
+            dict(
+                x=0.02, y=1.05,
+                xref='paper', yref='paper',
+                text='<b>LINE TYPES:</b>',
+                showarrow=False,
+                font=dict(size=14, color='darkblue', weight='bold')
+            ),
+            dict(
+                x=0.02, y=1.02,
+                xref='paper', yref='paper',
+                text='<span style="color:#36A2EB">━━━━</span> Spatial Kernel',
+                showarrow=False,
+                font=dict(size=12, color='#36A2EB')
+            ),
+            dict(
+                x=0.02, y=1.0,
+                xref='paper', yref='paper',
+                text='<span style="color:#FF6384">⸺⸺⸺</span> Defect Match',
+                showarrow=False,
+                font=dict(size=12, color='#FF6384')
+            ),
+            dict(
+                x=0.02, y=0.98,
+                xref='paper', yref='paper',
+                text='<span style="color:#4BC0C0">- - - -</span> Attention Score',
+                showarrow=False,
+                font=dict(size=12, color='#4BC0C0')
+            ),
+            dict(
+                x=0.02, y=0.96,
+                xref='paper', yref='paper',
+                text='<span style="color:#9966FF">━━━━</span> Combined Weight',
+                showarrow=False,
+                font=dict(size=12, color='#9966FF', weight='bold')
+            )
+        ]
+        
+        fig.update_layout(annotations=annotations)
+        
+        return fig
+    
     def create_hierarchical_radar_chart(self, sources_data, target_angle, target_defect, spatial_sigma):
-        """
-        Create hierarchical radar chart with:
-        Tier 1: Angular variation (outer ring)
-        Tier 2: Defect type (inner rings)
-        """
+        """Create hierarchical radar chart with enhanced styling"""
         fig = go.Figure()
         
         # Group by defect type
@@ -617,8 +1150,11 @@ class WeightVisualizer:
                 defect_groups[defect] = []
             defect_groups[defect].append(source)
         
+        # Use vibrant colormap
+        color_palette = self.get_colormap('plasma', len(defect_groups))
+        
         # Create traces for each defect type
-        for defect, sources in defect_groups.items():
+        for idx, (defect, sources) in enumerate(defect_groups.items()):
             angles = [s['theta_deg'] for s in sources]
             spatial_weights = [s['spatial_weight'] for s in sources]
             attention_weights = [s.get('attention_weight', 0.0) for s in sources]
@@ -630,14 +1166,17 @@ class WeightVisualizer:
             attention_norm = [w/max_weight for w in attention_weights]
             combined_norm = [w/max_weight for w in combined_weights]
             
+            # Use colormap colors
+            color = color_palette[idx % len(color_palette)]
+            
             # Plot spatial weights (outer ring)
             fig.add_trace(go.Scatterpolar(
                 r=spatial_norm,
                 theta=angles,
                 mode='lines+markers',
                 name=f'{defect} - Spatial',
-                line=dict(color=self.color_scheme[defect], width=2, dash='dash'),
-                marker=dict(size=8),
+                line=dict(color=color, width=3, dash='dash'),
+                marker=dict(size=10, color=color),
                 hoverinfo='text',
                 text=[f'{defect}<br>Angle: {a}°<br>Spatial: {sw:.3f}' 
                       for a, sw in zip(angles, spatial_weights)]
@@ -649,8 +1188,8 @@ class WeightVisualizer:
                 theta=angles,
                 mode='lines+markers',
                 name=f'{defect} - Attention',
-                line=dict(color=self.color_scheme[defect], width=2, dash='dot'),
-                marker=dict(size=8),
+                line=dict(color=color, width=3, dash='dot'),
+                marker=dict(size=10, color=color),
                 hoverinfo='text',
                 text=[f'{defect}<br>Angle: {a}°<br>Attention: {aw:.3f}' 
                       for a, aw in zip(angles, attention_weights)]
@@ -662,61 +1201,51 @@ class WeightVisualizer:
                 theta=angles,
                 mode='lines+markers',
                 name=f'{defect} - Combined',
-                line=dict(color=self.color_scheme[defect], width=3),
-                marker=dict(size=10),
+                line=dict(color=color, width=4),
+                marker=dict(size=12, color=color),
                 hoverinfo='text',
                 text=[f'{defect}<br>Angle: {a}°<br>Combined: {cw:.3f}<br>Defect Match: {s["target_defect_match"]}' 
                       for a, cw, s in zip(angles, combined_weights, sources)]
             ))
         
-        # Add target angle line
+        # Add target angle line with high visibility
         fig.add_trace(go.Scatterpolar(
             r=[0, 1],
             theta=[target_angle, target_angle],
             mode='lines',
             name='Target Angle',
-            line=dict(color=self.color_scheme['Query'], width=4),
-            hoverinfo='none'
+            line=dict(color='#FF0000', width=5),
+            hoverinfo='text',
+            hovertext=f'Target Angle: {target_angle}°'
         ))
         
-        # Add defect type filter visualization
-        for defect in defect_groups.keys():
-            if defect == target_defect:
-                fig.add_trace(go.Scatterpolar(
-                    r=[0.9],
-                    theta=[target_angle],
-                    mode='markers+text',
-                    name=f'Target: {defect}',
-                    marker=dict(
-                        size=20,
-                        color=self.color_scheme[defect],
-                        symbol='star'
-                    ),
-                    text=[f'Target: {defect}'],
-                    textposition='top center',
-                    hoverinfo='text',
-                    textfont=dict(size=14, color='white')
-                ))
-        
-        # FIXED: Correct polar layout without angularaxis title
+        # Update layout with enhanced styling
         fig.update_layout(
             polar=dict(
                 radialaxis=dict(
                     visible=True,
                     range=[0, 1.1],
-                    tickfont=dict(size=12),
-                    title=dict(text='Normalized Weight', font=dict(size=14))
+                    tickfont=dict(size=14, family=self.font_config['family']),
+                    title=dict(
+                        text='Normalized Weight',
+                        font=dict(size=16, family=self.font_config['family'], weight='bold')
+                    )
                 ),
                 angularaxis=dict(
                     direction='clockwise',
                     rotation=90,
-                    tickfont=dict(size=12)
+                    tickfont=dict(size=14, family=self.font_config['family'])
                 ),
-                bgcolor='#f8f9fa'
+                bgcolor='rgba(240, 240, 245, 0.5)'
             ),
             title=dict(
-                text=f'Hierarchical Weight Analysis<br>Target: {target_angle}° {target_defect} | σ={spatial_sigma}°',
-                font=dict(size=20, family="Arial Black", color='#1E3A8A'),
+                text=f'<b>HIERARCHICAL RADAR CHART</b><br>Target: {target_angle}° {target_defect} | σ={spatial_sigma}°',
+                font=dict(
+                    family=self.font_config['family'],
+                    size=self.font_config['size_title'],
+                    color=self.font_config['color'],
+                    weight='bold'
+                ),
                 x=0.5
             ),
             showlegend=True,
@@ -724,360 +1253,31 @@ class WeightVisualizer:
                 orientation="h",
                 yanchor="bottom",
                 y=1.02,
-                xanchor="right",
-                x=1,
-                font=dict(size=12)
+                xanchor="center",
+                x=0.5,
+                font=dict(
+                    size=self.font_config['size_labels'],
+                    family=self.font_config['family']
+                )
             ),
-            width=1000,
-            height=800,
+            width=1200,
+            height=900,
             plot_bgcolor='white',
             paper_bgcolor='white',
             hovermode='closest'
-        )
-        
-        # Add annotation for angular axis title
-        fig.add_annotation(
-            text="Angle (degrees)",
-            x=0.5,
-            y=-0.1,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(size=14, color="black")
-        )
-        
-        return fig
-    
-    def create_weight_comparison_radar(self, sources_data, target_defect):
-        """
-        Create dual radar chart comparing weights with and without defect mask
-        """
-        fig = make_subplots(
-            rows=1, cols=2,
-            specs=[[{'type': 'polar'}, {'type': 'polar'}]],
-            subplot_titles=('Without Defect Mask', 'With Defect Mask')
-        )
-        
-        # Prepare data
-        angles = [s['theta_deg'] for s in sources_data]
-        spatial_weights = [s['spatial_weight'] for s in sources_data]
-        attention_weights = [s.get('attention_weight', 0.0) for s in sources_data]
-        combined_weights = [s['combined_weight'] for s in sources_data]
-        
-        # Calculate weights without defect mask
-        weights_without_mask = []
-        for i in range(len(sources_data)):
-            # Combine spatial and attention weights, ignoring defect
-            w = spatial_weights[i] * attention_weights[i]
-            weights_without_mask.append(w)
-        
-        # Normalize
-        max_without = max(weights_without_mask) if weights_without_mask else 1
-        max_with = max(combined_weights) if combined_weights else 1
-        weights_without_norm = [w/max_without for w in weights_without_mask]
-        weights_with_norm = [w/max_with for w in combined_weights]
-        
-        # Colors based on defect match
-        colors = []
-        for s in sources_data:
-            if s['defect_type'] == target_defect:
-                colors.append('#2E8B57')  # Green for match
-            else:
-                colors.append('#DC143C')  # Red for mismatch
-        
-        # Plot without defect mask
-        fig.add_trace(go.Scatterpolar(
-            r=weights_without_norm,
-            theta=angles,
-            mode='markers+lines',
-            name='Weight (no defect mask)',
-            marker=dict(
-                size=12,
-                color=colors,
-                line=dict(width=2, color='white')
-            ),
-            line=dict(width=2, color='#4682B4'),
-            hoverinfo='text',
-            text=[f'Angle: {a}°<br>Weight: {w:.3f}<br>Defect: {s["defect_type"]}<br>Match: {s["target_defect_match"]}'
-                  for a, w, s in zip(angles, weights_without_mask, sources_data)]
-        ), row=1, col=1)
-        
-        # Plot with defect mask
-        fig.add_trace(go.Scatterpolar(
-            r=weights_with_norm,
-            theta=angles,
-            mode='markers+lines',
-            name='Weight (with defect mask)',
-            marker=dict(
-                size=12,
-                color=colors,
-                symbol='star' if target_defect == 'Twin' else 'diamond',
-                line=dict(width=2, color='white')
-            ),
-            line=dict(width=2, color='#FF8C00'),
-            hoverinfo='text',
-            text=[f'Angle: {a}°<br>Weight: {w:.3f}<br>Defect: {s["defect_type"]}<br>Match: {s["target_defect_match"]}'
-                  for a, w, s in zip(angles, combined_weights, sources_data)]
-        ), row=1, col=2)
-        
-        # Update polar layouts
-        for col in [1, 2]:
-            fig.update_polars(
-                radialaxis=dict(
-                    visible=True,
-                    range=[0, 1.1],
-                    tickfont=dict(size=10)
-                ),
-                angularaxis=dict(
-                    direction='clockwise',
-                    rotation=90,
-                    tickfont=dict(size=10)
-                ),
-                row=1, col=col
-            )
-        
-        fig.update_layout(
-            title=dict(
-                text=f'Weight Comparison: Impact of Defect Type Gating<br>Target Defect: {target_defect}',
-                font=dict(size=18, family="Arial", color='#1E3A8A'),
-                x=0.5
-            ),
-            showlegend=True,
-            width=1200,
-            height=600,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
-        )
-        
-        return fig
-    
-    def create_chord_diagram(self, sources_data, target_angle, target_defect):
-        """
-        Create chord diagram showing weight relationships
-        """
-        # Create graph
-        G = nx.Graph()
-        
-        # Add nodes for sources and target
-        for source in sources_data:
-            node_id = f"S{source['source_index']}"
-            G.add_node(node_id, 
-                      angle=source['theta_deg'],
-                      defect=source['defect_type'],
-                      weight=source['combined_weight'])
-        
-        # Add target node
-        G.add_node('Target', angle=target_angle, defect=target_defect, weight=1.0)
-        
-        # Add edges based on weights
-        for source in sources_data:
-            source_id = f"S{source['source_index']}"
-            weight = source['combined_weight']
-            
-            # Edge to target
-            if source['target_defect_match']:
-                G.add_edge(source_id, 'Target', 
-                          weight=weight,
-                          color=self.color_scheme[source['defect_type']])
-            
-            # Edges to other sources (spatial proximity)
-            for other in sources_data:
-                if other['source_index'] != source['source_index']:
-                    other_id = f"S{other['source_index']}"
-                    angular_diff = min(
-                        abs(source['theta_deg'] - other['theta_deg']),
-                        360 - abs(source['theta_deg'] - other['theta_deg'])
-                    )
-                    if angular_diff < 30:  # Connect if within 30 degrees
-                        spatial_weight = np.exp(-0.5 * (angular_diff / 10) ** 2)
-                        G.add_edge(source_id, other_id,
-                                  weight=spatial_weight * 0.5,
-                                  color='#CCCCCC')
-        
-        # Convert to plotly
-        pos = nx.circular_layout(G)
-        
-        edge_traces = []
-        for edge in G.edges():
-            x0, y0 = pos[edge[0]]
-            x1, y1 = pos[edge[1]]
-            
-            edge_color = G.edges[edge].get('color', '#888888')
-            edge_width = G.edges[edge].get('weight', 0.1) * 10
-            
-            edge_trace = go.Scatter(
-                x=[x0, x1, None],
-                y=[y0, y1, None],
-                line=dict(width=edge_width, color=edge_color),
-                hoverinfo='none',
-                mode='lines',
-                showlegend=False
-            )
-            edge_traces.append(edge_trace)
-        
-        # Node trace
-        node_x = []
-        node_y = []
-        node_text = []
-        node_color = []
-        node_size = []
-        
-        for node in G.nodes():
-            x, y = pos[node]
-            node_x.append(x)
-            node_y.append(y)
-            
-            if node == 'Target':
-                node_text.append(f'Target<br>{target_defect}<br>{target_angle}°')
-                node_color.append(self.color_scheme['Query'])
-                node_size.append(30)
-            else:
-                source_idx = int(node[1:])
-                source = sources_data[source_idx]
-                node_text.append(f'S{source_idx}<br>{source["defect_type"]}<br>{source["theta_deg"]}°<br>W:{source["combined_weight"]:.3f}')
-                node_color.append(self.color_scheme[source['defect_type']])
-                node_size.append(20 + source['combined_weight'] * 40)
-        
-        node_trace = go.Scatter(
-            x=node_x, y=node_y,
-            mode='markers+text',
-            text=node_text,
-            textposition="top center",
-            marker=dict(
-                size=node_size,
-                color=node_color,
-                line=dict(width=2, color='white')
-            ),
-            hoverinfo='text',
-            showlegend=False
-        )
-        
-        fig = go.Figure(data=edge_traces + [node_trace])
-        
-        fig.update_layout(
-            title=dict(
-                text=f'Weight Relationship Chord Diagram<br>Target: {target_angle}° {target_defect}',
-                font=dict(size=20, family="Arial Black", color='#1E3A8A'),
-                x=0.5
-            ),
-            showlegend=False,
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            width=800,
-            height=800,
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            hovermode='closest'
-        )
-        
-        return fig
-    
-    def create_sankey_diagram(self, sources_data, target_angle, target_defect, spatial_sigma):
-        """
-        Create Sankey diagram showing flow of attention components
-        """
-        # Create nodes for Sankey diagram
-        labels = ['Target']  # Start with target node
-        
-        # Add source nodes
-        for source in sources_data:
-            labels.append(f"S{source['source_index']}: {source['defect_type']}")
-        
-        # Add component nodes
-        component_start = len(labels)
-        labels.extend(['Spatial Kernel', 'Defect Match', 'Attention Score', 'Combined Weight'])
-        
-        # Create links
-        source_indices = []
-        target_indices = []
-        values = []
-        colors = []
-        
-        # Links from sources to components
-        for i, source in enumerate(sources_data):
-            source_idx = i + 1  # +1 because index 0 is target
-            
-            # Link to spatial kernel
-            source_indices.append(source_idx)
-            target_indices.append(component_start)
-            values.append(source['spatial_weight'] * 10)  # Scale for visibility
-            colors.append('rgba(78, 205, 196, 0.6)')
-            
-            # Link to defect match
-            source_indices.append(source_idx)
-            target_indices.append(component_start + 1)
-            values.append(source['defect_weight'] * 10)
-            colors.append('rgba(255, 107, 107, 0.6)')
-            
-            # Link to attention score
-            source_indices.append(source_idx)
-            target_indices.append(component_start + 2)
-            attention_w = source.get('attention_weight', source['combined_weight'])
-            values.append(attention_w * 10)
-            colors.append('rgba(149, 225, 211, 0.6)')
-            
-            # Link to combined weight
-            source_indices.append(source_idx)
-            target_indices.append(component_start + 3)
-            values.append(source['combined_weight'] * 10)
-            colors.append('rgba(157, 78, 221, 0.6)')
-        
-        # Links from components to target
-        for comp_idx in range(4):
-            source_indices.append(component_start + comp_idx)
-            target_indices.append(0)  # Target node
-            # Sum of all flows into this component
-            comp_value = sum(v for s, t, v in zip(source_indices, target_indices, values) 
-                           if t == component_start + comp_idx)
-            values.append(comp_value * 0.3)  # Reduce flow to target
-            colors.append('rgba(255, 217, 61, 0.6)')
-        
-        # Create Sankey diagram
-        fig = go.Figure(data=[go.Sankey(
-            node=dict(
-                pad=15,
-                thickness=20,
-                line=dict(color="black", width=0.5),
-                label=labels,
-                color=["#9D4EDD"] +  # Target color
-                      [self.color_scheme[s['defect_type']] for s in sources_data] +  # Source colors
-                      ["#4ECDC4", "#FF6B6B", "#95E1D3", "#FFD93D"]  # Component colors
-            ),
-            link=dict(
-                source=source_indices,
-                target=target_indices,
-                value=values,
-                color=colors,
-                hovertemplate='Flow: %{value:.2f}<extra></extra>'
-            )
-        )])
-        
-        fig.update_layout(
-            title=dict(
-                text=f'Sankey Diagram: Attention Component Flow<br>Target: {target_angle}° {target_defect}, σ={spatial_sigma}°',
-                font=dict(size=20, family="Arial Black", color='#1E3A8A'),
-                x=0.5
-            ),
-            font=dict(size=12),
-            width=1200,
-            height=800,
-            plot_bgcolor='white',
-            paper_bgcolor='white'
         )
         
         return fig
     
     def create_weight_formula_breakdown(self, sources_data, target_angle, target_defect, spatial_sigma):
-        """
-        Create visualization showing weight formula breakdown for each source
-        """
+        """Create comprehensive weight formula breakdown visualization"""
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=(
-                'Weight Component Breakdown',
-                'Cumulative Weight Distribution',
-                'Defect Type Distribution',
-                'Angular Distribution of Weights'
+                '<b>Weight Component Breakdown</b>',
+                '<b>Cumulative Weight Distribution</b>',
+                '<b>Defect Type Analysis</b>',
+                '<b>Angular Weight Distribution</b>'
             ),
             vertical_spacing=0.15,
             horizontal_spacing=0.1
@@ -1089,52 +1289,42 @@ class WeightVisualizer:
         angles = [s['theta_deg'] for s in sources_data]
         source_indices = [s['source_index'] for s in sources_data]
         
-        # Prepare stacked bar data
+        # Prepare data
         spatial_values = [s['spatial_weight'] for s in sources_data]
         attention_values = [s.get('attention_weight', 0.0) for s in sources_data]
         defect_values = [s['defect_weight'] for s in sources_data]
         combined_values = [s['combined_weight'] for s in sources_data]
-        
-        # Colors for components
-        colors = {
-            'spatial': '#4ECDC4',
-            'attention': '#FF6B6B',
-            'defect': '#95E1D3',
-            'combined': '#9D4EDD'
-        }
         
         # Plot 1: Component breakdown (stacked bar)
         fig.add_trace(go.Bar(
             x=source_indices,
             y=spatial_values,
             name='Spatial Kernel',
-            marker_color=colors['spatial'],
+            marker_color='#36A2EB',
             text=[f'{v:.3f}' for v in spatial_values],
-            textposition='outside'
+            textposition='outside',
+            textfont=dict(size=10)
         ), row=1, col=1)
         
         fig.add_trace(go.Bar(
             x=source_indices,
             y=attention_values,
             name='Attention Score',
-            marker_color=colors['attention'],
+            marker_color='#4BC0C0',
             text=[f'{v:.3f}' for v in attention_values],
-            textposition='outside'
+            textposition='outside',
+            textfont=dict(size=10)
         ), row=1, col=1)
         
         fig.add_trace(go.Bar(
             x=source_indices,
             y=defect_values,
             name='Defect Match',
-            marker_color=colors['defect'],
+            marker_color='#FF6384',
             text=[f'{v:.3f}' for v in defect_values],
-            textposition='outside'
+            textposition='outside',
+            textfont=dict(size=10)
         ), row=1, col=1)
-        
-        # Add target angle line
-        fig.add_vline(x=target_angle, line_dash="dash", line_color="red", 
-                     annotation_text=f"Target: {target_angle}°", 
-                     annotation_position="top right", row=1, col=1)
         
         # Plot 2: Cumulative distribution
         sorted_weights = np.sort(combined_values)[::-1]
@@ -1146,21 +1336,21 @@ class WeightVisualizer:
             y=cumulative,
             mode='lines+markers',
             name='Cumulative Weight',
-            line=dict(color=colors['combined'], width=3),
+            line=dict(color='#9966FF', width=4),
             marker=dict(size=8),
             fill='tozeroy',
-            fillcolor='rgba(157, 78, 221, 0.2)'
+            fillcolor='rgba(153, 102, 255, 0.2)'
         ), row=1, col=2)
         
-        # Add 90% threshold line
-        if len(cumulative) > 0:
+        # Add 90% threshold
+        if len(cumulative) > 0 and np.sum(sorted_weights) > 0:
             threshold_idx = np.where(cumulative >= 0.9)[0]
             if len(threshold_idx) > 0:
                 fig.add_hline(y=0.9, line_dash="dash", line_color="red", 
                              annotation_text="90% threshold", row=1, col=2)
                 fig.add_vline(x=threshold_idx[0]+1, line_dash="dash", line_color="red", row=1, col=2)
         
-        # Plot 3: Defect type distribution
+        # Plot 3: Defect type analysis
         defect_counts = {}
         defect_weights = {}
         for source in sources_data:
@@ -1189,22 +1379,69 @@ class WeightVisualizer:
             textposition='auto'
         ), row=2, col=1)
         
-        # Plot 4: Angular distribution
+        # Plot 4: Angular distribution with different symbols for weight types
+        # Combined weights
         fig.add_trace(go.Scatter(
             x=angles,
             y=combined_values,
             mode='markers+lines',
-            name='Weight by Angle',
-            line=dict(color=colors['combined'], width=2),
+            name='Combined Weight',
+            line=dict(color='#9966FF', width=3),
             marker=dict(
-                size=12,
-                color=[self.color_scheme[s['defect_type']] for s in sources_data],
+                size=15,
+                color='#9966FF',
+                symbol='circle',
                 line=dict(width=2, color='white')
             ),
-            text=[f"S{i}: {d}°<br>W:{w:.3f}" for i, d, w in zip(source_indices, angles, combined_values)]
+            text=[f"S{i}: {d}°<br>Combined: {w:.3f}" for i, d, w in zip(source_indices, angles, combined_values)]
         ), row=2, col=2)
         
-        # Add habit plane line
+        # Spatial weights
+        fig.add_trace(go.Scatter(
+            x=angles,
+            y=spatial_values,
+            mode='markers',
+            name='Spatial Weight',
+            marker=dict(
+                size=10,
+                color='#36A2EB',
+                symbol='square',
+                line=dict(width=1, color='white')
+            ),
+            text=[f"S{i}: {d}°<br>Spatial: {w:.3f}" for i, d, w in zip(source_indices, angles, spatial_values)]
+        ), row=2, col=2)
+        
+        # Attention weights
+        fig.add_trace(go.Scatter(
+            x=angles,
+            y=attention_values,
+            mode='markers',
+            name='Attention Weight',
+            marker=dict(
+                size=10,
+                color='#4BC0C0',
+                symbol='diamond',
+                line=dict(width=1, color='white')
+            ),
+            text=[f"S{i}: {d}°<br>Attention: {w:.3f}" for i, d, w in zip(source_indices, angles, attention_values)]
+        ), row=2, col=2)
+        
+        # Defect weights
+        fig.add_trace(go.Scatter(
+            x=angles,
+            y=defect_values,
+            mode='markers',
+            name='Defect Weight',
+            marker=dict(
+                size=10,
+                color='#FF6384',
+                symbol='triangle-up',
+                line=dict(width=1, color='white')
+            ),
+            text=[f"S{i}: {d}°<br>Defect: {w:.3f}" for i, d, w in zip(source_indices, angles, defect_values)]
+        ), row=2, col=2)
+        
+        # Add habit plane reference
         fig.add_vline(x=54.7, line_dash="dot", line_color="green", 
                      annotation_text="Habit Plane (54.7°)", row=2, col=2)
         
@@ -1212,82 +1449,41 @@ class WeightVisualizer:
         fig.update_layout(
             barmode='stack',
             title=dict(
-                text=f'Weight Formula Analysis: wᵢ(θ*) = [ᾱᵢ(θ*)·exp(-(Δφᵢ)²/(2σ²))·𝟙(τᵢ=τ*)]/Σ[...] + 10⁻⁶<br>σ={spatial_sigma}°, Target: {target_defect}',
-                font=dict(size=16, family="Arial", color='#1E3A8A'),
-                x=0.5
+                text=f'<b>WEIGHT FORMULA ANALYSIS</b><br>wᵢ(θ*) = [ᾱᵢ(θ*)·exp(-(Δφᵢ)²/(2σ²))·𝟙(τᵢ=τ*)]/Σ[...] + 10⁻⁶<br>σ={spatial_sigma}°, Target: {target_defect}',
+                font=dict(
+                    family=self.font_config['family'],
+                    size=20,
+                    color=self.font_config['color'],
+                    weight='bold'
+                ),
+                x=0.5,
+                y=0.98
             ),
             showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5,
+                font=dict(size=12)
+            ),
             width=1400,
-            height=900,
+            height=1000,
             plot_bgcolor='white',
-            paper_bgcolor='white'
+            paper_bgcolor='white',
+            hovermode='closest'
         )
         
-        # Update axes
-        fig.update_xaxes(title_text="Source Index", row=1, col=1)
-        fig.update_yaxes(title_text="Weight Component Value", row=1, col=1)
-        fig.update_xaxes(title_text="Number of Top Sources", row=1, col=2)
-        fig.update_yaxes(title_text="Cumulative Weight", row=1, col=2)
-        fig.update_xaxes(title_text="Defect Type", row=2, col=1)
-        fig.update_yaxes(title_text="Count / Weight", row=2, col=1)
-        fig.update_xaxes(title_text="Angle (degrees)", row=2, col=2)
-        fig.update_yaxes(title_text="Combined Weight", row=2, col=2)
-        
-        return fig
-    
-    def create_attention_sunburst(self, sources_data, target_angle, target_defect, title="Attention Distribution Sunburst"):
-        """
-        Create sunburst chart showing hierarchical attention distribution
-        """
-        # Build hierarchical data
-        labels = ['All Sources']
-        parents = ['']
-        values = [1.0]
-        
-        # Group by defect type
-        defect_weights = {}
-        for source in sources_data:
-            defect = source['defect_type']
-            if defect not in defect_weights:
-                defect_weights[defect] = 0.0
-            defect_weights[defect] += source['combined_weight']
-        
-        # Add defect type nodes
-        for defect, weight in defect_weights.items():
-            labels.append(defect)
-            parents.append('All Sources')
-            values.append(weight)
-        
-        # Add source nodes
-        for source in sources_data:
-            label = f"S{source['source_index']}<br>{source['theta_deg']:.1f}°"
-            labels.append(label)
-            parents.append(source['defect_type'])
-            values.append(source['combined_weight'])
-        
-        # Create sunburst
-        fig = go.Figure(go.Sunburst(
-            labels=labels,
-            parents=parents,
-            values=values,
-            branchvalues="total",
-            hoverinfo="label+value+percent parent",
-            marker=dict(
-                colors=[self.color_scheme.get(l, '#CCCCCC') for l in labels]
-            ),
-            maxdepth=3
-        ))
-        
-        fig.update_layout(
-            title=dict(
-                text=f"{title}<br>Target: {target_angle}° {target_defect}",
-                font=dict(size=18, color='darkblue'),
-                x=0.5
-            ),
-            width=800,
-            height=800,
-            margin=dict(t=50, l=0, r=0, b=0)
-        )
+        # Update axes labels
+        fig.update_xaxes(title_text="Source Index", row=1, col=1, title_font=dict(size=14))
+        fig.update_yaxes(title_text="Weight Component Value", row=1, col=1, title_font=dict(size=14))
+        fig.update_xaxes(title_text="Number of Top Sources", row=1, col=2, title_font=dict(size=14))
+        fig.update_yaxes(title_text="Cumulative Weight", row=1, col=2, title_font=dict(size=14))
+        fig.update_xaxes(title_text="Defect Type", row=2, col=1, title_font=dict(size=14))
+        fig.update_yaxes(title_text="Count / Weight", row=2, col=1, title_font=dict(size=14))
+        fig.update_xaxes(title_text="Angle (degrees)", row=2, col=2, title_font=dict(size=14))
+        fig.update_yaxes(title_text="Weight Value", row=2, col=2, title_font=dict(size=14))
         
         return fig
 
@@ -1302,91 +1498,130 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Custom CSS for styling
+    # Enhanced CSS for better styling
     st.markdown("""
     <style>
     .main-header {
-        font-size: 3.2rem !important;
+        font-size: 3.5rem !important;
         color: #1E3A8A !important;
         text-align: center;
         padding: 1rem;
-        background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981);
+        background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981, #EF4444);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         font-weight: 900 !important;
         margin-bottom: 1rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
     }
     .section-header {
-        font-size: 2.0rem !important;
-        color: #374151 !important;
+        font-size: 2.2rem !important;
+        color: #2C3E50 !important;
         font-weight: 800 !important;
-        border-left: 6px solid #3B82F6;
-        padding-left: 1.2rem;
-        margin-top: 1.8rem;
-        margin-bottom: 1.2rem;
+        border-left: 8px solid #3B82F6;
+        padding-left: 1.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1.5rem;
+        background: linear-gradient(to right, #F0F9FF, white);
+        padding: 1rem 1.5rem;
+        border-radius: 0 10px 10px 0;
     }
     .formula-box {
-        background-color: #F0F7FF;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         border-left: 5px solid #3B82F6;
-        padding: 1.5rem;
-        border-radius: 0.8rem;
-        margin: 1.5rem 0;
+        padding: 2rem;
+        border-radius: 15px;
+        margin: 2rem 0;
         font-family: 'Courier New', monospace;
-        font-size: 1.2rem;
-        line-height: 1.6;
+        font-size: 1.3rem;
+        line-height: 1.8;
+        color: white;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.1);
     }
     .info-box {
-        background-color: #F0F9FF;
-        border-left: 5px solid #3B82F6;
-        padding: 1.2rem;
-        border-radius: 0.6rem;
-        margin: 1.2rem 0;
-        font-size: 1.1rem;
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        border-left: 5px solid #EF4444;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin: 1.5rem 0;
+        font-size: 1.2rem;
+        color: white;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
     }
     .metric-card {
         background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
-        padding: 1.2rem;
-        border-radius: 0.8rem;
+        padding: 1.5rem;
+        border-radius: 12px;
         color: white;
         font-weight: bold;
         text-align: center;
         margin: 0.5rem;
-        font-size: 1.1rem;
+        font-size: 1.2rem;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        transition: transform 0.3s;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
     }
     .stTabs [data-baseweb="tab-list"] {
-        gap: 2.5rem;
+        gap: 3rem;
+        background: linear-gradient(90deg, #F8FAFC, #EFF6FF);
+        padding: 0.5rem 1rem;
+        border-radius: 10px 10px 0 0;
     }
     .stTabs [data-baseweb="tab"] {
-        height: 55px;
+        height: 60px;
         white-space: pre-wrap;
-        background-color: #F3F4F6;
-        border-radius: 6px 6px 0 0;
-        gap: 1.2rem;
-        padding-top: 12px;
-        padding-bottom: 12px;
-        font-size: 1.1rem;
+        background-color: #F1F5F9;
+        border-radius: 8px 8px 0 0;
+        padding: 15px 20px;
+        font-size: 1.2rem;
         font-weight: 600;
+        color: #64748B;
+        border: 2px solid transparent;
+        transition: all 0.3s;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #E0F2FE;
+        border-color: #3B82F6;
     }
     .stTabs [aria-selected="true"] {
         background-color: #3B82F6 !important;
         color: white !important;
         font-weight: 700;
+        border-color: #2563EB;
+        box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+    }
+    .colormap-preview {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        border-radius: 4px;
+        vertical-align: middle;
+        border: 1px solid #ddd;
     }
     </style>
     """, unsafe_allow_html=True)
     
     # Main header
-    st.markdown('<h1 class="main-header">🧠 Advanced Weight Analysis - Angular Bracketing Theory</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🧠 ADVANCED WEIGHT ANALYSIS - ANGULAR BRACKETING THEORY</h1>', unsafe_allow_html=True)
     
-    # Domain information
+    # Domain information - FIXED: Use proper string formatting
     domain_info = DomainConfiguration.get_domain_info()
+    domain_length = domain_info['domain_length_nm']
+    grid_points = domain_info['grid_points']
+    grid_spacing = domain_info['grid_spacing_nm']
+    domain_half = domain_info['domain_half_nm']
+    
     st.markdown(f"""
-    <div style="text-align: center; margin-bottom: 2rem;">
-    <h3 style="color: #1E3A8A;">Domain: {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm</h3>
-    <p style="color: #666; font-size: 1.1rem;">
-    Grid: {domain_info['grid_points']} × {domain_info['grid_points']} points | 
-    Spacing: {domain_info['grid_spacing_nm']} nm | 
-    Extent: ±{domain_info['domain_half_nm']} nm
+    <div style="text-align: center; margin-bottom: 2rem; background: linear-gradient(135deg, #E0F7FA, #E3F2FD); padding: 1.5rem; border-radius: 15px; border: 2px solid #3B82F6;">
+    <h3 style="color: #1E3A8A; margin-bottom: 0.5rem;">Domain Configuration</h3>
+    <p style="color: #4B5563; font-size: 1.1rem; margin: 0.25rem;">
+    <strong>Size:</strong> {domain_length} nm × {domain_length} nm | 
+    <strong>Grid:</strong> {grid_points} × {grid_points} points | 
+    <strong>Spacing:</strong> {grid_spacing} nm | 
+    <strong>Extent:</strong> ±{domain_half} nm
     </p>
     </div>
     """, unsafe_allow_html=True)
@@ -1394,28 +1629,27 @@ def main():
     # Weight formula display
     st.markdown(r"""
     <div class="formula-box">
-    <strong>🎯 Attention Weight Formula:</strong><br>
+    <strong style="font-size: 1.5rem;">🎯 ATTENTION WEIGHT FORMULA:</strong><br><br>
     $$w_i(\boldsymbol{\theta}^*) = \frac{\bar{\alpha}_i(\boldsymbol{\theta}^*) \cdot \exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_i = \tau^*)}{\sum_{k=1}^{N} \bar{\alpha}_k(\boldsymbol{\theta}^*) \cdot \exp\left(-\frac{(\Delta\phi_k)^2}{2\sigma^2}\right) \cdot \mathbb{I}(\tau_k = \tau^*)} + 10^{-6}$$
     
-    <strong>📊 Components:</strong>
-    • $\bar{\alpha}_i$: Learned attention score from transformer<br>
-    • $\exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right)$: Spatial kernel (angular bracketing)<br>
-    • $\mathbb{I}(\tau_i = \tau^*)$: Defect type indicator (1 if match, 0 otherwise)<br>
-    • $\sigma$: Angular kernel width (controllable parameter)
+    <br><strong style="font-size: 1.3rem;">📊 COMPONENTS:</strong><br>
+    • <span style="color:#4BC0C0">$\bar{\alpha}_i$</span>: Learned attention score from transformer<br>
+    • <span style="color:#36A2EB">$\exp\left(-\frac{(\Delta\phi_i)^2}{2\sigma^2}\right)$</span>: Spatial kernel (angular bracketing)<br>
+    • <span style="color:#FF6384">$\mathbb{I}(\tau_i = \tau^*)$</span>: Defect type indicator (1 if match, 0 otherwise)<br>
+    • <span style="color:#9966FF">$\sigma$</span>: Angular kernel width (controllable parameter)
     </div>
     """, unsafe_allow_html=True)
     
     # Description
     st.markdown(f"""
     <div class="info-box">
-    <strong>🔬 Physics-Aware Weight Analysis: Hierarchical Visualization of Attention Components</strong><br>
-    • <strong>Hierarchical Radar Charts:</strong> Angular variation (Tier 1) × Defect type (Tier 2)<br>
-    • <strong>Sankey Diagrams:</strong> Flow visualization of attention component aggregation<br>
-    • <strong>Chord Diagrams:</strong> Network visualization of weight relationships<br>
-    • <strong>Sunburst Charts:</strong> Hierarchical breakdown of attention distribution<br>
-    • <strong>Weight Formula Breakdown:</strong> Detailed component analysis for each source<br>
-    • <strong>Defect Type Gating:</strong> Hard constraint for physical validity<br>
-    • <strong>Domain Size:</strong> {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm centered at 0 (±{domain_info['domain_half_nm']} nm)
+    <strong style="font-size: 1.3rem;">🔬 PHYSICS-AWARE WEIGHT ANALYSIS: ENHANCED VISUALIZATION</strong><br><br>
+    • <strong>Enhanced Sankey Diagrams:</strong> High-contrast, large-font visualization of attention component flow<br>
+    • <strong>Advanced Chord Diagrams:</strong> Circular layout with target at center, weight components in different colors<br>
+    • <strong>Hierarchical Radar Charts:</strong> Angular variation (Tier 1) × Defect type (Tier 2) with 50+ colormaps<br>
+    • <strong>Weight Formula Breakdown:</strong> Detailed component analysis with enhanced readability<br>
+    • <strong>Defect Type Gating:</strong> Hard constraint for physical validity, visualized in all diagrams<br>
+    • <strong>Domain Size:</strong> {domain_length} nm × {domain_length} nm centered at 0 (±{domain_half} nm)
     </div>
     """, unsafe_allow_html=True)
     
@@ -1436,23 +1670,23 @@ def main():
     
     # Sidebar configuration
     with st.sidebar:
-        st.markdown('<h2 class="section-header">⚙️ Configuration</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">⚙️ CONFIGURATION</h2>', unsafe_allow_html=True)
         
         # Domain information
-        st.markdown("#### 📐 Domain Information")
+        st.markdown("#### 📐 DOMAIN INFORMATION")
         st.info(f"""
-        **Grid:** {domain_info['grid_points']} × {domain_info['grid_points']} points
-        **Spacing:** {domain_info['grid_spacing_nm']} nm
-        **Size:** {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm
-        **Extent:** ±{domain_info['domain_half_nm']} nm
+        **Grid:** {grid_points} × {grid_points} points
+        **Spacing:** {grid_spacing} nm
+        **Size:** {domain_length} nm × {domain_length} nm
+        **Extent:** ±{domain_half} nm
         **Area:** {domain_info['area_nm2']:.1f} nm²
         """)
         
         # Data loading
-        st.markdown("#### 📂 Data Management")
+        st.markdown("#### 📂 DATA MANAGEMENT")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📤 Load Solutions", use_container_width=True):
+            if st.button("📤 LOAD SOLUTIONS", use_container_width=True):
                 with st.spinner("Loading solutions..."):
                     st.session_state.solutions = st.session_state.loader.load_all_solutions()
                     if st.session_state.solutions:
@@ -1460,14 +1694,14 @@ def main():
                     else:
                         st.warning("No solutions found in directory")
         with col2:
-            if st.button("🧹 Clear Cache", use_container_width=True):
+            if st.button("🧹 CLEAR CACHE", use_container_width=True):
                 st.session_state.solutions = []
                 st.session_state.interpolation_result = None
                 st.success("Cache cleared")
         st.divider()
         
         # Target parameters
-        st.markdown('<h2 class="section-header">🎯 Target Parameters</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="section-header">🎯 TARGET PARAMETERS</h2>', unsafe_allow_html=True)
         col_angle1, col_angle2 = st.columns([2, 1])
         with col_angle1:
             custom_theta = st.number_input(
@@ -1481,7 +1715,7 @@ def main():
             )
         with col_angle2:
             st.markdown("###")
-            if st.button("Set to Habit Plane", use_container_width=True):
+            if st.button("HABIT PLANE", use_container_width=True):
                 custom_theta = 54.7
                 st.rerun()
         
@@ -1494,7 +1728,7 @@ def main():
         )
         
         # Spatial sigma parameter
-        st.markdown("#### 📐 Angular Bracketing Kernel")
+        st.markdown("#### 📐 ANGULAR BRACKETING KERNEL")
         spatial_sigma = st.slider(
             "Kernel Width σ (degrees)",
             min_value=1.0,
@@ -1504,9 +1738,30 @@ def main():
             help="Width of Gaussian angular bracketing window"
         )
         
+        # Colormap selection
+        st.markdown("#### 🎨 COLORMAP SELECTION")
+        selected_colormap = st.selectbox(
+            "Choose Visualization Colormap",
+            options=ALL_COLORMAPS,
+            index=ALL_COLORMAPS.index('viridis'),
+            help="Select from 50+ colormaps for enhanced visualization"
+        )
+        
+        # Preview colormap
+        if selected_colormap:
+            try:
+                cmap = plt.get_cmap(selected_colormap)
+                colors_html = ""
+                for i in range(10):
+                    r, g, b, _ = cmap(i/9)
+                    colors_html += f'<span class="colormap-preview" style="background-color: rgb({int(r*255)}, {int(g*255)}, {int(b*255)});"></span>'
+                st.markdown(f"**Preview:** {colors_html}", unsafe_allow_html=True)
+            except:
+                pass
+        
         # Run interpolation
-        st.markdown("#### 🚀 Interpolation Control")
-        if st.button("🎯 Perform Theory-Informed Interpolation", type="primary", use_container_width=True):
+        st.markdown("#### 🚀 INTERPOLATION CONTROL")
+        if st.button("🎯 PERFORM THEORY-INFORMED INTERPOLATION", type="primary", use_container_width=True):
             if not st.session_state.solutions:
                 st.error("Please load solutions first!")
             else:
@@ -1536,7 +1791,7 @@ def main():
     
     # Main content area
     if st.session_state.solutions:
-        st.markdown(f"### 📊 Loaded {len(st.session_state.solutions)} Solutions")
+        st.markdown(f"### 📊 LOADED {len(st.session_state.solutions)} SOLUTIONS")
         
         # Display source information
         if st.session_state.solutions:
@@ -1558,57 +1813,98 @@ def main():
                     defect_counts[defect] = defect_counts.get(defect, 0) + 1
                 st.markdown("**Defect Types:** " + ", ".join([f"{k}: {v}" for k, v in defect_counts.items()]))
     
-    # Results display with all visualizations
+    # Results display with all enhanced visualizations
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
         
         # Tabs for different visualizations
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📈 Results Overview",
-            "🕸️ Hierarchical Radar",
-            "⚖️ Weight Comparison", 
-            "🌀 Sankey Diagram",
-            "🔗 Chord Diagram",
-            "📊 Formula Breakdown"
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📈 RESULTS OVERVIEW",
+            "🌀 ENHANCED SANKEY", 
+            "🔗 ADVANCED CHORD",
+            "🕸️ HIERARCHICAL RADAR",
+            "📊 FORMULA BREAKDOWN"
         ])
         
         with tab1:
-            st.markdown('<h2 class="section-header">📊 Interpolation Results</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">📊 INTERPOLATION RESULTS</h2>', unsafe_allow_html=True)
             
             # Key metrics
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Max Von Mises", f"{np.max(result['fields']['von_mises']):.3f} GPa")
+                st.markdown('<div class="metric-card">Max Von Mises<br>' + f"{np.max(result['fields']['von_mises']):.3f} GPa</div>", unsafe_allow_html=True)
             with col2:
-                st.metric("Target Angle", f"{result['target_angle']:.1f}°")
+                st.markdown('<div class="metric-card">Target Angle<br>' + f"{result['target_angle']:.1f}°</div>", unsafe_allow_html=True)
             with col3:
-                st.metric("Defect Type", result['target_params']['defect_type'])
+                st.markdown('<div class="metric-card">Defect Type<br>' + f"{result['target_params']['defect_type']}</div>", unsafe_allow_html=True)
             with col4:
-                st.metric("Attention Entropy", f"{result['weights']['entropy']:.3f}")
+                st.markdown('<div class="metric-card">Attention Entropy<br>' + f"{result['weights']['entropy']:.3f}</div>", unsafe_allow_html=True)
             
             # Weight table
-            st.markdown("#### 📋 Weight Components Table")
+            st.markdown("#### 📋 WEIGHT COMPONENTS TABLE")
             if 'sources_data' in result:
                 df = pd.DataFrame(result['sources_data'])
                 st.dataframe(
                     df[['source_index', 'theta_deg', 'defect_type', 'spatial_weight', 
-                        'defect_weight', 'combined_weight', 'target_defect_match']].style
-                    .background_gradient(subset=['combined_weight'], cmap='Blues')
+                        'defect_weight', 'attention_weight', 'combined_weight', 'target_defect_match']].style
+                    .background_gradient(subset=['combined_weight'], cmap=selected_colormap)
                     .format({
                         'theta_deg': '{:.1f}',
                         'spatial_weight': '{:.4f}',
                         'defect_weight': '{:.4f}',
+                        'attention_weight': '{:.4f}',
                         'combined_weight': '{:.4f}'
                     })
                 )
                 
         with tab2:
-            st.markdown('<h2 class="section-header">🕸️ Hierarchical Radar Chart</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">🌀 ENHANCED SANKEY DIAGRAM</h2>', unsafe_allow_html=True)
             st.markdown("""
-            **Visualization Strategy:**
-            - **Tier 1 (Angular Variation):** Outer ring shows angles around the circle
-            - **Tier 2 (Defect Types):** Inner rings show different weight components for each defect type
-            - **Target Highlight:** Red line at target angle, star marker for target defect
+            **ENHANCED VISUALIZATION FEATURES:**
+            - **Large Font Sizes:** Improved readability with 24pt titles and 18pt labels
+            - **High Contrast Colors:** Vibrant color scheme with distinct component colors
+            - **Enhanced Flow Visualization:** Thicker nodes and links for better visibility
+            - **Interactive Hover:** Detailed information on hover with dark backgrounds
+            - **Color Coding Legend:** Clear explanation of color meanings
+            """)
+            
+            if 'sources_data' in result:
+                fig = st.session_state.weight_visualizer.create_enhanced_sankey_diagram(
+                    result['sources_data'],
+                    result['target_angle'],
+                    result['target_params']['defect_type'],
+                    spatial_sigma
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+        with tab3:
+            st.markdown('<h2 class="section-header">🔗 ADVANCED CHORD DIAGRAM</h2>', unsafe_allow_html=True)
+            st.markdown("""
+            **CIRCULAR LAYOUT FEATURES:**
+            - **Target at Center:** Central positioning for focus
+            - **Weight Components in Different Colors:** Spatial (Blue), Defect (Pink), Attention (Cyan), Combined (Purple)
+            - **Line Thickness Proportional to Weight:** Visual representation of importance
+            - **Curved Connection Lines:** Aesthetic visualization of relationships
+            - **Different Line Styles:** Dashed, dotted, and solid lines for component distinction
+            """)
+            
+            if 'sources_data' in result:
+                fig = st.session_state.weight_visualizer.create_enhanced_chord_diagram(
+                    result['sources_data'],
+                    result['target_angle'],
+                    result['target_params']['defect_type']
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+        with tab4:
+            st.markdown('<h2 class="section-header">🕸️ HIERARCHICAL RADAR CHART</h2>', unsafe_allow_html=True)
+            st.markdown("""
+            **HIERARCHICAL VISUALIZATION:**
+            - **Tier 1 (Angular Variation):** Outer ring shows source angles
+            - **Tier 2 (Weight Components):** Multiple rings for different weight types
+            - **Colormap Integration:** Uses selected colormap for defect type coloring
+            - **Target Highlight:** Red line indicates target angle
+            - **Interactive Exploration:** Hover for detailed weight information
             """)
             
             if 'sources_data' in result:
@@ -1620,68 +1916,15 @@ def main():
                 )
                 st.plotly_chart(fig, use_container_width=True)
             
-        with tab3:
-            st.markdown('<h2 class="section-header">⚖️ Weight Comparison: With vs Without Defect Mask</h2>', unsafe_allow_html=True)
-            st.markdown("""
-            **Comparison Purpose:**
-            - **Left Radar:** Shows attention + spatial weights ignoring defect type
-            - **Right Radar:** Shows final weights with defect type gating applied
-            - **Color Coding:** Green = matching defect type, Red = mismatched defect type
-            """)
-            
-            if 'sources_data' in result:
-                fig = st.session_state.weight_visualizer.create_weight_comparison_radar(
-                    result['sources_data'],
-                    result['target_params']['defect_type']
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-        with tab4:
-            st.markdown('<h2 class="section-header">🌀 Sankey Diagram: Attention Component Flow</h2>', unsafe_allow_html=True)
-            st.markdown("""
-            **Flow Visualization:**
-            - **Left Nodes:** Individual sources
-            - **Middle Nodes:** Weight components (Spatial, Defect, Attention, Combined)
-            - **Right Node:** Target interpolation point
-            - **Flow Width:** Proportional to weight contribution
-            - **Color Coding:** Defect type specific
-            """)
-            
-            if 'sources_data' in result:
-                fig = st.session_state.weight_visualizer.create_sankey_diagram(
-                    result['sources_data'],
-                    result['target_angle'],
-                    result['target_params']['defect_type'],
-                    spatial_sigma
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
         with tab5:
-            st.markdown('<h2 class="section-header">🔗 Chord Diagram: Weight Relationships</h2>', unsafe_allow_html=True)
+            st.markdown('<h2 class="section-header">📊 WEIGHT FORMULA BREAKDOWN</h2>', unsafe_allow_html=True)
             st.markdown("""
-            **Network Visualization:**
-            - **Nodes:** Sources (circles) and Target (star)
-            - **Edges:** Weight relationships (thickness = connection strength)
-            - **Colors:** Defect type specific coloring
-            - **Sizes:** Node size proportional to combined weight
-            """)
-            
-            if 'sources_data' in result:
-                fig = st.session_state.weight_visualizer.create_chord_diagram(
-                    result['sources_data'],
-                    result['target_angle'],
-                    result['target_params']['defect_type']
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            
-        with tab6:
-            st.markdown('<h2 class="section-header">📊 Weight Formula Component Breakdown</h2>', unsafe_allow_html=True)
-            st.markdown("""
-            **Comprehensive Analysis:**
+            **COMPREHENSIVE ANALYSIS:**
             - **Component Breakdown:** Stacked bars showing contribution of each weight component
-            - **Cumulative Distribution:** Shows how weights accumulate
+            - **Cumulative Distribution:** Shows how weights accumulate across sources
             - **Defect Type Analysis:** Distribution of weights by defect type
-            - **Angular Distribution:** Weight variation with angle
+            - **Angular Distribution:** Weight variation with angle, different symbols for weight types
+            - **Habit Plane Reference:** Green line at 54.7° for reference
             """)
             
             if 'sources_data' in result:
@@ -1695,68 +1938,69 @@ def main():
         
         # Physics interpretation section
         st.markdown("---")
-        st.markdown("### 🧪 Physics Interpretation of Weight Formula")
+        st.markdown("### 🧪 PHYSICS INTERPRETATION OF WEIGHT FORMULA")
         
         col_phys1, col_phys2 = st.columns(2)
         
         with col_phys1:
             st.markdown("""
-            **Defect Type as Hard Constraint:**
+            **DEFECT TYPE AS HARD CONSTRAINT:**
             - Sources with different defect types receive near-zero attention
             - Critical for physical validity
             - Different defect types have fundamentally different stress fields
             
-            **Angular Proximity Drives Attention:**
+            **ANGULAR PROXIMITY DRIVES ATTENTION:**
             - Gaussian kernel creates "bracketing window"
             - Sources within ±σ degrees of target receive highest weights
             - Bracketing structure optimal for interpolation
             """)
         
         with col_phys2:
-            st.markdown("""
-            **Learned Similarity Refines Selection:**
+            st.markdown(f"""
+            **LEARNED SIMILARITY REFINES SELECTION:**
             - Transformer captures subtle stress field patterns
             - Modulates the physics priors rather than replacing them
             - Enables interpolation beyond simple angular proximity
             
-            **Domain Size Awareness:**
-            - All visualizations reference the **{domain_info['domain_length_nm']} nm** domain
+            **DOMAIN SIZE AWARENESS:**
+            - All visualizations reference the **{domain_length} nm** domain
             - Angular positions mapped to physical domain coordinates
             - Stress fields computed on exact grid spacing
-            """.format(**domain_info))
+            """)
     
     else:
         # Welcome message when no results
-        st.markdown("""
-        ## 🎯 Welcome to Advanced Weight Analysis
+        st.markdown(f"""
+        ## 🎯 WELCOME TO ADVANCED WEIGHT ANALYSIS
         
-        ### Domain Configuration:
-        - **Size:** {domain_info['domain_length_nm']} nm × {domain_info['domain_length_nm']} nm
-        - **Grid:** {domain_info['grid_points']} × {domain_info['grid_points']} points
-        - **Spacing:** {domain_info['grid_spacing_nm']} nm
-        - **Extent:** ±{domain_info['domain_half_nm']} nm
+        ### DOMAIN CONFIGURATION:
+        - **Size:** {domain_length} nm × {domain_length} nm
+        - **Grid:** {grid_points} × {grid_points} points
+        - **Spacing:** {grid_spacing} nm
+        - **Extent:** ±{domain_half} nm
         
-        ### Getting Started:
+        ### GETTING STARTED:
         1. **Load Solutions** from the sidebar
         2. **Configure Target Parameters** (angle, defect type)
         3. **Set Angular Bracketing Parameters** (kernel width σ)
-        4. **Click "Perform Theory-Informed Interpolation"** to run
-        5. **Explore Visualizations** across all tabs
+        4. **Select Colormap** from 50+ options
+        5. **Click "Perform Theory-Informed Interpolation"** to run
+        6. **Explore Enhanced Visualizations** across all tabs
         
-        ### Key Features:
+        ### KEY FEATURES:
+        - **Enhanced Sankey Diagrams:** High-contrast, large-font visualization
+        - **Advanced Chord Diagrams:** Circular layout with target at center
         - **Hierarchical Radar Charts:** Angular variation × Defect type
-        - **Sankey Diagrams:** Flow visualization of weight components
-        - **Chord Diagrams:** Network relationships between sources
         - **Weight Formula Breakdown:** Detailed component analysis
         - **Defect Type Gating:** Hard constraint for physical validity
         
-        ### Weight Formula Visualization:
+        ### WEIGHT FORMULA VISUALIZATION:
         The attention weight formula implements **Angular Bracketing Theory**:
         - Defect type as hard constraint
         - Angular proximity as spatial locality kernel
         - Learned transformer attention as refinement
         - Combined weights ensure physics-aware interpolation
-        """.format(**domain_info))
+        """)
 
 # =============================================
 # RUN THE APPLICATION
