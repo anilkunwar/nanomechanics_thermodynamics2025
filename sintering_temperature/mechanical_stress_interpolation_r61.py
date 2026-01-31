@@ -92,6 +92,169 @@ for category in COLORMAP_OPTIONS.values():
 ALL_COLORMAPS = sorted(list(set(ALL_COLORMAPS)))  # Remove duplicates
 
 # =============================================
+# SANKEY VALIDATION UTILITIES
+# =============================================
+class SankeyValidator:
+    """Utility class for validating Sankey diagram parameters"""
+    
+    # Valid hoverinfo values for Sankey nodes (from Plotly documentation)
+    VALID_NODE_HOVERINFO = {
+        'skip',     # Do not show hover info for this node
+        'none',     # Show no hover info
+        'all',      # Show all available info
+        'text',     # Show only text (labels)
+        'value',    # Show only value
+        'percent'   # Show only percentage
+    }
+    
+    # Valid hoverinfo values for Sankey links
+    VALID_LINK_HOVERINFO = {
+        'skip', 'none', 'all', 'value', 'percent', 'label'
+    }
+    
+    # Valid hoverinfo combinations (must be strings joined with +)
+    VALID_COMBINATIONS = {
+        'text+value',
+        'text+percent', 
+        'value+percent',
+        'text+value+percent'
+    }
+    
+    @staticmethod
+    def validate_hoverinfo(value, element_type='node'):
+        """
+        Validate and sanitize hoverinfo value for Sankey elements
+        
+        Args:
+            value: The hoverinfo value to validate
+            element_type: 'node' or 'link'
+            
+        Returns:
+            Validated hoverinfo string
+        """
+        if value is None:
+            return 'skip'  # Default safe value
+            
+        # Convert to string
+        value_str = str(value).strip()
+        
+        # Check if it's a combination
+        if '+' in value_str:
+            parts = [part.strip() for part in value_str.split('+')]
+            # Reconstruct and check if valid combination
+            reconstructed = '+'.join(parts)
+            if reconstructed in SankeyValidator.VALID_COMBINATIONS:
+                return reconstructed
+            else:
+                # Fall back to safe default
+                return 'skip'
+        
+        # Check single values
+        if element_type == 'node':
+            valid_set = SankeyValidator.VALID_NODE_HOVERINFO
+        else:  # link
+            valid_set = SankeyValidator.VALID_LINK_HOVERINFO
+            
+        if value_str in valid_set:
+            return value_str
+        
+        # Fallback to safe default
+        return 'skip'
+    
+    @staticmethod
+    def validate_node_dict(node_dict):
+        """Validate entire node dictionary for Sankey diagram"""
+        validated = dict(node_dict)
+        
+        # Ensure all arrays have same length
+        required_keys = ['label', 'color']
+        for key in required_keys:
+            if key not in validated:
+                validated[key] = []
+        
+        # Get array lengths
+        label_len = len(validated.get('label', []))
+        color_len = len(validated.get('color', []))
+        
+        # Validate hoverinfo
+        if 'hoverinfo' in validated:
+            validated['hoverinfo'] = SankeyValidator.validate_hoverinfo(
+                validated['hoverinfo'], 'node'
+            )
+        
+        # Ensure arrays match in length
+        if label_len != color_len:
+            st.warning(f"Node array length mismatch: labels={label_len}, colors={color_len}")
+            # Truncate to minimum length
+            min_len = min(label_len, color_len)
+            if 'label' in validated:
+                validated['label'] = validated['label'][:min_len]
+            if 'color' in validated:
+                validated['color'] = validated['color'][:min_len]
+        
+        return validated
+    
+    @staticmethod
+    def validate_link_dict(link_dict):
+        """Validate entire link dictionary for Sankey diagram"""
+        validated = dict(link_dict)
+        
+        # Ensure all arrays have same length
+        required_keys = ['source', 'target', 'value']
+        for key in required_keys:
+            if key not in validated:
+                validated[key] = []
+        
+        # Get array lengths
+        source_len = len(validated.get('source', []))
+        target_len = len(validated.get('target', []))
+        value_len = len(validated.get('value', []))
+        
+        # Validate hoverinfo
+        if 'hoverinfo' in validated:
+            validated['hoverinfo'] = SankeyValidator.validate_hoverinfo(
+                validated['hoverinfo'], 'link'
+            )
+        
+        # Ensure arrays match in length
+        lengths = [source_len, target_len, value_len]
+        if len(set(lengths)) > 1:
+            st.warning(f"Link array length mismatch: source={source_len}, target={target_len}, value={value_len}")
+            # Truncate to minimum length
+            min_len = min(lengths)
+            validated['source'] = validated['source'][:min_len]
+            validated['target'] = validated['target'][:min_len]
+            validated['value'] = validated['value'][:min_len]
+        
+        return validated
+    
+    @staticmethod
+    def create_safe_sankey_trace(node_dict, link_dict, **kwargs):
+        """
+        Create a Sankey trace with validated parameters
+        
+        Args:
+            node_dict: Node dictionary
+            link_dict: Link dictionary
+            **kwargs: Additional arguments for go.Sankey
+            
+        Returns:
+            Validated go.Sankey trace
+        """
+        # Validate node and link dictionaries
+        safe_node_dict = SankeyValidator.validate_node_dict(node_dict)
+        safe_link_dict = SankeyValidator.validate_link_dict(link_dict)
+        
+        # Create trace with validated parameters
+        trace = go.Sankey(
+            node=safe_node_dict,
+            link=safe_link_dict,
+            **kwargs
+        )
+        
+        return trace
+
+# =============================================
 # DOMAIN SIZE CONFIGURATION - 12.8 nm × 12.8 nm
 # =============================================
 class DomainConfiguration:
@@ -719,7 +882,7 @@ class TransformerSpatialInterpolator:
         return -np.sum(weights * np.log(weights + 1e-10))
 
 # =============================================
-# ENHANCED SANKEY VISUALIZER WITH CUSTOMIZATION
+# ENHANCED SANKEY VISUALIZER WITH VALIDATION
 # =============================================
 class EnhancedSankeyVisualizer:
     def __init__(self):
@@ -765,7 +928,7 @@ class EnhancedSankeyVisualizer:
             visual_params: Dictionary with visual enhancement parameters
         """
         # Create nodes for Sankey diagram
-        labels = [f'Target\n{target_defect}\n{target_shape}\nκ={target_kappa}']
+        labels = [f'Target\n{target_defect}\n{target_shape}\nκ={target_kappa:.2f}']
         
         # Add source nodes with detailed information
         for source in sources_data:
@@ -864,36 +1027,60 @@ class EnhancedSankeyVisualizer:
             
             link_labels.append(f"Component {comp_idx} → Target")
         
-        # Create Sankey diagram
-        fig = go.Figure(data=[go.Sankey(
-            node=dict(
-                pad=visual_params.get('node_padding', 30),
-                thickness=visual_params.get('node_thickness', 35),
-                line=dict(
-                    color="black", 
-                    width=visual_params.get('border_width', 2)
-                ),
-                label=labels,
-                color=self._get_node_colors(labels, sources_data, target_defect, target_shape),
-                hoverinfo='label+value',
-                hoverlabel=dict(
-                    font=dict(
-                        size=font_config.get('hover_font_size', 12),
-                        family='Arial, sans-serif'
-                    ),
-                    bgcolor='rgba(44, 62, 80, 0.9)',
-                    bordercolor='white'
-                )
+        # Prepare node colors
+        node_colors = self._get_node_colors(labels, sources_data, target_defect, target_shape)
+        
+        # Prepare node dictionary with VALIDATED parameters
+        node_dict = {
+            'pad': visual_params.get('node_padding', 30),
+            'thickness': visual_params.get('node_thickness', 35),
+            'line': dict(
+                color="black", 
+                width=visual_params.get('border_width', 2)
             ),
-            link=dict(
-                source=source_indices,
-                target=target_indices,
-                value=values,
-                color=colors,
-                hovertemplate='<b>%{source.label}</b> → <b>%{target.label}</b><br>Flow: %{value:.2f}<extra></extra>',
-                line=dict(width=0.5, color='rgba(255,255,255,0.3)')
+            'label': labels,
+            'color': node_colors,
+            # Use hovertemplate instead of hoverinfo for better control
+            'hovertemplate': '<b>%{label}</b><br>Total Flow: %{value:.2f}<extra></extra>',
+            # SAFE hoverinfo value - using 'skip' as recommended
+            'hoverinfo': 'skip'
+        }
+        
+        # Prepare link dictionary
+        link_dict = {
+            'source': source_indices,
+            'target': target_indices,
+            'value': values,
+            'color': colors,
+            # Use hovertemplate for links as well
+            'hovertemplate': '<b>%{source.label}</b> → <b>%{target.label}</b><br>Flow: %{value:.2f}<extra></extra>',
+            'line': dict(width=0.5, color='rgba(255,255,255,0.3)')
+        }
+        
+        # Create Sankey diagram using safe validator
+        try:
+            sankey_trace = SankeyValidator.create_safe_sankey_trace(
+                node_dict=node_dict,
+                link_dict=link_dict,
+                arrangement='snap',  # Improved arrangement
+                valueformat='.2f',   # Format for values
+                valuesuffix=' units' # Suffix for values
             )
-        )])
+            
+            fig = go.Figure(data=[sankey_trace])
+            
+        except Exception as e:
+            st.error(f"Error creating Sankey diagram: {str(e)}")
+            # Create a simple fallback figure
+            fig = go.Figure()
+            fig.update_layout(
+                title="Sankey Diagram Error - Using fallback visualization",
+                annotations=[dict(
+                    text="Sankey diagram could not be created. Check data and parameters.",
+                    x=0.5, y=0.5, showarrow=False, font=dict(size=16)
+                )]
+            )
+            return fig
         
         # Enhanced layout with configurable font sizes
         fig.update_layout(
@@ -924,6 +1111,17 @@ class EnhancedSankeyVisualizer:
                 l=50, 
                 r=50, 
                 b=50
+            ),
+            # Configure hover behavior at layout level
+            hovermode='x unified',
+            hoverlabel=dict(
+                font=dict(
+                    family='Arial, sans-serif',
+                    size=font_config.get('hover_font_size', 12),
+                    color='white'
+                ),
+                bgcolor='rgba(44, 62, 80, 0.9)',
+                bordercolor='white'
             )
         )
         
@@ -940,24 +1138,23 @@ class EnhancedSankeyVisualizer:
         # Target node
         colors.append(self.color_scheme['Query'])
         
-        # Source nodes - use defect-specific colors
+        # Source nodes - use shape-specific colors when available
         for i in range(len(sources_data)):
-            defect = sources_data[i]['defect_type']
             shape = sources_data[i]['shape']
-            # Use shape color if available, otherwise defect color
             if shape in self.shape_colors:
                 colors.append(self.shape_colors[shape])
             else:
+                defect = sources_data[i]['defect_type']
                 colors.append(self.color_scheme.get(defect, '#CCCCCC'))
         
         # Component nodes
         colors.extend([
-            self.color_scheme['Spatial'],
-            self.color_scheme['Defect'],
-            self.color_scheme['Shape'],
-            self.color_scheme['Kappa'],
-            self.color_scheme['Attention'],
-            self.color_scheme['Combined']
+            self.color_scheme['Spatial'],    # Spatial Kernel
+            self.color_scheme['Defect'],     # Defect Match
+            self.color_scheme['Shape'],      # Shape Match
+            self.color_scheme['Kappa'],      # Kappa Similarity
+            self.color_scheme['Attention'],  # Attention Score
+            self.color_scheme['Combined']    # Combined Weight
         ])
         
         return colors
@@ -1268,6 +1465,15 @@ def main():
         background: rgba(59, 130, 246, 0.05);
         margin: 1rem 0;
     }
+    .debug-info {
+        background: #f8f9fa;
+        border-left: 4px solid #007bff;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-radius: 0 5px 5px 0;
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -1323,10 +1529,18 @@ def main():
         st.session_state.sankey_visualizer = EnhancedSankeyVisualizer()
     if 'interpolation_result' not in st.session_state:
         st.session_state.interpolation_result = None
+    if 'debug_mode' not in st.session_state:
+        st.session_state.debug_mode = False
     
     # Sidebar configuration
     with st.sidebar:
         st.markdown('<h2 class="section-header">⚙️ CONFIGURATION</h2>', unsafe_allow_html=True)
+        
+        # Debug mode toggle
+        with st.expander("🔧 Debug Options", expanded=False):
+            st.session_state.debug_mode = st.checkbox("Enable Debug Mode", value=False)
+            if st.session_state.debug_mode:
+                st.info("Debug mode enabled. Additional validation info will be shown.")
         
         # Domain information
         st.markdown("#### 📐 DOMAIN INFORMATION")
@@ -1574,6 +1788,21 @@ def main():
             help="Select plot background color"
         )
         
+        # Hoverinfo configuration (SAFE OPTIONS ONLY)
+        st.markdown("#### 🖱️ HOVER BEHAVIOR")
+        hoverinfo_option = st.selectbox(
+            "Hover Info Display",
+            options=['skip', 'none', 'all', 'text', 'value', 'percent', 
+                    'text+value', 'text+percent', 'value+percent', 'text+value+percent'],
+            index=2,  # Default to 'all'
+            help="Control what information appears on hover (validated for Sankey)"
+        )
+        
+        # Validate the hoverinfo option
+        validated_hoverinfo = SankeyValidator.validate_hoverinfo(hoverinfo_option, 'node')
+        if hoverinfo_option != validated_hoverinfo and st.session_state.debug_mode:
+            st.warning(f"Hoverinfo '{hoverinfo_option}' was sanitized to '{validated_hoverinfo}'")
+        
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -1632,6 +1861,7 @@ def main():
         annotation_font_size = 10
         width = 800
         height = 600
+        hoverinfo_option = 'skip'  # Simpler for mobile
         st.session_state.mobile_preset = False
     
     if 'desktop_preset' in st.session_state and st.session_state.desktop_preset:
@@ -1640,6 +1870,7 @@ def main():
         annotation_font_size = 14
         width = 1200
         height = 800
+        hoverinfo_option = 'text+value'
         st.session_state.desktop_preset = False
     
     if 'presentation_preset' in st.session_state and st.session_state.presentation_preset:
@@ -1648,7 +1879,27 @@ def main():
         annotation_font_size = 16
         width = 1600
         height = 1000
+        hoverinfo_option = 'all'
         st.session_state.presentation_preset = False
+    
+    # Prepare configuration
+    font_config = {
+        'title_font_size': title_font_size,
+        'label_font_size': label_font_size,
+        'annotation_font_size': annotation_font_size,
+        'hover_font_size': hover_font_size
+    }
+    
+    visual_params = {
+        'node_padding': node_padding,
+        'node_thickness': node_thickness,
+        'border_width': border_width,
+        'width': width,
+        'height': height,
+        'plot_bgcolor': bg_color,
+        'paper_bgcolor': 'white',
+        'node_hoverinfo': hoverinfo_option  # Will be validated before use
+    }
     
     # Main content area
     # Display loaded solutions
@@ -1690,6 +1941,18 @@ def main():
     # Results display
     if st.session_state.interpolation_result:
         result = st.session_state.interpolation_result
+        
+        # Debug information if enabled
+        if st.session_state.debug_mode:
+            with st.expander("🔍 Debug Information", expanded=True):
+                st.markdown('<div class="debug-info">', unsafe_allow_html=True)
+                st.write("### Sankey Validation Debug")
+                st.write(f"Hoverinfo value from UI: {hoverinfo_option}")
+                st.write(f"Validated hoverinfo: {validated_hoverinfo}")
+                st.write(f"Number of sources: {len(result.get('sources_data', []))}")
+                st.write(f"Visual params keys: {list(visual_params.keys())}")
+                st.write(f"Font config keys: {list(font_config.keys())}")
+                st.markdown('</div>', unsafe_allow_html=True)
         
         # Tabs for different visualizations
         tab1, tab2, tab3, tab4 = st.tabs([
@@ -1788,84 +2051,94 @@ def main():
         with tab2:
             st.markdown('<h2 class="section-header">🌀 ENHANCED SANKEY DIAGRAM</h2>', unsafe_allow_html=True)
             
-            # Font configuration
-            font_config = {
-                'title_font_size': title_font_size,
-                'label_font_size': label_font_size,
-                'annotation_font_size': annotation_font_size,
-                'hover_font_size': hover_font_size
-            }
-            
-            # Visual parameters
-            visual_params = {
-                'node_padding': node_padding,
-                'node_thickness': node_thickness,
-                'border_width': border_width,
-                'width': width,
-                'height': height,
-                'plot_bgcolor': bg_color,
-                'paper_bgcolor': 'white'
-            }
+            # Add validation info in debug mode
+            if st.session_state.debug_mode:
+                st.info(f"""
+                **Sankey Configuration:**
+                - Hoverinfo: '{validated_hoverinfo}' (validated from '{hoverinfo_option}')
+                - Font sizes: Title={title_font_size}pt, Labels={label_font_size}pt
+                - Layout: {width}×{height}px, Node padding={node_padding}px
+                - Using SankeyValidator for safe parameter validation
+                """)
             
             if 'sources_data' in result:
-                fig = st.session_state.sankey_visualizer.create_customizable_sankey_diagram(
-                    sources_data=result['sources_data'],
-                    target_angle=result['target_angle'],
-                    target_defect=result['target_params']['defect_type'],
-                    target_shape=result['target_params']['shape'],
-                    target_kappa=result['target_params']['kappa'],
-                    spatial_sigma=spatial_sigma,
-                    font_config=font_config,
-                    visual_params=visual_params
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Export options
-                col_e1, col_e2, col_e3 = st.columns(3)
-                with col_e1:
-                    if st.button("💾 Save Sankey as HTML", use_container_width=True):
-                        html = fig.to_html(include_plotlyjs='cdn')
-                        st.download_button(
-                            label="Download HTML",
-                            data=html,
-                            file_name="enhanced_sankey.html",
-                            mime="text/html"
-                        )
-                
-                with col_e2:
-                    if st.button("🖼️ Save Sankey as PNG", use_container_width=True):
-                        img_bytes = fig.to_image(format="png", width=width, height=height)
-                        st.download_button(
-                            label="Download PNG",
-                            data=img_bytes,
-                            file_name="enhanced_sankey.png",
-                            mime="image/png"
-                        )
-                
-                with col_e3:
-                    if st.button("📊 Save Configuration", use_container_width=True):
-                        config = {
-                            'font_config': font_config,
-                            'visual_params': visual_params,
-                            'target_params': result['target_params'],
-                            'saved_at': datetime.now().isoformat()
-                        }
-                        st.download_button(
-                            label="Download JSON",
-                            data=json.dumps(config, indent=2),
-                            file_name="sankey_config.json",
-                            mime="application/json"
-                        )
+                try:
+                    fig = st.session_state.sankey_visualizer.create_customizable_sankey_diagram(
+                        sources_data=result['sources_data'],
+                        target_angle=result['target_angle'],
+                        target_defect=result['target_params']['defect_type'],
+                        target_shape=result['target_params']['shape'],
+                        target_kappa=result['target_params']['kappa'],
+                        spatial_sigma=spatial_sigma,
+                        font_config=font_config,
+                        visual_params=visual_params
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Export options
+                    col_e1, col_e2, col_e3 = st.columns(3)
+                    with col_e1:
+                        if st.button("💾 Save Sankey as HTML", use_container_width=True):
+                            html = fig.to_html(include_plotlyjs='cdn')
+                            st.download_button(
+                                label="Download HTML",
+                                data=html,
+                                file_name="enhanced_sankey.html",
+                                mime="text/html"
+                            )
+                    
+                    with col_e2:
+                        if st.button("🖼️ Save Sankey as PNG", use_container_width=True):
+                            img_bytes = fig.to_image(format="png", width=width, height=height)
+                            st.download_button(
+                                label="Download PNG",
+                                data=img_bytes,
+                                file_name="enhanced_sankey.png",
+                                mime="image/png"
+                            )
+                    
+                    with col_e3:
+                        if st.button("📊 Save Configuration", use_container_width=True):
+                            config = {
+                                'font_config': font_config,
+                                'visual_params': visual_params,
+                                'target_params': result['target_params'],
+                                'validated_hoverinfo': validated_hoverinfo,
+                                'saved_at': datetime.now().isoformat()
+                            }
+                            st.download_button(
+                                label="Download JSON",
+                                data=json.dumps(config, indent=2),
+                                file_name="sankey_config.json",
+                                mime="application/json"
+                            )
+                    
+                except Exception as e:
+                    st.error(f"Error creating Sankey diagram: {str(e)}")
+                    st.info("""
+                    **Troubleshooting Tips:**
+                    1. Check that all arrays have consistent lengths
+                    2. Verify hoverinfo values are valid Sankey options
+                    3. Ensure node colors match labels in length
+                    4. Try using simpler hoverinfo options like 'skip' or 'none'
+                    """)
+                    if st.session_state.debug_mode:
+                        st.exception(e)
                 
         with tab3:
             st.markdown('<h2 class="section-header">📊 PARAMETER ANALYSIS</h2>', unsafe_allow_html=True)
             
             if 'sources_data' in result:
-                fig = st.session_state.sankey_visualizer.create_parameter_analysis_chart(
-                    sources_data=result['sources_data'],
-                    target_params=result['target_params']
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    fig = st.session_state.sankey_visualizer.create_parameter_analysis_chart(
+                        sources_data=result['sources_data'],
+                        target_params=result['target_params']
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error creating parameter analysis: {str(e)}")
+                    if st.session_state.debug_mode:
+                        st.exception(e)
                 
         with tab4:
             st.markdown('<h2 class="section-header">💾 EXPORT DATA</h2>', unsafe_allow_html=True)
@@ -1882,7 +2155,12 @@ def main():
                         'exported_at': datetime.now().isoformat(),
                         'num_sources': result['num_sources'],
                         'spatial_sigma': spatial_sigma,
-                        'domain_info': DomainConfiguration.get_domain_info()
+                        'domain_info': DomainConfiguration.get_domain_info(),
+                        'sankey_config': {
+                            'font_config': font_config,
+                            'visual_params': visual_params,
+                            'hoverinfo': validated_hoverinfo
+                        }
                     }
                 }
                 
@@ -1924,9 +2202,15 @@ def main():
         ### GETTING STARTED:
         1. **Upload Files** or **Load from Folder** in the sidebar
         2. **Set Target Parameters** (defect type, shape, kappa, angle)
-        3. **Adjust Sankey Customization** (font sizes, layout)
+        3. **Adjust Sankey Customization** (font sizes, layout, hover behavior)
         4. **Click "Perform Interpolation"** to run
         5. **Explore Results** across all tabs
+        
+        ### 🔧 FIXED SANKEY VALIDATION:
+        - **Hoverinfo validation:** All hoverinfo values are now validated
+        - **Safe defaults:** Invalid hoverinfo values are sanitized to 'skip'
+        - **Array length checking:** Ensures all arrays match in length
+        - **Debug mode:** Enable in sidebar for validation details
         
         ### KEY FEATURES:
         - **Physics-Aware Interpolation:** Incorporates defect type, shape, and kappa
