@@ -656,7 +656,7 @@ class WeightVisualizer:
             cmap = plt.get_cmap('viridis')
             return [f'rgb({int(r*255)}, {int(g*255)}, {int(b*255)})' 
                    for r, g, b, _ in [cmap(i/n_colors) for i in range(n_colors)]]
-    
+    #
     def create_enhanced_sankey_diagram(self, sources_data, target_angle, target_defect, spatial_sigma):
         """
         Create enhanced Sankey diagram with improved fonts, contrast, and colors
@@ -746,8 +746,9 @@ class WeightVisualizer:
             
             link_labels.append(f"{comp_name} → Target")
         
-        # Create enhanced Sankey diagram
+        # Create enhanced Sankey diagram - FIXED: Remove hoverinfo and hoverlabel from node dict
         fig = go.Figure(data=[go.Sankey(
+            # CORRECTED: hoverinfo and hoverlabel are not valid node properties in Plotly Sankey
             node=dict(
                 pad=25,  # Increased padding
                 thickness=30,  # Thicker nodes
@@ -756,26 +757,23 @@ class WeightVisualizer:
                 color=["#FF6B6B"] +  # Target color (bright red)
                       [color_palette[i % len(color_palette)] for i in range(len(sources_data))] +  # Source colors
                       ["#36A2EB", "#FF6384", "#4BC0C0", "#9966FF"],  # Component colors
-                hoverinfo='label+value',
-                hoverlabel=dict(
-                    font=dict(
-                        family=self.font_config['family'],
-                        size=self.font_config['size_labels'],
-                        color='white'
-                    ),
-                    bgcolor='rgba(0,0,0,0.8)',
-                    bordercolor='white'
-                )
+                # REMOVED INVALID PROPERTIES:
+                # hoverinfo='label+value',  # ❌ NOT valid for Sankey nodes
+                # hoverlabel=dict(...)      # ❌ NOT valid for Sankey nodes
+                # Use hovertemplate instead for custom hover text
+                hovertemplate='<b>%{label}</b><br>Value: %{value:.2f}<extra></extra>'
             ),
             link=dict(
                 source=source_indices,
                 target=target_indices,
                 value=values,
                 color=colors,
-                hovertemplate='<b>%{customdata}</b><br>Flow: %{value:.2f}<extra></extra>',
+                hovertemplate='<b>%{source.label}</b> → <b>%{target.label}</b><br>Flow: %{value:.2f}<extra></extra>',
                 customdata=link_labels,
                 line=dict(width=0.5, color='rgba(255,255,255,0.3)')
-            )
+            ),
+            # Set hoverinfo at trace level if needed
+            hoverinfo='all'
         )])
         
         # Enhanced layout with better fonts and contrast
@@ -803,6 +801,7 @@ class WeightVisualizer:
             plot_bgcolor='rgba(240, 240, 245, 0.9)',  # Light background
             paper_bgcolor='white',
             margin=dict(t=100, l=50, r=50, b=50),
+            # Move hover configuration to layout level for entire figure
             hoverlabel=dict(
                 font=dict(
                     family=self.font_config['family'],
@@ -856,6 +855,7 @@ class WeightVisualizer:
         fig.update_layout(annotations=annotations)
         
         return fig
+    
     
     def create_enhanced_chord_diagram(self, sources_data, target_angle, target_defect):
         """
