@@ -832,7 +832,7 @@ def main():
         label_font_size = st.slider(
             "Node Label Font Size",
             min_value=8,
-            max_value=28,
+            max_value=58, #28
             value=16,
             step=1,
             help="Font size for source/target node labels"
@@ -848,7 +848,7 @@ def main():
         legend_font_size = st.slider(
             "Legend Font Size",
             min_value=8,
-            max_value=24,
+            max_value=44, #24
             value=14,
             step=1,
             help="Font size for color coding legend"
