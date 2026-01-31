@@ -1,3 +1,66 @@
+import streamlit as st
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, Normalize, LogNorm, ListedColormap
+from matplotlib.cm import get_cmap
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import os
+import pickle
+import torch
+import torch.nn as nn
+from datetime import datetime
+from io import BytesIO
+import warnings
+import json
+import zipfile
+import itertools
+from typing import List, Dict, Any, Optional, Tuple, Union
+import seaborn as sns
+from scipy.ndimage import zoom
+import re
+import time
+import networkx as nx
+import warnings
+from math import cos, sin, pi
+warnings.filterwarnings('ignore')
+
+# =============================================
+# SET PAGE CONFIG - MUST BE FIRST STREAMLIT COMMAND
+# =============================================
+st.set_page_config(
+    page_title="Advanced Weight Analysis - Angular Bracketing Theory",
+    layout="wide",
+    page_icon="🧠",
+    initial_sidebar_state="expanded"
+)
+
+# =============================================
+# GLOBAL STYLING CONFIGURATION
+# =============================================
+plt.rcParams.update({
+    'font.size': 14,
+    'axes.titlesize': 20,
+    'axes.labelsize': 16,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    'figure.dpi': 300,
+    'figure.autolayout': True,
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linestyle': '--',
+    'image.cmap': 'viridis'
+})
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
+VISUALIZATION_OUTPUT_DIR = os.path.join(SCRIPT_DIR, "visualization_outputs")
+os.makedirs(SOLUTIONS_DIR, exist_ok=True)
+os.makedirs(VISUALIZATION_OUTPUT_DIR, exist_ok=True)
+
 # =============================================
 # ENHANCED WEIGHT VISUALIZER WITH CUSTOMIZABLE SANKEY
 # =============================================
@@ -314,20 +377,60 @@ class EnhancedWeightVisualizer:
         
         return fig
 
+# =============================================
+# HELPER FUNCTIONS
+# =============================================
+def create_demo_data():
+    """Create demo data for visualization testing"""
+    sources = []
+    defect_types = ['Twin', 'ISF', 'ESF', 'No Defect']
+    
+    for i in range(6):
+        defect = defect_types[i % len(defect_types)]
+        sources.append({
+            'source_index': i,
+            'theta_deg': np.random.uniform(0, 180),
+            'defect_type': defect,
+            'spatial_weight': np.random.uniform(0.1, 0.5),
+            'defect_weight': 1.0 if defect == 'Twin' else 0.1,
+            'attention_weight': np.random.uniform(0.2, 0.8),
+            'combined_weight': np.random.uniform(0.1, 0.6),
+            'target_defect_match': defect == 'Twin'
+        })
+    
+    return {
+        'sources': sources,
+        'target_angle': 54.7,
+        'target_defect': 'Twin',
+        'spatial_sigma': 10.0
+    }
+
+def save_configuration(config):
+    """Save current configuration to file"""
+    config['saved_at'] = datetime.now().isoformat()
+    
+    with open('sankey_config.json', 'w') as f:
+        json.dump(config, f, indent=2)
 
 # =============================================
-# UPDATED MAIN APPLICATION WITH ENHANCED CONTROLS
+# MAIN APPLICATION
 # =============================================
 def main():
-    st.set_page_config(
-        page_title="Advanced Weight Analysis - Enhanced Visualization",
-        layout="wide",
-        page_icon="📊"
-    )
-    
     # Enhanced CSS with custom styling
     st.markdown("""
     <style>
+    .main-header {
+        font-size: 3.5rem !important;
+        color: #1E3A8A !important;
+        text-align: center;
+        padding: 1rem;
+        background: linear-gradient(90deg, #1E3A8A, #3B82F6, #10B981, #EF4444);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 900 !important;
+        margin-bottom: 1rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
     .sankey-controls {
         background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
         padding: 1.5rem;
@@ -354,19 +457,50 @@ def main():
         display: block;
         color: white;
     }
+    .metric-card {
+        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        color: white;
+        font-weight: bold;
+        text-align: center;
+        margin: 0.5rem;
+        font-size: 1.2rem;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        transition: transform 0.3s;
+    }
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+    }
     .stSlider > div > div > div {
         color: white !important;
+    }
+    .section-header {
+        font-size: 2.2rem !important;
+        color: #2C3E50 !important;
+        font-weight: 800 !important;
+        border-left: 8px solid #3B82F6;
+        padding-left: 1.5rem;
+        margin-top: 2rem;
+        margin-bottom: 1.5rem;
+        background: linear-gradient(to right, #F0F9FF, white);
+        padding: 1rem 1.5rem;
+        border-radius: 0 10px 10px 0;
     }
     </style>
     """, unsafe_allow_html=True)
     
     # Header
-    st.title("📊 Enhanced Sankey Visualization Dashboard")
+    st.markdown('<h1 class="main-header">📊 Enhanced Sankey Visualization Dashboard</h1>', unsafe_allow_html=True)
     st.markdown("### Customize font sizes and visual parameters for optimal viewing")
     
     # Initialize session state
     if 'weight_visualizer' not in st.session_state:
         st.session_state.weight_visualizer = EnhancedWeightVisualizer()
+    
+    # Generate demo data
+    demo_data = create_demo_data()
     
     # Sidebar with enhanced controls
     with st.sidebar:
@@ -414,6 +548,15 @@ def main():
             value=12,
             step=1,
             help="Hover text font size"
+        )
+        
+        legend_font_size = st.slider(
+            "Legend Font Size",
+            min_value=10,
+            max_value=24,
+            value=14,
+            step=1,
+            help="Legend font size"
         )
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -505,31 +648,47 @@ def main():
         
         # Preset buttons
         st.markdown("### 🚀 Quick Presets")
-        col_p1, col_p2 = st.columns(2)
+        col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1:
-            if st.button("📱 Mobile View", use_container_width=True):
-                # Reset to mobile-friendly settings
-                title_font_size = 20
-                label_font_size = 12
-                annotation_font_size = 10
-                width = 800
-                height = 600
+            if st.button("📱 Mobile", use_container_width=True):
+                st.session_state.mobile_preset = True
+                st.rerun()
         
         with col_p2:
-            if st.button("🖥️ Presentation", use_container_width=True):
-                # Reset to presentation settings
-                title_font_size = 28
-                label_font_size = 18
-                annotation_font_size = 16
-                width = 1600
-                height = 1000
-                enhance_colors = True
+            if st.button("🖥️ Desktop", use_container_width=True):
+                st.session_state.desktop_preset = True
+                st.rerun()
+        
+        with col_p3:
+            if st.button("📊 Presentation", use_container_width=True):
+                st.session_state.presentation_preset = True
+                st.rerun()
     
-    # Main content area
-    # Generate sample data for demonstration
-    # In practice, this would come from your interpolation result
-    if 'demo_data' not in st.session_state:
-        st.session_state.demo_data = create_demo_data()
+    # Handle presets
+    if 'mobile_preset' in st.session_state and st.session_state.mobile_preset:
+        title_font_size = 20
+        label_font_size = 12
+        annotation_font_size = 10
+        width = 800
+        height = 600
+        st.session_state.mobile_preset = False
+    
+    if 'desktop_preset' in st.session_state and st.session_state.desktop_preset:
+        title_font_size = 24
+        label_font_size = 16
+        annotation_font_size = 14
+        width = 1200
+        height = 800
+        st.session_state.desktop_preset = False
+    
+    if 'presentation_preset' in st.session_state and st.session_state.presentation_preset:
+        title_font_size = 28
+        label_font_size = 18
+        annotation_font_size = 16
+        width = 1600
+        height = 1000
+        enhance_colors = True
+        st.session_state.presentation_preset = False
     
     # Get user configuration
     user_config = {
@@ -537,6 +696,7 @@ def main():
         'label_font_size': label_font_size,
         'annotation_font_size': annotation_font_size,
         'hover_font_size': hover_font_size,
+        'legend_font_size': legend_font_size,
         'node_padding': node_padding,
         'node_thickness': node_thickness,
         'border_width': border_width,
@@ -548,37 +708,45 @@ def main():
         'show_flow_values': show_flow_values
     }
     
+    # Main content area
     # Display current configuration
-    with st.expander("📋 Current Configuration", expanded=False):
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.metric("Title Font Size", f"{title_font_size} pt")
-            st.metric("Label Font Size", f"{label_font_size} pt")
-            st.metric("Diagram Width", f"{width} px")
-        with col_c2:
-            st.metric("Annotation Font Size", f"{annotation_font_size} pt")
-            st.metric("Node Thickness", f"{node_thickness} px")
-            st.metric("Diagram Height", f"{height} px")
+    st.markdown('<h2 class="section-header">📋 Current Configuration</h2>', unsafe_allow_html=True)
+    
+    col_c1, col_c2, col_c3 = st.columns(3)
+    with col_c1:
+        st.markdown(f'<div class="metric-card">Title Font Size<br>{title_font_size} pt</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card">Label Font Size<br>{label_font_size} pt</div>', unsafe_allow_html=True)
+    
+    with col_c2:
+        st.markdown(f'<div class="metric-card">Diagram Width<br>{width} px</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card">Diagram Height<br>{height} px</div>', unsafe_allow_html=True)
+    
+    with col_c3:
+        st.markdown(f'<div class="metric-card">Node Thickness<br>{node_thickness} px</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card">Border Width<br>{border_width} px</div>', unsafe_allow_html=True)
     
     # Create and display the Sankey diagram
+    st.markdown('<h2 class="section-header">🌀 Enhanced Sankey Diagram</h2>', unsafe_allow_html=True)
+    
     try:
         fig = st.session_state.weight_visualizer.create_visualization_dashboard(
-            sources_data=st.session_state.demo_data['sources'],
-            target_angle=st.session_state.demo_data['target_angle'],
-            target_defect=st.session_state.demo_data['target_defect'],
-            spatial_sigma=st.session_state.demo_data['spatial_sigma'],
+            sources_data=demo_data['sources'],
+            target_angle=demo_data['target_angle'],
+            target_defect=demo_data['target_defect'],
+            spatial_sigma=demo_data['spatial_sigma'],
             user_config=user_config
         )
         
         st.plotly_chart(fig, use_container_width=True)
         
         # Export options
-        st.markdown("---")
+        st.markdown('<h2 class="section-header">💾 Export Options</h2>', unsafe_allow_html=True)
+        
         col_e1, col_e2, col_e3 = st.columns(3)
         with col_e1:
-            if st.button("💾 Save Configuration", use_container_width=True):
+            if st.button("💾 Save Configuration", use_container_width=True, type="primary"):
                 save_configuration(user_config)
-                st.success("Configuration saved!")
+                st.success("Configuration saved to 'sankey_config.json'!")
         
         with col_e2:
             # Export as HTML
@@ -586,62 +754,32 @@ def main():
             st.download_button(
                 label="📥 Export as HTML",
                 data=html,
-                file_name="sankey_diagram.html",
+                file_name="enhanced_sankey.html",
                 mime="text/html",
-                use_container_width=True
+                use_container_width=True,
+                type="secondary"
             )
         
         with col_e3:
             # Export as PNG
-            if st.button("🖼️ Export as PNG", use_container_width=True):
-                img_bytes = fig.to_image(format="png", width=width, height=height)
-                st.download_button(
-                    label="Download PNG",
-                    data=img_bytes,
-                    file_name="sankey_diagram.png",
-                    mime="image/png",
-                    use_container_width=True
-                )
+            if st.button("🖼️ Export as PNG", use_container_width=True, type="secondary"):
+                with st.spinner("Generating PNG..."):
+                    img_bytes = fig.to_image(format="png", width=width, height=height)
+                    st.download_button(
+                        label="Download PNG",
+                        data=img_bytes,
+                        file_name="enhanced_sankey.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
     
     except Exception as e:
         st.error(f"Error creating visualization: {str(e)}")
         st.info("Try adjusting the parameters or using different data.")
-
-# =============================================
-# HELPER FUNCTIONS
-# =============================================
-def create_demo_data():
-    """Create demo data for visualization testing"""
-    sources = []
-    defect_types = ['Twin', 'ISF', 'ESF', 'No Defect']
     
-    for i in range(6):
-        defect = defect_types[i % len(defect_types)]
-        sources.append({
-            'source_index': i,
-            'theta_deg': np.random.uniform(0, 180),
-            'defect_type': defect,
-            'spatial_weight': np.random.uniform(0.1, 0.5),
-            'defect_weight': 1.0 if defect == 'Twin' else 0.1,
-            'attention_weight': np.random.uniform(0.2, 0.8),
-            'combined_weight': np.random.uniform(0.1, 0.6),
-            'target_defect_match': defect == 'Twin'
-        })
-    
-    return {
-        'sources': sources,
-        'target_angle': 54.7,
-        'target_defect': 'Twin',
-        'spatial_sigma': 10.0
-    }
-
-def save_configuration(config):
-    """Save current configuration to file"""
-    import json
-    config['saved_at'] = datetime.now().isoformat()
-    
-    with open('sankey_config.json', 'w') as f:
-        json.dump(config, f, indent=2)
+    # Source data preview
+    with st.expander("📊 View Source Data", expanded=False):
+        st.dataframe(pd.DataFrame(demo_data['sources']), use_container_width=True)
 
 # =============================================
 # RUN THE ENHANCED APPLICATION
