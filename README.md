@@ -289,6 +289,12 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts58-streamlit-red)](https://mechanicalstress-interpolation-at-theta58.streamlit.app/) (advanced visualization of weights and coefficients of G-ADW Attention, agnostic to the domain geometry's units)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts59-streamlit-red)](https://mechanicalstress-interpolation-at-theta59.streamlit.app/) (not on source data, a tutorial for Sankey diagram for weights visualization created on synthetic data)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts60-streamlit-red)](https://mechanicalstress-interpolation-at-theta60.streamlit.app/) (Sankey diagram created on the interpolation weights for model fitted on 21 Source data obtained from phase field simulations)
+
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts61-streamlit-red)](https://mechanicalstress-interpolation-at-theta61.streamlit.app/) (Sankey diagram created on the interpolation weights for model fitted on 21 Source data obtained from phase field simulations)
+
 
 
 
