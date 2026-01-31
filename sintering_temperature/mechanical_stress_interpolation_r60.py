@@ -259,7 +259,7 @@ class TransformerSpatialInterpolator:
             return None
 
 # =============================================
-# ENHANCED SANKEY VISUALIZER
+# ENHANCED SANKEY VISUALIZER - FIXED VERSION
 # =============================================
 class EnhancedSankeyVisualizer:
     def __init__(self):
@@ -274,9 +274,11 @@ class EnhancedSankeyVisualizer:
     
     def create_enhanced_sankey(
         self,
-        sources_data: List[Dict[str, Any]],
+        sources_ List[Dict[str, Any]],
         target_angle: float,
         target_defect: str,
+        target_shape: str,        # ADDED: Target shape parameter
+        target_kappa: float,      # ADDED: Target kappa parameter (FIXES KeyError)
         spatial_sigma: float,
         # CUSTOMIZATION PARAMETERS
         label_font_size: int = 16,
@@ -294,7 +296,7 @@ class EnhancedSankeyVisualizer:
     ) -> go.Figure:
         # Create nodes
         labels = ['Target']
-        for source in sources_data:
+        for source in sources_
             angle = source['theta_deg']
             defect = source['defect_type']
             labels.append(f"S{source['source_index']}\n{defect}\n{angle:.1f}°")
@@ -368,7 +370,6 @@ class EnhancedSankeyVisualizer:
         bg_color = 'rgb(30, 30, 30)' if use_dark_mode else 'rgba(245, 247, 250, 0.95)'
         paper_color = 'rgb(20, 20, 20)' if use_dark_mode else 'white'
         text_color = 'white' if use_dark_mode else '#2C3E50'
-        grid_color = 'rgba(255, 255, 255, 0.1)' if use_dark_mode else 'rgba(0, 0, 0, 0.1)'
         
         # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
@@ -406,8 +407,8 @@ class EnhancedSankeyVisualizer:
             title=dict(
                 text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>'
                      f'<span style="font-size: {title_font_size-4}px; font-weight: normal;">'
-                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}° | '
-                     f'κ={sources_data[0]["source_params"].get("kappa", 0.6):.2f}</span>',
+                     f'Target: {target_angle}° {target_defect} | Shape: {target_shape} | '
+                     f'κ={target_kappa:.2f} | σ={spatial_sigma}°</span>',  # FIXED: Uses target_kappa parameter
                 font=dict(
                     family='Arial, sans-serif',
                     size=title_font_size,
@@ -446,7 +447,7 @@ class EnhancedSankeyVisualizer:
                 dict(
                     x=0.02, y=-0.08,
                     xref='paper', yref='paper',
-                    text='<b style="font-size: 16px;">COLOR CODING:</b>',
+                    text='<b>COLOR CODING:</b>',
                     showarrow=False,
                     font=dict(size=legend_font_size + 2, color=text_color, family='Arial', weight='bold')
                 ),
@@ -533,12 +534,12 @@ class SolutionLoader:
         standardized = {'params': {}, 'history': []}
         try:
             if isinstance(data, dict):
-                if 'params' in data:
+                if 'params' in 
                     standardized['params'] = data['params']
-                elif 'parameters' in data:
+                elif 'parameters' in 
                     standardized['params'] = data['parameters']
                 
-                if 'history' in data:
+                if 'history' in 
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
@@ -638,7 +639,7 @@ def main():
     st.markdown('<h1 class="main-header">🌊 ENHANCED SANKEY VISUALIZATION - WEIGHT COMPONENTS</h1>', unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align: center; background: linear-gradient(135deg, #E0F7FA, #E3F2FD); padding: 1rem; border-radius: 10px; margin-bottom: 1.5rem;">
-        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel (Angular Bracketing) × Defect Mask (Hard Constraint) × Learned Attention × Kappa (Material Parameter)
+        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel × Defect Mask × Learned Attention × Kappa (Material Parameter)
     </div>
     """, unsafe_allow_html=True)
     
@@ -708,7 +709,7 @@ def main():
             help="Geometry shape of the defect configuration"
         )
         
-        # KAPPA PARAMETER INPUT (Learned from user request)
+        # KAPPA PARAMETER INPUT
         target_kappa = st.number_input(
             "Kappa (κ) - Material Parameter",
             min_value=0.1,
@@ -864,9 +865,9 @@ def main():
                         st.success(f"✅ Interpolation complete! {len(result['sources_data'])} sources processed")
                         st.session_state.target_angle = target_angle
                         st.session_state.target_defect = target_defect
-                        st.session_state.spatial_sigma = spatial_sigma
-                        st.session_state.target_kappa = target_kappa
                         st.session_state.target_shape = target_shape
+                        st.session_state.target_kappa = target_kappa
+                        st.session_state.spatial_sigma = spatial_sigma
                     else:
                         st.error("❌ Interpolation failed - check solution file format")
     
@@ -936,11 +937,13 @@ def main():
         st.markdown('<div class="viz-container">', unsafe_allow_html=True)
         st.markdown("### 🌊 Enhanced Sankey Diagram: Attention Component Flow")
         
-        # Create and display diagram with current settings
+        # Create and display diagram with current settings - FIXED: Pass target_kappa and target_shape
         fig = st.session_state.visualizer.create_enhanced_sankey(
             sources_data=st.session_state.interpolation_result['sources_data'],
             target_angle=st.session_state.target_angle,
             target_defect=st.session_state.target_defect,
+            target_shape=st.session_state.target_shape,  # ADDED
+            target_kappa=st.session_state.target_kappa,  # ADDED (FIXES KeyError)
             spatial_sigma=st.session_state.spatial_sigma,
             label_font_size=label_font_size,
             title_font_size=title_font_size,
