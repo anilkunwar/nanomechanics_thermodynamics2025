@@ -19,13 +19,23 @@ SOLUTIONS_DIR = os.path.join(SCRIPT_DIR, "numerical_solutions")
 os.makedirs(SOLUTIONS_DIR, exist_ok=True)
 
 # =============================================
-# POSITIONAL ENCODING FOR TRANSFORMER
+# PHYSICS PARAMETERS
+# =============================================
+class PhysicsParameters:
+    EIGENSTRAIN_VALUES = {'Twin': 2.12, 'ISF': 0.289, 'ESF': 0.333, 'No Defect': 0.0}
+    
+    @staticmethod
+    def get_eigenstrain(defect_type: str) -> float:
+        return PhysicsParameters.EIGENSTRAIN_VALUES.get(defect_type, 0.0)
+
+# =============================================
+# POSITIONAL ENCODING
 # =============================================
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
         self.d_model = d_model
-        
+    
     def forward(self, x):
         batch_size, seq_len, d_model = x.shape
         position = torch.arange(seq_len, dtype=torch.float).unsqueeze(1)
@@ -36,7 +46,7 @@ class PositionalEncoding(nn.Module):
         return x + pe.unsqueeze(0)
 
 # =============================================
-# TRANSFORMER SPATIAL INTERPOLATOR (REAL IMPLEMENTATION)
+# TRANSFORMER SPATIAL INTERPOLATOR
 # =============================================
 class TransformerSpatialInterpolator:
     def __init__(self, d_model=64, nhead=8, num_layers=3, spatial_sigma=10.0, temperature=1.0):
@@ -47,11 +57,7 @@ class TransformerSpatialInterpolator:
         self.temperature = temperature
         
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=d_model*4,
-            dropout=0.1,
-            batch_first=True
+            d_model=d_model, nhead=nhead, dim_feedforward=d_model*4, dropout=0.1, batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.input_proj = nn.Linear(15, d_model)
@@ -76,11 +82,11 @@ class TransformerSpatialInterpolator:
             angular_dist = min(raw_diff, 360 - raw_diff)
             angular_distances.append(angular_dist)
             
-            # DEFECT MASK: Hard constraint for physical validity
+            # DEFECT MASK: Hard constraint
             if src.get('defect_type') == target_defect:
                 defect_mask.append(1.0)
             else:
-                defect_mask.append(1e-6)  # Near-zero weight for mismatched defects
+                defect_mask.append(1e-6)
             
             # SPATIAL KERNEL: Gaussian angular bracketing
             weight = np.exp(-0.5 * (angular_dist / self.spatial_sigma) ** 2)
@@ -92,7 +98,6 @@ class TransformerSpatialInterpolator:
         encoded = []
         for params in params_list:
             features = []
-            # Physics parameters
             features.append(params.get('eps0', 0.707) / 3.0)
             features.append(params.get('kappa', 0.6) / 2.0)
             theta = params.get('theta', 0.0)
@@ -115,8 +120,6 @@ class TransformerSpatialInterpolator:
             angle_diff = abs(theta_deg - target_angle_deg)
             angle_diff = min(angle_diff, 360 - angle_diff)
             features.append(np.exp(-angle_diff / 45.0))
-            
-            # Trigonometric features
             features.append(np.sin(np.radians(2 * theta_deg)))
             features.append(np.cos(np.radians(2 * theta_deg)))
             
@@ -157,7 +160,7 @@ class TransformerSpatialInterpolator:
                 # Extract stress fields
                 stress_fields = last_frame['stresses']
                 sxx = stress_fields.get('sigma_xx', np.zeros((128, 128)))
-                syy = stress_fields.get('sigma_yy', np.zeros((128, 128)))
+                syy = stress_fields.get('sigma_yy', np.zeros_like(sxx))
                 szz = stress_fields.get('sigma_zz', np.zeros_like(sxx))
                 txy = stress_fields.get('tau_xy', np.zeros_like(sxx))
                 
@@ -192,7 +195,7 @@ class TransformerSpatialInterpolator:
                 padding = torch.zeros(target_features.shape[0], 15 - target_features.shape[1])
                 target_features = torch.cat([target_features, padding], dim=1)
             
-            # Compute spatial kernel and defect mask (PHYSICS-AWARE WEIGHTING)
+            # Compute spatial kernel and defect mask
             spatial_kernel, defect_mask, angular_distances = self.compute_angular_bracketing_kernel(
                 source_params, target_params
             )
@@ -256,7 +259,7 @@ class TransformerSpatialInterpolator:
             return None
 
 # =============================================
-# ENHANCED SANKEY VISUALIZER (FOCUSED IMPLEMENTATION)
+# ENHANCED SANKEY VISUALIZER
 # =============================================
 class EnhancedSankeyVisualizer:
     def __init__(self):
@@ -285,7 +288,9 @@ class EnhancedSankeyVisualizer:
         show_annotations: bool = True,
         diagram_width: int = 1400,
         diagram_height: int = 900,
-        use_dark_mode: bool = False
+        use_dark_mode: bool = False,
+        show_link_labels: bool = True,
+        link_line_width: float = 0.5
     ) -> go.Figure:
         # Create nodes
         labels = ['Target']
@@ -363,6 +368,7 @@ class EnhancedSankeyVisualizer:
         bg_color = 'rgb(30, 30, 30)' if use_dark_mode else 'rgba(245, 247, 250, 0.95)'
         paper_color = 'rgb(20, 20, 20)' if use_dark_mode else 'white'
         text_color = 'white' if use_dark_mode else '#2C3E50'
+        grid_color = 'rgba(255, 255, 255, 0.1)' if use_dark_mode else 'rgba(0, 0, 0, 0.1)'
         
         # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
@@ -389,8 +395,8 @@ class EnhancedSankeyVisualizer:
                 value=values,
                 color=colors,
                 hovertemplate='<b>%{source.label}</b> → <b>%{target.label}</b><br>Flow: %{value:.2f}<br>%{customdata}<extra></extra>',
-                customdata=link_labels,
-                line=dict(width=0.5, color='rgba(255,255,255,0.3)')
+                customdata=link_labels if show_link_labels else None,
+                line=dict(width=link_line_width, color='rgba(255,255,255,0.3)')
             ),
             hoverinfo='all'
         )])
@@ -400,7 +406,8 @@ class EnhancedSankeyVisualizer:
             title=dict(
                 text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>'
                      f'<span style="font-size: {title_font_size-4}px; font-weight: normal;">'
-                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}°</span>',
+                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}° | '
+                     f'κ={sources_data[0]["source_params"].get("kappa", 0.6):.2f}</span>',
                 font=dict(
                     family='Arial, sans-serif',
                     size=title_font_size,
@@ -439,7 +446,7 @@ class EnhancedSankeyVisualizer:
                 dict(
                     x=0.02, y=-0.08,
                     xref='paper', yref='paper',
-                    text='<b>COLOR CODING:</b>',
+                    text='<b style="font-size: 16px;">COLOR CODING:</b>',
                     showarrow=False,
                     font=dict(size=legend_font_size + 2, color=text_color, family='Arial', weight='bold')
                 ),
@@ -477,7 +484,7 @@ class EnhancedSankeyVisualizer:
         return fig
 
 # =============================================
-# SOLUTION LOADER (REAL FILES)
+# SOLUTION LOADER (LOAD ALL SOLUTIONS)
 # =============================================
 class SolutionLoader:
     def __init__(self, solutions_dir: str = SOLUTIONS_DIR):
@@ -562,23 +569,29 @@ class SolutionLoader:
                 elif isinstance(item, (dict, list)):
                     self._convert_tensors(item)
     
-    def load_all_solutions(self, max_files=20):
+    def load_all_solutions(self, max_files=None):
         solutions = []
-        file_info = self.scan_solutions()[:max_files]
+        file_info = self.scan_solutions()
         
-        for info in file_info:
-            solution = self.load_solution(info['path'])
-            if solution and 'params' in solution and 'theta' in solution['params']:
-                solutions.append(solution)
+        if max_files:
+            file_info = file_info[:max_files]
+        
+        st.info(f"📁 Found {len(file_info)} solution files. Loading all...")
+        
+        for i, info in enumerate(file_info):
+            with st.spinner(f"Loading file {i+1}/{len(file_info)}: {info['filename']}"):
+                solution = self.load_solution(info['path'])
+                if solution and 'params' in solution and 'theta' in solution['params']:
+                    solutions.append(solution)
         
         return solutions
 
 # =============================================
-# MAIN APPLICATION (SANKEY-FOCUSED)
+# MAIN APPLICATION
 # =============================================
 def main():
     st.set_page_config(
-        page_title="Enhanced Sankey Visualization - Angular Bracketing",
+        page_title="Enhanced Sankey Visualization - Weight Components",
         layout="wide",
         page_icon="🌊",
         initial_sidebar_state="expanded"
@@ -622,10 +635,10 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<h1 class="main-header">🌊 ENHANCED SANKEY VISUALIZATION</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🌊 ENHANCED SANKEY VISUALIZATION - WEIGHT COMPONENTS</h1>', unsafe_allow_html=True)
     st.markdown("""
     <div style="text-align: center; background: linear-gradient(135deg, #E0F7FA, #E3F2FD); padding: 1rem; border-radius: 10px; margin-bottom: 1.5rem;">
-        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel (Angular Bracketing) × Defect Mask (Hard Constraint) × Learned Attention
+        <strong>Physics-Aware Attention Weights:</strong> Spatial Kernel (Angular Bracketing) × Defect Mask (Hard Constraint) × Learned Attention × Kappa (Material Parameter)
     </div>
     """, unsafe_allow_html=True)
     
@@ -645,16 +658,17 @@ def main():
     with st.sidebar:
         st.markdown('<h2 class="sidebar-title">⚙️ INTERPOLATION CONFIGURATION</h2>', unsafe_allow_html=True)
         
-        # Load solutions button
-        if st.button("📤 LOAD REAL SOLUTIONS", type="primary", use_container_width=True):
-            with st.spinner("Loading solutions from numerical_solutions directory..."):
+        # Load solutions button - LOAD ALL
+        if st.button("📤 LOAD ALL SOLUTIONS", type="primary", use_container_width=True):
+            with st.spinner("Loading ALL solutions from numerical_solutions directory..."):
                 st.session_state.solutions = st.session_state.loader.load_all_solutions()
                 if st.session_state.solutions:
-                    st.success(f"✅ Loaded {len(st.session_state.solutions)} real solutions")
+                    st.success(f"✅ Loaded {len(st.session_state.solutions)} solutions")
                     # Show summary
                     angles = [np.degrees(sol['params']['theta']) % 360 for sol in st.session_state.solutions if 'theta' in sol['params']]
                     defects = [sol['params'].get('defect_type', 'Unknown') for sol in st.session_state.solutions]
-                    st.info(f"Angles: {min(angles):.1f}°–{max(angles):.1f}° | Defects: {', '.join(set(defects))}")
+                    shapes = [sol['params'].get('shape', 'Unknown') for sol in st.session_state.solutions]
+                    st.info(f"Angles: {min(angles):.1f}°–{max(angles):.1f}° | Defects: {', '.join(set(defects))} | Shapes: {', '.join(set(shapes))}")
                 else:
                     st.warning(f"⚠️ No solution files found in: {SOLUTIONS_DIR}")
                     st.info("💡 Place .pkl/.pt files with simulation results in the numerical_solutions directory")
@@ -683,6 +697,25 @@ def main():
             options=['Twin', 'ISF', 'ESF', 'No Defect'],
             index=0,
             help="Defect type constraint - only matching sources contribute significantly"
+        )
+        
+        # SHAPE PARAMETER INPUT
+        shape_options = ['Square', 'Horizontal Fault', 'Vertical Fault', 'Rectangle']
+        target_shape = st.selectbox(
+            "Target Shape",
+            options=shape_options,
+            index=0,
+            help="Geometry shape of the defect configuration"
+        )
+        
+        # KAPPA PARAMETER INPUT (Learned from user request)
+        target_kappa = st.number_input(
+            "Kappa (κ) - Material Parameter",
+            min_value=0.1,
+            max_value=2.0,
+            value=0.6,
+            step=0.01,
+            help="Material parameter controlling stress field characteristics. Typical range: 0.1-2.0"
         )
         
         spatial_sigma = st.slider(
@@ -752,6 +785,19 @@ def main():
             step=0.05,
             help="Transparency of flow links"
         )
+        link_line_width = st.slider(
+            "Link Border Width",
+            min_value=0.1,
+            max_value=2.0,
+            value=0.5,
+            step=0.1,
+            help="Width of link border lines"
+        )
+        show_link_labels = st.toggle(
+            "Show Link Hover Labels",
+            value=True,
+            help="Display weight values on link hover"
+        )
         
         st.markdown("##### 🖼️ Layout")
         col1, col2 = st.columns(2)
@@ -791,16 +837,16 @@ def main():
         # Run interpolation
         if st.button("🚀 PERFORM INTERPOLATION", type="primary", use_container_width=True, disabled=len(st.session_state.solutions)==0):
             if not st.session_state.solutions:
-                st.error("❌ No solutions loaded! Click 'LOAD REAL SOLUTIONS' first.")
+                st.error("❌ No solutions loaded! Click 'LOAD ALL SOLUTIONS' first.")
             else:
-                with st.spinner("Performing physics-aware interpolation..."):
-                    # Setup target parameters
+                with st.spinner("Performing physics-aware interpolation with KAPPA parameter..."):
+                    # Setup target parameters WITH SHAPE AND KAPPA
                     target_params = {
                         'defect_type': target_defect,
-                        'eps0': {'Twin': 2.12, 'ISF': 0.289, 'ESF': 0.333, 'No Defect': 0.0}.get(target_defect, 0.0),
-                        'kappa': 0.6,
+                        'eps0': PhysicsParameters.get_eigenstrain(target_defect),
+                        'kappa': target_kappa,  # INCLUDE KAPPA PARAMETER
                         'theta': np.radians(target_angle),
-                        'shape': 'Square'
+                        'shape': target_shape  # INCLUDE SHAPE PARAMETER
                     }
                     
                     # Update interpolator parameters
@@ -819,6 +865,8 @@ def main():
                         st.session_state.target_angle = target_angle
                         st.session_state.target_defect = target_defect
                         st.session_state.spatial_sigma = spatial_sigma
+                        st.session_state.target_kappa = target_kappa
+                        st.session_state.target_shape = target_shape
                     else:
                         st.error("❌ Interpolation failed - check solution file format")
     
@@ -835,8 +883,8 @@ def main():
                 'theta': 0.95,           # radians
                 'defect_type': 'Twin',   # 'Twin', 'ISF', 'ESF', 'No Defect'
                 'eps0': 2.12,            # eigenstrain
-                'kappa': 0.6,            # material parameter
-                'shape': 'Square'        # geometry
+                'kappa': 0.6,            # material parameter (configurable)
+                'shape': 'Square'        # geometry (configurable)
             },
             'history': [{
                 'stresses': {
@@ -850,8 +898,8 @@ def main():
         ```
         
         ### 2. Workflow
-        1. Click **"LOAD REAL SOLUTIONS"** in sidebar to scan directory
-        2. Configure target parameters (angle, defect type, σ)
+        1. Click **"LOAD ALL SOLUTIONS"** in sidebar to scan directory
+        2. Configure target parameters (angle, defect type, **shape**, **kappa**, σ)
         3. Click **"PERFORM INTERPOLATION"** to compute physics-aware weights
         4. Customize Sankey visualization using sidebar controls
         5. Adjust font sizes, node appearance, and layout for publications
@@ -859,6 +907,8 @@ def main():
         ### 3. Physics Principles Visualized
         - **Spatial Kernel**: Gaussian weighting based on angular proximity (`exp(-(Δφ)²/2σ²)`)
         - **Defect Mask**: Hard constraint - mismatched defects get ~0 weight (`10⁻⁶`)
+        - **Kappa (κ)**: Material parameter controlling stress field characteristics
+        - **Shape**: Geometry configuration affecting stress distribution
         - **Combined Weight**: Final attention = Spatial × Defect × Learned Attention
         """)
         st.info(f"📁 Solution directory: `{SOLUTIONS_DIR}`")
@@ -877,8 +927,8 @@ def main():
         defects = [sol['params'].get('defect_type', 'Unknown') for sol in st.session_state.solutions]
         st.metric("Defect Types", len(set(defects)))
     with col4:
-        if st.session_state.interpolation_result:
-            st.metric("Sources Used", len(st.session_state.interpolation_result['sources_data']))
+        shapes = [sol['params'].get('shape', 'Unknown') for sol in st.session_state.solutions]
+        st.metric("Shape Types", len(set(shapes)))
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Display Sankey diagram if interpolation performed
@@ -901,13 +951,15 @@ def main():
             show_annotations=show_annotations,
             diagram_width=diagram_width,
             diagram_height=diagram_height,
-            use_dark_mode=use_dark_mode
+            use_dark_mode=use_dark_mode,
+            show_link_labels=show_link_labels,
+            link_line_width=link_line_width
         )
         
         st.plotly_chart(fig, use_container_width=False, config={'displayModeBar': True, 'scrollZoom': True})
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Weight table
+        # Weight table with KAPPA information
         st.markdown("### 📋 Weight Components Breakdown")
         df = pd.DataFrame(st.session_state.interpolation_result['sources_data'])
         st.dataframe(
@@ -924,9 +976,16 @@ def main():
             })
         )
         
-        # Physics explanation
-        st.markdown("""
+        # Physics interpretation with KAPPA
+        st.markdown(f"""
         ### 🔬 Physics Interpretation
+        
+        **Configuration Parameters:**
+        - **Target Angle:** {st.session_state.target_angle:.1f}°
+        - **Defect Type:** {st.session_state.target_defect}
+        - **Shape:** {st.session_state.target_shape}
+        - **Kappa (κ):** {st.session_state.target_kappa:.2f} (Material parameter)
+        - **Spatial Sigma (σ):** {st.session_state.spatial_sigma:.1f}°
         
         **Defect Type Gating (Hard Constraint):**
         - Sources with matching defect types receive full weight (`1.0`)
@@ -938,13 +997,19 @@ def main():
         - Sources within ±σ degrees receive highest weights
         - Creates natural "bracketing" structure optimal for interpolation
         
+        **Kappa (κ) Parameter:**
+        - Controls material response characteristics
+        - Affects stress field magnitude and distribution
+        - Typical range: 0.1 (soft) to 2.0 (stiff)
+        - Influences attention through learned transformer features
+        
         **Combined Attention:**
         - Final weight = Spatial Kernel × Defect Mask × Learned Attention
         - Physics priors (spatial + defect) modulate learned attention
         - Ensures physically valid interpolation while leveraging pattern recognition
         """)
     else:
-        st.info("👈 Configure target parameters in the sidebar and click **'PERFORM INTERPOLATION'** to generate the Sankey diagram")
+        st.info("👈 Configure target parameters in the sidebar (including **Shape** and **Kappa**) and click **'PERFORM INTERPOLATION'** to generate the Sankey diagram")
 
 if __name__ == "__main__":
     main()
