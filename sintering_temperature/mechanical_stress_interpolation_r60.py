@@ -270,7 +270,7 @@ class EnhancedSankeyVisualizer:
             'Defect': '#FF6384',     # Pink
             'Attention': '#4BC0C0',  # Cyan
             'Combined': '#9966FF',   # Purple
-            'Target': '#FF6B6B',     # Bright Red
+            'Target': '#FFA500',     # Bright Red #FF6B6B
             'Source': '#4ECDC4'      # Turquoise
         }
     
