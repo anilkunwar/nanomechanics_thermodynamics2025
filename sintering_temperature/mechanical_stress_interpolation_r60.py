@@ -259,7 +259,7 @@ class TransformerSpatialInterpolator:
             return None
 
 # =============================================
-# ENHANCED SANKEY VISUALIZER
+# ENHANCED SANKEY VISUALIZER - FIXED VERSION
 # =============================================
 class EnhancedSankeyVisualizer:
     def __init__(self):
@@ -274,10 +274,11 @@ class EnhancedSankeyVisualizer:
     
     def create_enhanced_sankey(
         self,
-        sources_data: List[Dict[str, Any]],
+        sources_ List[Dict[str, Any]],
         target_angle: float,
         target_defect: str,
         spatial_sigma: float,
+        target_kappa: float,  # ADDED: Pass kappa as separate parameter
         # CUSTOMIZATION PARAMETERS
         label_font_size: int = 16,
         title_font_size: int = 24,
@@ -294,7 +295,7 @@ class EnhancedSankeyVisualizer:
     ) -> go.Figure:
         # Create nodes
         labels = ['Target']
-        for source in sources_data:
+        for source in sources_
             angle = source['theta_deg']
             defect = source['defect_type']
             labels.append(f"S{source['source_index']}\n{defect}\n{angle:.1f}°")
@@ -368,7 +369,6 @@ class EnhancedSankeyVisualizer:
         bg_color = 'rgb(30, 30, 30)' if use_dark_mode else 'rgba(245, 247, 250, 0.95)'
         paper_color = 'rgb(20, 20, 20)' if use_dark_mode else 'white'
         text_color = 'white' if use_dark_mode else '#2C3E50'
-        grid_color = 'rgba(255, 255, 255, 0.1)' if use_dark_mode else 'rgba(0, 0, 0, 0.1)'
         
         # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
@@ -401,13 +401,12 @@ class EnhancedSankeyVisualizer:
             hoverinfo='all'
         )])
         
-        # Layout with customizable fonts
+        # Layout with customizable fonts - FIXED: Don't access source_params from sources_data
         fig.update_layout(
             title=dict(
                 text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>'
                      f'<span style="font-size: {title_font_size-4}px; font-weight: normal;">'
-                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}° | '
-                     f'κ={sources_data[0]["source_params"].get("kappa", 0.6):.2f}</span>',
+                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}° | κ={target_kappa:.2f}</span>',
                 font=dict(
                     family='Arial, sans-serif',
                     size=title_font_size,
@@ -533,12 +532,12 @@ class SolutionLoader:
         standardized = {'params': {}, 'history': []}
         try:
             if isinstance(data, dict):
-                if 'params' in data:
+                if 'params' in 
                     standardized['params'] = data['params']
-                elif 'parameters' in data:
+                elif 'parameters' in 
                     standardized['params'] = data['parameters']
                 
-                if 'history' in data:
+                if 'history' in 
                     history = data['history']
                     if isinstance(history, list):
                         standardized['history'] = history
@@ -708,7 +707,7 @@ def main():
             help="Geometry shape of the defect configuration"
         )
         
-        # KAPPA PARAMETER INPUT (Learned from user request)
+        # KAPPA PARAMETER INPUT
         target_kappa = st.number_input(
             "Kappa (κ) - Material Parameter",
             min_value=0.1,
@@ -865,7 +864,7 @@ def main():
                         st.session_state.target_angle = target_angle
                         st.session_state.target_defect = target_defect
                         st.session_state.spatial_sigma = spatial_sigma
-                        st.session_state.target_kappa = target_kappa
+                        st.session_state.target_kappa = target_kappa  # Store kappa
                         st.session_state.target_shape = target_shape
                     else:
                         st.error("❌ Interpolation failed - check solution file format")
@@ -936,12 +935,13 @@ def main():
         st.markdown('<div class="viz-container">', unsafe_allow_html=True)
         st.markdown("### 🌊 Enhanced Sankey Diagram: Attention Component Flow")
         
-        # Create and display diagram with current settings
+        # Create and display diagram with current settings - FIXED: Pass target_kappa
         fig = st.session_state.visualizer.create_enhanced_sankey(
             sources_data=st.session_state.interpolation_result['sources_data'],
             target_angle=st.session_state.target_angle,
             target_defect=st.session_state.target_defect,
             spatial_sigma=st.session_state.spatial_sigma,
+            target_kappa=st.session_state.target_kappa,  # FIXED: Pass kappa as parameter
             label_font_size=label_font_size,
             title_font_size=title_font_size,
             legend_font_size=legend_font_size,
