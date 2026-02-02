@@ -325,7 +325,7 @@ def main_sankey_visualization():
         label_font_size = st.slider(
             "Node Label Font Size",
             min_value=8,
-            max_value=24,
+            max_value=44,
             value=16,
             step=1,
             help="Adjust the font size of node labels in the Sankey diagram"
