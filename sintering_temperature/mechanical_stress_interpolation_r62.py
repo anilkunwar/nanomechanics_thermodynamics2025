@@ -224,30 +224,30 @@ class EnhancedSankeyVisualizer:
                 dict(
                     x=0.18, y=-0.08,
                     xref='paper', yref='paper',
-                    text=f'<span style="color:{self.color_scheme["Spatial"]}; font-size: 24px;">█</span> Spatial',
+                    text=f'<span style="color:{self.color_scheme["Spatial"]}; font-size: 28px;">█</span> Spatial',
                     showarrow=False,
-                    font=dict(size=label_font_size-2, color=text_color, family='Arial')
+                    font=dict(size=label_font_size+2, color=text_color, family='Arial')
                 ),
                 dict(
                     x=0.32, y=-0.08,
                     xref='paper', yref='paper',
-                    text=f'<span style="color:{self.color_scheme["Defect"]}; font-size: 24px;">█</span> Defect',
+                    text=f'<span style="color:{self.color_scheme["Defect"]}; font-size: 28px;">█</span> Defect',
                     showarrow=False,
-                    font=dict(size=label_font_size-2, color=text_color, family='Arial')
+                    font=dict(size=label_font_size+2, color=text_color, family='Arial')
                 ),
                 dict(
                     x=0.46, y=-0.08,
                     xref='paper', yref='paper',
-                    text=f'<span style="color:{self.color_scheme["Attention"]}; font-size: 24px;">█</span> Attention',
+                    text=f'<span style="color:{self.color_scheme["Attention"]}; font-size: 28px;">█</span> Attention',
                     showarrow=False,
-                    font=dict(size=label_font_size-2, color=text_color, family='Arial')
+                    font=dict(size=label_font_size+2, color=text_color, family='Arial')
                 ),
                 dict(
                     x=0.62, y=-0.08,
                     xref='paper', yref='paper',
-                    text=f'<span style="color:{self.color_scheme["Combined"]}; font-size: 24px;">█</span> Combined',
+                    text=f'<span style="color:{self.color_scheme["Combined"]}; font-size: 28px;">█</span> Combined',
                     showarrow=False,
-                    font=dict(size=label_font_size-2, color=text_color, family='Arial')
+                    font=dict(size=label_font_size+2, color=text_color, family='Arial')
                 )
             ]
             fig.update_layout(annotations=annotations)
