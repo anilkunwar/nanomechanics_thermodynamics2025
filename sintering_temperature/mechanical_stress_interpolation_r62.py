@@ -302,10 +302,10 @@ def main_sankey_visualization():
     # Initialize session state for demo data
     if 'sankey_demo_data' not in st.session_state:
         st.session_state.sankey_demo_data = [
-            {'source_index': 0, 'theta_deg': 45.0, 'defect_type': 'Twin', 
+            {'source_index': 0, 'theta_deg': 0.0, 'defect_type': 'Twin', 
              'spatial_weight': 0.35, 'defect_weight': 1.0, 'attention_weight': 0.42, 'combined_weight': 0.38,
              'target_defect_match': True, 'angular_dist': 9.7},
-            {'source_index': 1, 'theta_deg': 50.0, 'defect_type': 'Twin', 
+            {'source_index': 1, 'theta_deg': 30.0, 'defect_type': 'Twin', 
              'spatial_weight': 0.48, 'defect_weight': 1.0, 'attention_weight': 0.51, 'combined_weight': 0.45,
              'target_defect_match': True, 'angular_dist': 4.7},
             {'source_index': 2, 'theta_deg': 60.0, 'defect_type': 'Twin', 
