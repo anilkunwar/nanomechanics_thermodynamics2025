@@ -179,7 +179,7 @@ class EnhancedSankeyVisualizer:
             title=dict(
                 text=f'<b>SANKEY DIAGRAM: ATTENTION COMPONENT FLOW</b><br>'
                      f'<span style="font-size: {title_font_size-4}px; font-weight: normal;">'
-                     f'Target: {target_angle}° {target_defect} | σ={spatial_sigma}°</span>',
+                     f'Target: {target_angle}° {target_defect} | Δ={spatial_sigma}°</span>',
                 font=dict(
                     family='Arial, sans-serif',
                     size=title_font_size,
