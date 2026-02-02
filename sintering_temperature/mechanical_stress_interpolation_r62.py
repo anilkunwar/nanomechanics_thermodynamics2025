@@ -217,7 +217,7 @@ class EnhancedSankeyVisualizer:
                 dict(
                     x=0.02, y=-0.08,
                     xref='paper', yref='paper',
-                    text='<b style="font-size: 16px;">COLOR CODING:</b>',
+                    text='<b style="font-size: 36px;">COLOR CODING:</b>',
                     showarrow=False,
                     font=dict(size=label_font_size, color=text_color, family='Arial')
                 ),
