@@ -139,7 +139,8 @@ class EnhancedSankeyVisualizer:
         # Set up color scheme based on mode
         bg_color = 'rgb(30, 30, 30)' if use_dark_mode else 'rgba(245, 247, 250, 0.95)'
         paper_color = 'rgb(20, 20, 20)' if use_dark_mode else 'white'
-        text_color = 'white' if use_dark_mode else '#2C3E50'
+        #text_color = 'white' if use_dark_mode else '#2C3E50' # Dark blue-gray
+        text_color = 'white' if use_dark_mode else '#000000' # Pure black
         grid_color = 'rgba(255, 255, 255, 0.1)' if use_dark_mode else 'rgba(0, 0, 0, 0.1)'
         
         # Create Sankey diagram
