@@ -295,8 +295,11 @@ Sintering Temperature and Mechanical Stress
 
 [![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts61-streamlit-red)](https://mechanicalstress-interpolation-at-theta61.streamlit.app/) (Sankey diagram created on the interpolation weights for model fitted on 21 Source data obtained from phase field simulations)
 
+Tutorials on how the weights is computed dynamically upon the change of target query:
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts59-streamlit-red)](https://mechanicalstress-interpolation-at-theta59.streamlit.app/) (not on source data, a tutorial for Sankey diagram for weights visualization created on synthetic data)
 
+[![continuummodelsintering2d](https://img.shields.io/badge/attentionweigts62-streamlit-red)](https://mechanicalstress-interpolation-at-theta62streamlit.app/) (not on source data, a tutorial for Sankey diagram for weights visualization created on synthetic data)
 
 
 
