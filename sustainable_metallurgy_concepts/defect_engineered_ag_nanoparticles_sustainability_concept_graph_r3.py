@@ -4146,6 +4146,14 @@ def main():
                             progress_bar.progress(0.20 + (completed / total) * 0.15)
                             status.write(f"Extracted {completed}/{total} documents...")
 
+                # Build concept frequencies and abstract map from extracted concepts
+                if use_ontology and extractor is not None:
+                    concept_freq = extractor.get_concept_frequencies()
+                    valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
+                    concept_abstract_map = defaultdict(list)
+                    for doc_idx, concepts in enumerate(all_concepts):
+                        for c in set(concepts):
+                            concept_abstract_map[c].append(doc_idx)
 
                 progress_bar.progress(0.35)
 
