@@ -280,6 +280,8 @@ class RelationshipType(Enum):
     SEMANTIC = "semantic"
     INFERRED = "inferred"
     BRIDGE = "bridge"
+    DEGRADES = "degrades"
+    REDUCES = "reduces"
 
 @dataclass
 class ConceptNode:
