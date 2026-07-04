@@ -527,7 +527,8 @@ class DomainOntology:
         self._build_synonym_index()
 
         # Build process-property causal chains
-        self._build_causal_chains()self._build_synonym_index()
+        self._build_causal_chains()
+        self._build_synonym_index()
 
         # Build process-property causal chains
         self._build_causal_chains()
