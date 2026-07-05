@@ -3058,7 +3058,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
                           width=900, height=700, theme=None, branchvalues="total"):
     """
     Pure Symbol Sunburst with Hierarchical Combinations:
-    - Interior shows ONLY symbols (no text clutter)
+    - Interior shows symbol combinations (★, ★□, ★□◆) inside slices
     - Parent = ★, Child = ★□, Grandchild = ★□◆, etc.
     - Legend maps each unique symbol-combination to its label
     - Hover tooltips show full names
@@ -3225,7 +3225,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
             colors=plot_colors, 
             line=dict(width=2, color="white")
         ),
-        textinfo='none',            # CRITICAL: No text inside slices, only symbols via 'labels'
+        textinfo='label',           # Show symbol combinations directly inside slices
         hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>',
         insidetextorientation="radial",
         textfont=dict(size=int(label_size), family="Arial, sans-serif", color="white")
@@ -3478,6 +3478,62 @@ def render_tsne_projection(valid_concepts, concept_abstract_map, embed_model, th
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.warning(f"t-SNE projection failed: {e}")
+
+def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
+    """Render a radar chart for top concepts based on distillation metrics."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if distill_df.empty or top_k == 0:
+        st.info("No data available for radar chart.")
+        return
+
+    df = distill_df.head(top_k).copy()
+    if df.empty:
+        return
+
+    metrics = ['frequency', 'tfidf_weight', 'semantic_density', 'coherence_score']
+    available_metrics = [m for m in metrics if m in df.columns]
+
+    if not available_metrics:
+        st.info("No metric columns available for radar chart.")
+        return
+
+    # Normalize metrics to 0-1 range for radar comparison
+    for m in available_metrics:
+        max_val = df[m].max()
+        if max_val > 0:
+            df[f'{m}_norm'] = df[m] / max_val
+        else:
+            df[f'{m}_norm'] = 0
+
+    fig = go.Figure()
+
+    # Limit to top 10 for readability on radar chart
+    plot_df = df.head(min(top_k, 10))
+
+    for i, row in plot_df.iterrows():
+        values = [row[f'{m}_norm'] for m in available_metrics]
+        values.append(values[0]) # close the polygon
+        fig.add_trace(go.Scatterpolar(
+            r=values,
+            theta=available_metrics + [available_metrics[0]],
+            fill='toself',
+            name=row['concept'][:25], # truncate long names
+            opacity=0.6
+        ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1.1]),
+        ),
+        showlegend=True,
+        title=f"Concept Radar Chart (Top {min(top_k, 10)})",
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 
 def render_community_detection(nx_graph, valid_concepts, concept_abstract_map, theme=None):
     if theme is None:
