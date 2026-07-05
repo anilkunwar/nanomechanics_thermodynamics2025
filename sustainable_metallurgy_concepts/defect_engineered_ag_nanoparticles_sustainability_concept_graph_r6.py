@@ -3124,7 +3124,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
         customdata=plot_customdata,
         branchvalues=branchvalues if branchvalues in ["total", "remainder"] else "total",
         marker=dict(colors=plot_colors, line=dict(width=1.5, color="white")),
-        textinfo='',  # Hide all text labels on chart - symbols only
+        textinfo="none",  # Hide all text labels on chart - symbols only
         hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Parent: %{parent}<extra></extra>',
         insidetextorientation="radial",
         textfont=dict(size=label_size, family="Arial, sans-serif", color="white")
