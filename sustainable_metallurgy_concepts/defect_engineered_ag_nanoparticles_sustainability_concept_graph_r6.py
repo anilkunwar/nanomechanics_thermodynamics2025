@@ -3056,7 +3056,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
                           width=900, height=700, theme=None, branchvalues="total",
                           concept_to_category_map=None):
     """
-    Advanced Sunburst: Symbol-only display, custom legend, and recursive multi-layer hierarchy.
+    Fixed Sunburst: Unique IDs, native flat structure, symbol mapping, and custom legend.
     """
     if not labels or len(labels) < 2:
         st.info("Not enough categories for sunburst chart.")
@@ -3065,81 +3065,89 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
 
-    # 1. Define Symbols and Colors for Categories
-    SYMBOLS = ['★', '●', '■', '▲', '◆', '◉', '', '⬢', '✦', '✶', '⬣', '']
+    # 1. Generate UNIQUE IDs to prevent Plotly ID collision (Crucial Fix)
+    unique_ids = []
+    seen = {}
+    for i, lab in enumerate(labels):
+        base = lab[:30] + ("..." if len(lab) > 30 else "")
+        if base in seen:
+            unique_ids.append(f"{base}_{seen[base]}")
+            seen[base] += 1
+        else:
+            unique_ids.append(base)
+            seen[base] = 1
+
+    # Map parent labels to their corresponding unique IDs
+    parent_ids = []
+    for p in parents:
+        if p == "":
+            parent_ids.append("")
+        else:
+            found = False
+            for i, lab in enumerate(labels):
+                if lab == p:
+                    parent_ids.append(unique_ids[i])
+                    found = True
+                    break
+            if not found:
+                parent_ids.append("") # Fallback to root
+
+    # 2. Define Symbols and Colors for Categories
+    SYMBOLS = ['★', '●', '■', '▲', '◆', '◉', '⬟', '⬢', '✦', '✶']
     PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', '#795548', '#2196F3', '#E91E63']
 
-    # Map unique parents to symbols and colors
     unique_parents = sorted(set([p for p in parents if p != ""]))
     parent_symbol_map = {p: SYMBOLS[i % len(SYMBOLS)] for i, p in enumerate(unique_parents)}
     parent_color_map = {p: PARENT_COLORS[i % len(PARENT_COLORS)] for i, p in enumerate(unique_parents)}
 
-    # 2. Recursively Build Plotly Sunburst Data (Supports unlimited layers)
-    tree = {}
-    for i, lab in enumerate(labels):
-        par = parents[i]
-        if par not in tree:
-            tree[par] = []
-        tree[par].append({"label": lab, "value": values[i]})
+    # 3. Build Display Labels (Symbol + Name for Parents, Name only for Children)
+    display_labels = []
+    plot_colors = []
 
-    plot_labels, plot_parents, plot_values, plot_ids, plot_customdata, plot_colors = [], [], [], [], [], []
+    for i, uid in enumerate(unique_ids):
+        original_label = labels[i]
+        parent_label = parents[i]
 
-    def build_tree(node_label, parent_id, depth=0):
-        children = tree.get(node_label, [])
+        if parent_label == "": # Top-level Parent
+            sym = parent_symbol_map.get(original_label, '●')
+            display_labels.append(f"{sym} {original_label}")
+            plot_colors.append(parent_color_map.get(original_label, '#9E9E9E'))
+        else:
+            # Child node: inherit parent color
+            parent_color = parent_color_map.get(parent_label, '#CCCCCC')
+            display_labels.append(original_label)
+            plot_colors.append(parent_color)
 
-        if depth == 0:  # Root
-            symbol = "✦"
-            color = "#9E9E9E"
-        elif node_label in parent_symbol_map:  # Top-level Parent
-            symbol = parent_symbol_map[node_label]
-            color = parent_color_map[node_label]
-        else:  # Child/Grandchild (inherit parent color but lighter)
-            parent_cat = next((p for p in unique_parents if p in node_label or node_label in tree.get(p, [])), None)
-            base_color = parent_color_map.get(parent_cat, '#CCCCCC') if parent_cat else '#CCCCCC'
-            symbol = parent_symbol_map.get(parent_cat, '•')
-            color = base_color
+    # 4. Create Plotly Figure (Using native flat structure - NO RECURSION NEEDED)
+    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
 
-        plot_ids.append(node_label)
-        plot_labels.append(symbol)
-        plot_parents.append(parent_id)
-        plot_values.append(sum(c["value"] for c in children) if children else 1)
-        plot_customdata.append(node_label)
-        plot_colors.append(color)
-
-        for child in children:
-            child_id = f"{node_label}_{child['label']}"
-            build_tree(child['label'], node_label, depth + 1)
-
-    # Start recursion from root (empty string parent)
-    root_children = tree.get("", [])
-    for child in root_children:
-        build_tree(child['label'], "", depth=1)
-
-    # 3. Create the Plotly Sunburst Figure
     fig = go.Figure(go.Sunburst(
-        ids=plot_ids,
-        labels=plot_labels,
-        parents=plot_parents,
-        values=plot_values,
-        customdata=plot_customdata,
-        branchvalues=branchvalues if branchvalues in ["total", "remainder"] else "total",
+        ids=unique_ids,
+        labels=display_labels,
+        parents=parent_ids,
+        values=values,
+        branchvalues=bv,
         marker=dict(colors=plot_colors, line=dict(width=1.5, color="white")),
-        textinfo="none",  # Hide all text labels on chart - symbols only
-        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Parent: %{parent}<extra></extra>',
+        textinfo="label+percent entry", # Shows symbol/name and percentage
         insidetextorientation="radial",
-        textfont=dict(size=label_size, family="Arial, sans-serif", color="white")
+        textfont=dict(size=label_size, family="Arial, sans-serif", color="white"),
+        hovertemplate='<b>%{label}</b><br>Value: %{value}<br>Parent: %{parent}<extra></extra>'
     ))
 
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=dict(l=0, r=0, t=40, b=0),
         paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
         font=dict(color=theme.get("font", "#000000")),
-        width=width, height=height
+        width=width, height=height,
+        title=dict(
+            text="<b>Ag Nanoparticles Domain Hierarchy</b><br><i>Size = concept frequency | ★ = parent category</i>",
+            font=dict(size=16, family="Arial, sans-serif")
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # 4. Render Custom Symbol-to-Label Legend below the chart
+    # 5. Render Custom Symbol-to-Label Legend below the chart
     st.markdown("### 📊 Category Legend (Symbol Mapping)")
     cols = st.columns(min(len(unique_parents), 4))
     for i, parent in enumerate(unique_parents):
