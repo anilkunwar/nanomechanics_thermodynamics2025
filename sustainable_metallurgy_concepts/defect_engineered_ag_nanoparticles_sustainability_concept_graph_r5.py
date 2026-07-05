@@ -742,8 +742,6 @@ class AdvancedConceptResolver:
         self.resolution_cache: Dict[str, str] = {}
         self.embedding_cache: Dict[str, np.ndarray] = {}
         self.similarity_threshold = 0.85
-
-        # OPTIMIZATION: Pre-compute ontology embeddings once, avoid repeated traversal
         self._precompute_ontology_embeddings()
 
     def _precompute_ontology_embeddings(self):
@@ -759,81 +757,55 @@ class AdvancedConceptResolver:
         self.ontology_embedding_matrix = np.array(embeddings) if embeddings else np.empty((0, 0))
 
     def resolve(self, text: str, context: str = "", use_embedding: bool = True) -> Optional[str]:
-        """
-        Resolve a text mention to canonical concept using multiple strategies.
-        """
         text_lower = text.lower().strip()
-
-        # Check cache
         if text_lower in self.resolution_cache:
             return self.resolution_cache[text_lower]
-
-        # Strategy 1: Direct ontology match
         canonical = self.ontology.resolve_concept(text)
         if canonical:
             self.resolution_cache[text_lower] = canonical
             return canonical
-
-        # Strategy 2: Substring matching within ontology
         canonical = self._substring_match(text_lower)
         if canonical:
             self.resolution_cache[text_lower] = canonical
             return canonical
-
-        # Strategy 3: Embedding-based semantic equivalence
         if use_embedding and self.ontology_embedding_matrix.size > 0:
             canonical = self._embedding_match(text, context)
             if canonical:
                 self.resolution_cache[text_lower] = canonical
                 return canonical
-
-        # Strategy 4: Context-based disambiguation
         if context:
             canonical = self._context_disambiguation(text_lower, context)
             if canonical:
                 self.resolution_cache[text_lower] = canonical
                 return canonical
-
         return None
 
     def resolve_batch(self, phrases: List[str], context: str = "") -> Dict[str, Optional[str]]:
-        """
-        OPTIMIZATION: Batch process phrases, merging N embedding calls into 1 matrix operation.
-        This is the core speedup for concept extraction.
-        """
+        """Batch process phrases, merging N embedding calls into 1 matrix operation."""
         results: Dict[str, Optional[str]] = {}
         need_embedding: List[str] = []
-
-        # Phase 1: Fast path - cache hits and substring matches
         for phrase in phrases:
             phrase_lower = phrase.lower().strip()
             if phrase_lower in self.resolution_cache:
                 results[phrase] = self.resolution_cache[phrase_lower]
                 continue
-
             canonical = self.ontology.resolve_concept(phrase)
             if canonical:
                 self.resolution_cache[phrase_lower] = canonical
                 results[phrase] = canonical
                 continue
-
             sub_match = self._substring_match(phrase_lower)
             if sub_match:
                 self.resolution_cache[phrase_lower] = sub_match
                 results[phrase] = sub_match
                 continue
-
             need_embedding.append(phrase)
-
-        # Phase 2: Single batch embedding match (was: N separate encode() calls)
         if need_embedding and self.ontology_embedding_matrix.size > 0:
             query_texts = [p if not context else f"{p} in context of {context}" for p in need_embedding]
             query_embs = self.embed_model.encode(query_texts, show_progress_bar=False, batch_size=64)
-
             sims = cosine_similarity(query_embs, self.ontology_embedding_matrix)
             best_indices = np.argmax(sims, axis=1)
             best_scores = np.max(sims, axis=1)
-
             for idx, phrase in enumerate(need_embedding):
                 if best_scores[idx] > self.similarity_threshold:
                     canonical = self.ontology_concepts_list[best_indices[idx]]
@@ -844,11 +816,9 @@ class AdvancedConceptResolver:
         else:
             for phrase in need_embedding:
                 results[phrase] = None
-
         return results
 
     def _substring_match(self, text: str) -> Optional[str]:
-        """Match if text contains or is contained in a known concept."""
         for canonical, node in self.ontology.concepts.items():
             all_forms = {canonical.lower()} | node.synonyms
             for form in all_forms:
@@ -858,17 +828,13 @@ class AdvancedConceptResolver:
         return None
 
     def _embedding_match(self, text: str, context: str = "") -> Optional[str]:
-        """Find most similar concept using embeddings."""
         try:
             query_text = text if not context else f"{text} in context of {context}"
-
             if query_text not in self.embedding_cache:
                 self.embedding_cache[query_text] = self.embed_model.encode(query_text, show_progress_bar=False)
-
             query_emb = self.embedding_cache[query_text]
             sims = cosine_similarity([query_emb], self.ontology_embedding_matrix)[0]
             best_idx = np.argmax(sims)
-
             if sims[best_idx] > self.similarity_threshold:
                 return self.ontology_concepts_list[best_idx]
             return None
@@ -876,19 +842,15 @@ class AdvancedConceptResolver:
             return None
 
     def _context_disambiguation(self, text: str, context: str) -> Optional[str]:
-        """Use context to disambiguate between multiple possible meanings."""
         context_lower = context.lower()
-
         sintering_indicators = ['sinter', 'bond', 'join', 'attach', 'paste', 'die']
         defect_indicators = ['stacking fault', 'twin', 'lattice', 'crystal', 'defect engineering']
         sustainability_indicators = ['green', 'sustainable', 'carbon', 'emission', 'recycle', 'waste']
         thermal_indicators = ['thermal', 'heat', 'temperature', 'shock', 'stress']
-
         is_sintering = any(ind in context_lower for ind in sintering_indicators)
         is_defect = any(ind in context_lower for ind in defect_indicators)
         is_sustainability = any(ind in context_lower for ind in sustainability_indicators)
         is_thermal = any(ind in context_lower for ind in thermal_indicators)
-
         if 'defect' in text:
             if is_defect and not is_sustainability:
                 return "stacking_faults"
@@ -896,17 +858,14 @@ class AdvancedConceptResolver:
                 return "waste_minimization"
             elif is_sintering:
                 return "micro_voids"
-
         if 'diffusion' in text:
             if is_sintering:
                 return "atomic_diffusion"
             elif is_defect:
                 return "diffusion_highways"
-
         return None
 
     def find_equivalent_concepts(self, concepts: List[str]) -> Dict[str, str]:
-        """Find equivalent concepts and return mapping to canonical forms."""
         equivalence_map = {}
         for concept in concepts:
             canonical = self.resolve(concept)
@@ -917,19 +876,14 @@ class AdvancedConceptResolver:
         return equivalence_map
 
     def compute_semantic_similarity(self, concept1: str, concept2: str) -> float:
-        """Compute semantic similarity between two concepts."""
         c1 = self.resolve(concept1) or concept1
         c2 = self.resolve(concept2) or concept2
-
         if c1 == c2:
             return 1.0
-
         if c2 in self.ontology.get_hypernyms(c1) or c1 in self.ontology.get_hypernyms(c2):
             return 0.9
-
         if c2 in self.ontology.get_hyponyms(c1) or c1 in self.ontology.get_hyponyms(c2):
             return 0.9
-
         try:
             emb1 = self.embed_model.encode(c1, show_progress_bar=False)
             emb2 = self.embed_model.encode(c2, show_progress_bar=False)
@@ -948,11 +902,7 @@ class EnhancedConceptExtractor:
         self.concept_frequencies: Dict[str, int] = defaultdict(int)
         self.concept_contexts: Dict[str, List[str]] = defaultdict(list)
         self.document_concepts: Dict[int, List[str]] = defaultdict(list)
-
-        # Enhanced patterns for concept extraction
         self._build_extraction_patterns()
-
-        # OPTIMIZATION: Pre-compile regexes and merge keywords into single pattern
         self._np_regex = re.compile(
             r'\b(?:[a-z]+(?:[-\s]?[a-z]+){0,2}[-\s]?)?(?:alloy|composition|tensor|parameter|gradient|energy|force|pressure|diffusion|interface|mobility|microstructure|grain|phase|melt[-\s]?pool|surrogate|model|simulation|method|analysis|optimization|kinetics|evolution|partitioning|segregation|structure|boundary|growth|transformation)\b',
             re.IGNORECASE
@@ -965,11 +915,8 @@ class EnhancedConceptExtractor:
             r'\b([a-z]+(?:[-\s][a-z]+){1,3})\b',
             re.IGNORECASE
         )
-
-        # OPTIMIZATION: Merge all ontology keywords into single regex for one-pass matching
         all_keywords = self._get_all_keywords()
         if all_keywords:
-            # Sort by length descending to match longer phrases first
             sorted_keywords = sorted(all_keywords, key=len, reverse=True)
             pattern = r'\b(' + '|'.join(re.escape(k) for k in sorted_keywords) + r')\b'
             self._keyword_regex = re.compile(pattern, re.IGNORECASE)
@@ -1211,7 +1158,7 @@ class EnhancedConceptExtractor:
         compound_matches = self._compound_regex.findall(text)
         concepts = set()
         for m in matches:
-            if 5 < len(m) < 40:  # Filter out too short/long phrases
+            if 5 < len(m) < 40:
                 concepts.add(m.lower().strip())
         for m1, m2 in compound_matches:
             combined = f"{m1.lower().strip()} {m2.lower().strip()}"
@@ -1223,22 +1170,16 @@ class EnhancedConceptExtractor:
         """Extract concepts by analyzing context around known keywords using batch resolve."""
         if not self._keyword_regex:
             return set()
-
         candidate_phrases = set()
         text_lower = text.lower()
-
-        # OPTIMIZATION: Single-pass regex match for all keywords
         for match in self._keyword_regex.finditer(text_lower):
             start = max(0, match.start() - window_size)
             end = min(len(text), match.end() + window_size)
             context = text_lower[start:end]
-
             phrases = self._phrase_regex.findall(context)
             for phrase in phrases:
-                if 5 <= len(phrase) <= 40:  # Filter invalid lengths before resolve
+                if 5 <= len(phrase) <= 40:
                     candidate_phrases.add(phrase)
-
-        # OPTIMIZATION: Batch resolve - merge N embedding calls into 1
         if candidate_phrases:
             resolved = self.resolver.resolve_batch(list(candidate_phrases))
             return set(v for v in resolved.values() if v is not None)
@@ -2752,10 +2693,29 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         min_node_size=8, max_node_size=40, cmap_name="viridis",
                         custom_labels=None, node_label_size=12, top_n_nodes=0,
                         theme=None, physics_preset=None, show_edge_weights=False,
-                        edge_label_mode="hover", show_reasoning=False):
+                        edge_label_mode="hover", show_reasoning=False,
+                        edge_label_size=10, edge_label_color=None,
+                        node_label_position="center", edge_label_position="middle",
+                        node_font_face="Inter, Segoe UI, Roboto, sans-serif"):
     """
-    Enhanced PyVis renderer with reasoning edge types.
+    Enhanced PyVis renderer with customizable label placement.
+    NEW: edge_label_size, edge_label_color, node_label_position, edge_label_position, node_font_face
+    All new parameters have safe defaults so main() can omit them.
     """
+    # Safety: ensure all customization params have valid values
+    if node_label_size is None:
+        node_label_size = 12
+    if edge_label_size is None:
+        edge_label_size = 10
+    if node_label_position is None:
+        node_label_position = "center"
+    if edge_label_position is None:
+        edge_label_position = "middle"
+    if node_font_face is None:
+        node_font_face = "Inter, Segoe UI, Roboto, sans-serif"
+    if edge_label_color is None:
+        edge_label_color = theme['font'] if theme else "#000000"
+
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
         degrees = dict(nx_graph.degree(weight='weight'))
         top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
@@ -2822,6 +2782,9 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         }
         """)
 
+    label_align_map = {"center": "center", "top": "top", "bottom": "bottom", "left": "left", "right": "right"}
+    node_align = label_align_map.get(node_label_position, "center")
+
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
         size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
@@ -2829,161 +2792,90 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         degree = int(nx_graph.degree(node))
         label = custom_labels.get(node, node) if custom_labels else node
         concept_type = nx_graph.nodes[node].get('concept_type', 'general')
-
         x, y = (pos.get(node, (0, 0))[0] * 1200, pos.get(node, (0, 0))[1] * 1200)
 
+        vadjust = -6 if node_align == "center" else (-12 if node_align == "top" else 12)
         net.add_node(
-            node,
-            label=label,
-            size=size,
-            x=x,
-            y=y,
-            color={
-                'background': color,
-                'border': theme['node_border'],
-                'highlight': {'background': theme['highlight_bg'], 'border': '#ffffff'},
-                'hover': {'background': theme['hover_bg'], 'border': '#ffffff'}
-            },
-            font={
-                'color': theme['font'],
-                'size': node_label_size,
-                'face': 'Inter, Segoe UI, Roboto, sans-serif',
-                'strokeWidth': 0,
-                'vadjust': -6
-            },
-            title=(
-                f"<div style='font-family:Inter,sans-serif;'>"
-                f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{node}</b><br>"
-                f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Type:</span> {concept_type}<br>"
-                f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Degree:</span> {degree}<br>"
-                f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
-                f"</div>"
-            ),
-            borderWidth=2,
-            borderWidthSelected=3,
-            shadow={
-                'enabled': True,
-                'color': theme['shadow_color'],
-                'size': 12,
-                'x': 4,
-                'y': 4
-            },
-            shape='dot',
-            mass=max(1, 1 + freq * 0.05)
+            node, label=label, size=size, x=x, y=y,
+            color={'background': color, 'border': theme['node_border'],
+                   'highlight': {'background': theme['highlight_bg'], 'border': '#ffffff'},
+                   'hover': {'background': theme['hover_bg'], 'border': '#ffffff'}},
+            font={'color': theme['font'], 'size': node_label_size, 'face': node_font_face,
+                  'strokeWidth': 0, 'vadjust': vadjust, 'align': node_align},
+            title=(f"<div style='font-family:{node_font_face};'>"
+                   f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{node}</b><br>"
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Type:</span> {concept_type}<br>"
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Degree:</span> {degree}<br>"
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
+                   f"</div>"),
+            borderWidth=2, borderWidthSelected=3,
+            shadow={'enabled': True, 'color': theme['shadow_color'], 'size': 12, 'x': 4, 'y': 4},
+            shape='dot', mass=max(1, 1 + freq * 0.05)
         )
 
-    # Enhanced color map with reasoning edge types
     color_map = {
-        'cooccurrence': theme['edge_cooccurrence'],
-        'semantic':     theme['edge_semantic'],
-        'bridge':       theme['edge_bridge'],
-        'inferred':     theme.get('edge_inferred', '#8b5cf6'),
-        'causes':       theme.get('edge_cause', '#ef4444'),
-        'hypernym':     theme.get('edge_hypernym', '#22c55e'),
-        'hyponym':      theme.get('edge_hypernym', '#22c55e'),
-        'manual':       theme['edge_semantic'],
-        'unknown':      theme['edge_unknown']
+        'cooccurrence': theme['edge_cooccurrence'], 'semantic': theme['edge_semantic'],
+        'bridge': theme['edge_bridge'], 'inferred': theme.get('edge_inferred', '#8b5cf6'),
+        'causes': theme.get('edge_cause', '#ef4444'), 'hypernym': theme.get('edge_hypernym', '#22c55e'),
+        'hyponym': theme.get('edge_hypernym', '#22c55e'), 'manual': theme['edge_semantic'],
+        'unknown': theme['edge_unknown']
     }
 
-    # Calculate edge weight threshold for label display
     all_weights = [nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()]
     weight_threshold = np.percentile(all_weights, 80) if all_weights else 0
+    actual_edge_label_color = edge_label_color if edge_label_color else theme['font']
 
     for u, v in nx_graph.edges():
         w = nx_graph[u][v].get('weight', 1)
         edge_type = nx_graph[u][v].get('edge_type', 'unknown')
         is_inferred = nx_graph[u][v].get('inferred', False)
-
-        # Use inferred color if it's an inferred edge
-        if is_inferred and edge_type not in ['hypernym', 'hyponym', 'causes']:
-            color = color_map.get('inferred', color_map['unknown'])
-        else:
-            color = color_map.get(edge_type, color_map['unknown'])
-
+        color = color_map.get('inferred' if is_inferred and edge_type not in ['hypernym', 'hyponym', 'causes'] else edge_type, color_map['unknown'])
         width = float(np.clip(w * 0.4, 0.8, 3.5))
-
-        # Dashed line for inferred edges
         dashes = True if is_inferred else False
 
         edge_kwargs = dict(
-            value=float(np.clip(w, 0.5, 5)),
-            width=width,
-            color={
-                'color': color,
-                'highlight': theme['highlight_bg'],
-                'hover': theme['hover_bg'],
-                'opacity': 0.85
-            },
+            value=float(np.clip(w, 0.5, 5)), width=width,
+            color={'color': color, 'highlight': theme['highlight_bg'], 'hover': theme['hover_bg'], 'opacity': 0.85},
             smooth={'type': 'continuous', 'roundness': 0.35},
-            title=f"<span style='font-family:Inter,sans-serif;'>Weight: <b>{w:.2f}</b><br>Type: {edge_type}<br>Inferred: {is_inferred}</span>",
+            title=f"<span style='font-family:{node_font_face};'>Weight: <b>{w:.2f}</b><br>Type: {edge_type}<br>Inferred: {is_inferred}</span>",
             dashes=dashes
         )
 
-        # Edge label strategy based on mode
         if edge_label_mode == "all":
             edge_kwargs['label'] = f"{w:.1f}"
-            edge_kwargs['font'] = {
-                'color': theme['font'],
-                'size': 9,
-                'background': theme['tooltip_bg'],
-                'strokeWidth': 2,
-                'strokeColor': theme['node_border']
-            }
+            edge_kwargs['font'] = {'color': actual_edge_label_color, 'size': edge_label_size,
+                                     'background': theme['tooltip_bg'], 'strokeWidth': 2,
+                                     'strokeColor': theme['node_border'], 'align': edge_label_position}
         elif edge_label_mode == "threshold" and w >= weight_threshold:
             edge_kwargs['label'] = f"{w:.1f}"
-            edge_kwargs['font'] = {
-                'color': theme['font'],
-                'size': 9,
-                'background': theme['tooltip_bg'],
-                'strokeWidth': 2,
-                'strokeColor': theme['node_border']
-            }
+            edge_kwargs['font'] = {'color': actual_edge_label_color, 'size': edge_label_size,
+                                     'background': theme['tooltip_bg'], 'strokeWidth': 2,
+                                     'strokeColor': theme['node_border'], 'align': edge_label_position}
 
         net.add_edge(u, v, **edge_kwargs)
 
     html_content = net.generate_html()
-
     custom_css = f"""
     <style>
-        body {{
-            background: {theme['bg']};
-            margin: 0;
-            padding: 0;
-            font-family: 'Inter', 'Segoe UI', sans-serif;
-        }}
-        #mynetwork {{
-            border-radius: 16px;
-            box-shadow: 0 12px 48px {theme['shadow_color']};
-            outline: none;
-        }}
-        div.vis-tooltip {{
-            background: {theme['tooltip_bg']} !important;
-            color: {theme['tooltip_text']} !important;
-            border: 1px solid {theme['tooltip_border']} !important;
-            border-radius: 10px !important;
-            padding: 14px 18px !important;
-            font-family: 'Inter', 'Segoe UI', sans-serif !important;
-            font-size: 13px !important;
-            line-height: 1.5 !important;
-            box-shadow: 0 8px 32px {theme['shadow_color']} !important;
-            max-width: 320px !important;
-            white-space: normal !important;
-        }}
-        div.vis-network div.vis-manipulation {{
-            background: {theme['tooltip_bg']} !important;
-            border-top: 1px solid {theme['tooltip_border']} !important;
-            color: {theme['font']} !important;
-        }}
+        body {{ background: {theme['bg']}; margin: 0; padding: 0; font-family: '{node_font_face}', sans-serif; }}
+        #mynetwork {{ border-radius: 16px; box-shadow: 0 12px 48px {theme['shadow_color']}; outline: none; }}
+        div.vis-tooltip {{ background: {theme['tooltip_bg']} !important; color: {theme['tooltip_text']} !important;
+            border: 1px solid {theme['tooltip_border']} !important; border-radius: 10px !important;
+            padding: 14px 18px !important; font-family: '{node_font_face}', sans-serif !important;
+            font-size: 13px !important; line-height: 1.5 !important;
+            box-shadow: 0 8px 32px {theme['shadow_color']} !important; max-width: 320px !important;
+            white-space: normal !important; }}
+        div.vis-network div.vis-manipulation {{ background: {theme['tooltip_bg']} !important;
+            border-top: 1px solid {theme['tooltip_border']} !important; color: {theme['font']} !important; }}
     </style>
     """
     html_content = html_content.replace('</head>', custom_css + '</head>')
-
     st.components.v1.html(html_content, height=790, scrolling=True)
 
     try:
         html_bytes = html_content.encode('utf-8')
         st.download_button("Download Interactive Graph (HTML)", data=html_bytes,
-                          file_name="hea_laser_concept_graph.html", mime="text/html")
+                          file_name="agnp_concept_graph.html", mime="text/html")
         del html_content, html_bytes
         gc.collect()
     except Exception as e:
@@ -3161,20 +3053,28 @@ def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Di
             labels.append(child); parents.append(parent); values.append(cnt)
     return labels, parents, values
 
-def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_size=11, width=800, height=600, theme=None, branchvalues="total"):
+def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_size=14, width=900, height=700, theme=None, branchvalues="total"):
+    """
+    Enhanced sunburst chart with symbols, color-coded layers, legend, and larger labels.
+    """
     if not labels or len(labels) < 2:
         st.info("Not enough categories for sunburst chart.")
         return
+
     n_items = len(labels)
     use_remainder = n_items > 80
-    unique_ids = []; seen = {}
+
+    unique_ids = []
+    seen = {}
     for i, lab in enumerate(labels):
-        base = lab[:25] + ("..." if len(lab) > 25 else "")
+        base = lab[:30] + ("..." if len(lab) > 30 else "")
         if base in seen:
             unique_ids.append(f"{base}_{seen[base]}")
             seen[base] += 1
         else:
-            unique_ids.append(base); seen[base] = 1
+            unique_ids.append(base)
+            seen[base] = 1
+
     parent_ids = []
     for p in parents:
         if p == "":
@@ -3186,25 +3086,103 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
                     break
             else:
                 parent_ids.append("")
-    colors = get_colormap_colors(cmap_name, len(unique_ids))
+
+    parent_indices = [i for i, p in enumerate(parents) if p == ""]
+    child_indices = [i for i, p in enumerate(parents) if p != ""]
+
+    parent_color_map = {
+        0: '#D32F2F', 1: '#00BCD4', 2: '#FF9800', 3: '#4CAF50',
+        4: '#9C27B0', 5: '#795548', 6: '#2196F3', 7: '#E91E63'
+    }
+
+    colors = [''] * len(labels)
+    cmap = matplotlib.colormaps.get_cmap(cmap_name).resampled(max(len(child_indices), 1))
+
+    for idx, pi in enumerate(parent_indices):
+        colors[pi] = parent_color_map.get(idx % len(parent_color_map), '#9E9E9E')
+
+    for idx, ci in enumerate(child_indices):
+        parent_label = parents[ci]
+        parent_idx = labels.index(parent_label) if parent_label in labels else -1
+        if parent_idx >= 0:
+            base_color = colors[parent_idx]
+            try:
+                import matplotlib.colors as mcolors
+                rgb = mcolors.to_rgb(base_color)
+                lighter = tuple(min(1.0, c + 0.25) for c in rgb)
+                colors[ci] = mcolors.to_hex(lighter)
+            except:
+                colors[ci] = matplotlib.colors.to_hex(cmap(idx % cmap.N))
+        else:
+            colors[ci] = matplotlib.colors.to_hex(cmap(idx % cmap.N))
+
+    parent_symbols = ['★', '●', '■', '▲', '◆', '◉', '⬟', '⬢']
+    parent_symbol_map = {}
+    for idx, pi in enumerate(parent_indices):
+        parent_symbol_map[unique_ids[pi]] = parent_symbols[idx % len(parent_symbols)]
+
+    display_labels = []
+    for i, uid in enumerate(unique_ids):
+        if parents[i] == "":
+            sym = parent_symbol_map.get(uid, '●')
+            display_labels.append(f"{sym} {uid}")
+        else:
+            display_labels.append(uid)
+
     bv = branchvalues if branchvalues in ["total", "remainder"] else ("remainder" if use_remainder else "total")
+
     fig = go.Figure(go.Sunburst(
-        labels=unique_ids, parents=parent_ids, values=values, ids=unique_ids,
+        labels=display_labels, parents=parent_ids, values=values, ids=unique_ids,
         branchvalues=bv,
-        marker=dict(colors=colors, line=dict(width=0.5, color="white")),
+        marker=dict(colors=colors, line=dict(width=1.5, color="white")),
         textinfo="label+percent entry+value",
         insidetextorientation="radial",
-        textfont=dict(size=label_size),
+        textfont=dict(size=label_size, family="Arial, sans-serif", color="white"),
         hovertemplate='<b>%{label}</b><br>Value: %{value}<br>Parent: %{parent}<extra></extra>'
     ))
+
+    legend_items = []
+    for idx, pi in enumerate(parent_indices):
+        sym = parent_symbols[idx % len(parent_symbols)]
+        legend_items.append({
+            'Category': f"{sym} {unique_ids[pi]}",
+            'Color': parent_color_map.get(idx % len(parent_color_map), '#9E9E9E'),
+            'Count': values[pi]
+        })
+
     fig.update_layout(
-        title="<b>Ag Nanoparticles HEA Laser AM Process-Material Response Domain Hierarchy</b><br><i>Size = concept frequency</i>",
-        font=dict(size=label_size, family="Arial"),
+        title=dict(
+            text="<b>Ag Nanoparticles Sustainable Metallurgy Domain Hierarchy</b><br><i>Size = concept frequency | ★ = parent category</i>",
+            font=dict(size=16, family="Arial, sans-serif")
+        ),
+        font=dict(size=label_size, family="Arial, sans-serif"),
         paper_bgcolor="white", plot_bgcolor="white",
         width=width, height=height,
-        margin=dict(t=60, b=20, l=20, r=20)
+        margin=dict(t=80, b=20, l=20, r=20),
+        annotations=[
+            dict(
+                x=1.15, y=1 - (i * 0.08), xref="paper", yref="paper",
+                text=f"<span style='color:{item['Color']};font-size:18px;'>●</span> <b>{item['Category']}</b> ({item['Count']})",
+                showarrow=False, font=dict(size=12, family="Arial, sans-serif"), align="left"
+            )
+            for i, item in enumerate(legend_items[:8])
+        ]
     )
+
     st.plotly_chart(fig, use_container_width=True)
+
+    if legend_items:
+        st.markdown("#### 📊 Category Legend")
+        cols = st.columns(min(len(legend_items), 4))
+        for i, item in enumerate(legend_items):
+            with cols[i % len(cols)]:
+                st.markdown(
+                    f"<div style='padding:8px;border-radius:8px;background-color:{item['Color']}20;border-left:4px solid {item['Color']};'>"
+                    f"<span style='color:{item['Color']};font-size:16px;'>●</span> "
+                    f"<b>{item['Category']}</b><br><small>Count: {item['Count']}</small>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
 
 def render_radar_chart(concept_scores_df: pd.DataFrame, top_k: int = 15, cmap_name: str = "viridis", theme=None):
     if concept_scores_df.empty or len(concept_scores_df) < 2:
@@ -4176,7 +4154,6 @@ def main():
                     """Process a single row - called by worker threads."""
                     text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
                     concepts = extractor.extract_from_text(text, idx)
-
                     metrics = {}
                     power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
                     if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
@@ -4184,15 +4161,12 @@ def main():
                     if velocity_matches: metrics['scan_velocity'] = [float(m) for m in velocity_matches]
                     temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I)
                     if temp_matches: metrics['temperature'] = [float(m) for m in temp_matches]
-
                     return idx, concepts, metrics
 
                 # OPTIMIZATION: Use ThreadPoolExecutor for parallel document processing
-                # Streamlit threading guidance: collect results from main thread, not workers
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     futures = {executor.submit(_process_single_row, idx, row): idx 
                                for idx, row in df_filtered.iterrows()}
-
                     completed = 0
                     total = len(futures)
                     for future in as_completed(futures):
@@ -4204,28 +4178,43 @@ def main():
                             progress_bar.progress(0.20 + (completed / total) * 0.15)
                             status.write(f"Extracted {completed}/{total} documents...")
 
+                # ==========================================
+                # POST-EXTRACTION PROCESSING (FIXED)
+                # ==========================================
+                # Safety: Replace any None values from thread exceptions with empty lists
+                all_concepts = [c if c is not None else [] for c in all_concepts]
+
                 # Build concept frequencies and abstract map from extracted concepts
                 if use_ontology and extractor is not None:
+                    # Path 1: Use Ontology and Resolver
                     concept_freq = extractor.get_concept_frequencies()
                     valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
                     concept_abstract_map = defaultdict(list)
                     for doc_idx, concepts in enumerate(all_concepts):
                         for c in set(concepts):
                             concept_abstract_map[c].append(doc_idx)
+                else:
+                    # Path 2: Non-Ontology mode — manually compute frequencies from parallel results
+                    concept_freq = defaultdict(int)
+                    for concepts in all_concepts:
+                        for c in concepts:
+                            concept_freq[c] += 1
+                    valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
+                    concept_abstract_map = defaultdict(list)
+                    for doc_idx, concepts in enumerate(all_concepts):
+                        for c in set(concepts):
+                            concept_abstract_map[c].append(doc_idx)
 
+                st.write(f"✅ Extraction complete. Found {len(valid_concepts)} valid concepts.")
                 progress_bar.progress(0.35)
 
-                if not use_ontology:
-                    st.write("Filtering and normalizing concepts...")
-                    valid_concepts, concept_to_id, id_to_concept, concept_abstract_map = normalize_and_filter_concepts(all_concepts, config)
-                else:
-                    # Build concept_to_id for ontology-based concepts
-                    valid_concepts = sorted(valid_concepts, key=lambda c: concept_abstract_map.get(c, []).__len__(), reverse=True)
-                    top_n = config.get("TOP_N_CONCEPTS", 1000)
-                    if len(valid_concepts) > top_n:
-                        valid_concepts = valid_concepts[:top_n]
-                    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
-                    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+                # Build concept_to_id mapping (unified for both paths)
+                valid_concepts = sorted(valid_concepts, key=lambda c: concept_abstract_map.get(c, []).__len__(), reverse=True)
+                top_n = config.get("TOP_N_CONCEPTS", 1000)
+                if len(valid_concepts) > top_n:
+                    valid_concepts = valid_concepts[:top_n]
+                concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+                id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
 
                 st.write(f"**{len(valid_concepts)}** valid concepts retained")
                 progress_bar.progress(0.45)
@@ -4441,16 +4430,16 @@ def main():
                                    cmap_name=cmap, top_n_nodes=top_n,
                                    theme=theme, physics_preset=physics_preset,
                                    show_edge_weights=show_weights, edge_label_mode=edge_label_mode,
-                                   node_label_size=st.session_state.get('node_label_size', 12),
-                                   node_label_position=st.session_state.get('node_label_position', 'center'),
-                                   node_font_face=st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
-                                   edge_label_size=st.session_state.get('edge_label_size', 10),
-                                   edge_label_color=st.session_state.get('edge_label_color', None),
-                                   edge_label_position=st.session_state.get('edge_label_position', 'middle'))
+                                   node_label_size=st.session_state.get('node_label_size') or 12,
+                                   node_label_position=st.session_state.get('node_label_position') or 'center',
+                                   node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
+                                   edge_label_size=st.session_state.get('edge_label_size') or 10,
+                                   edge_label_color=st.session_state.get('edge_label_color') or None,
+                                   edge_label_position=st.session_state.get('edge_label_position') or 'middle')
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=top_n,
                                        theme=theme, show_edge_weights=show_weights,
-                                       node_label_size=st.session_state.get('node_label_size', 10))
+                                       node_label_size=st.session_state.get('node_label_size') or 10)
             elif viz_choice == "Plotly 3D":
                 render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=top_n,
                                         theme=theme, show_edge_weights=show_weights)
@@ -4475,9 +4464,9 @@ def main():
                 labels, parents, values = build_category_hierarchy(filtered_concepts, filtered_map,
                                                                     top_n_per_category=st.session_state.get('top_n_sunburst', 0))
                 render_sunburst_chart(labels, parents, values, cmap_name=cmap, theme=theme, branchvalues=bv_mode,
-                                      label_size=st.session_state.get('sunburst_label_size', 14),
-                                      width=st.session_state.get('sunburst_width', 900),
-                                      height=st.session_state.get('sunburst_height', 700))
+                                      label_size=st.session_state.get('sunburst_label_size') or 14,
+                                      width=st.session_state.get('sunburst_width') or 900,
+                                      height=st.session_state.get('sunburst_height') or 700)
 
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
