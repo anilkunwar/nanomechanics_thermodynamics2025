@@ -4108,6 +4108,51 @@ def display_metric_dashboard(metrics: dict, theme=None):
 # ==========================================
 
 
+# ==========================================
+# CONCEPT TIMELINE VISUALIZATION
+# ==========================================
+def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No 'Year' data available for timeline visualization.")
+        return
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years) == 0:
+        st.info("No valid year data found.")
+        return
+    year_range = sorted(years.unique())
+    if len(year_range) < 2:
+        st.info("Need at least 2 different years for timeline.")
+        return
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:10]
+    timeline_data = []
+    for year in year_range:
+        year_mask = df_filtered["Year"] == year
+        year_df = df_filtered[year_mask]
+        year_text = ""
+        for idx, row in year_df.iterrows():
+            for col in df_filtered.columns:
+                if pd.notna(row[col]):
+                    year_text += " " + str(row[col])
+        for concept in top_concepts:
+            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
+            timeline_data.append({"Year": year, "Concept": concept, "Count": count})
+    if not timeline_data:
+        st.info("No timeline data to display.")
+        return
+    timeline_df = pd.DataFrame(timeline_data)
+    fig = px.line(timeline_df, x="Year", y="Count", color="Concept",
+                  title="Concept Frequency Over Time",
+                  labels={"Count": "Mentions", "Year": "Publication Year"},
+                  template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
 def main():
     st.title("AgNP-Sustainability-ConceptGraph: Advanced NLP-Enhanced Explorer")
     st.caption("Multi-level reasoning concept graph for Ag nanoparticles sustainable metallurgy | Ontology-aware resolution | Cause-effect extraction")
