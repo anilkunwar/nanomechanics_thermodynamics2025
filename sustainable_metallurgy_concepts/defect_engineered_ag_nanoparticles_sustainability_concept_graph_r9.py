@@ -4153,6 +4153,34 @@ def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, t
 
 
 
+# ==========================================
+# CO-OCCURRENCE HEATMAP
+# ==========================================
+def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, top_n=30, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:top_n]
+    if len(top_concepts) < 3:
+        st.info("Need at least 3 concepts for heatmap.")
+        return
+    n = len(top_concepts)
+    matrix = np.zeros((n, n))
+    for i, c1 in enumerate(top_concepts):
+        for j, c2 in enumerate(top_concepts):
+            if i == j:
+                matrix[i][j] = len(concept_abstract_map.get(c1, []))
+            elif nx_graph.has_edge(c1, c2):
+                matrix[i][j] = nx_graph[c1][c2].get('cooccurrence', 0)
+    fig = px.imshow(matrix, x=top_concepts, y=top_concepts,
+                    labels=dict(x="Concept", y="Concept", color="Co-occurrence"),
+                    title=f"Co-occurrence Heatmap (Top {n} Concepts)",
+                    color_continuous_scale="Viridis")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+
 def main():
     st.title("AgNP-Sustainability-ConceptGraph: Advanced NLP-Enhanced Explorer")
     st.caption("Multi-level reasoning concept graph for Ag nanoparticles sustainable metallurgy | Ontology-aware resolution | Cause-effect extraction")
