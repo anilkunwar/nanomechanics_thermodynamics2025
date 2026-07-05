@@ -3039,6 +3039,10 @@ def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Di
     Level 0: Root (empty parent)
     Level 1: Category (Parent) - e.g., defect_engineering, sustainability_impact
     Level 2: Concept (Child) - e.g., twins, stacking_faults
+
+    CRITICAL FIX: A concept that IS its own category (e.g., "defect_engineering" 
+    maps to category "defect_engineering") is treated as a CATEGORY ONLY, not 
+    as a child of itself. This prevents self-loops and duplicate entries.
     """
     # Get category mapping for all concepts
     category_map = abstract_concepts_to_categories(valid_concepts)
@@ -3050,6 +3054,13 @@ def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Di
         # Get the category for this concept
         category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
+
+        # CRITICAL FIX: Skip if concept IS the category (prevents self-parenting)
+        # e.g., "defect_engineering" maps to "defect_engineering" -> skip as child
+        if concept == category:
+            # Still accumulate count for the category
+            hierarchy[category]["count"] += freq
+            continue
 
         # Add concept as child of its category
         hierarchy[category]["children"].append((concept, freq))
