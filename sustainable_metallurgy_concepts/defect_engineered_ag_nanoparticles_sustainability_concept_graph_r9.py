@@ -3033,295 +3033,230 @@ def render_graph_fallback(nx_graph, concept_abstract_map, theme=None, show_edge_
 # SUNBURST & RADAR CHARTS
 # ==========================================
 def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict,
-                                                        top_n_per_category: int = 40) -> Tuple[List, List, List]:
+                             top_n_per_category: int = 40) -> Tuple[List, List, List]:
     """
-    FIXED: Proper 3-level hierarchy construction with explicit root node.
-    Level 0: Root ("All Concepts")
-    Level 1: Category (Parent) - e.g., defect_engineering, sustainability_impact
-    Level 2: Concept (Child) - e.g., twins, stacking_faults
+    Builds a clean 2-level sunburst hierarchy (no duplicates):
+      Ring 0 (center): Root ("All Concepts")
+      Ring 1:          Categories (defect_engineering, sustainability_impact, ...)
+      Ring 2:          Concepts (twins, stacking_faults, ...) — NEVER repeating category names
     """
     category_map = abstract_concepts_to_categories(valid_concepts)
-    hierarchy = defaultdict(lambda: {"children": [], "count": 0})
+
+    # ── Step 1: Collect all unique category names ──────────────────────
+    all_category_names = set(category_map.values())
+
+    # ── Step 2: Build category → children mapping ─────────────────────
+    hierarchy: Dict[str, Dict] = {}
+    for cat in all_category_names:
+        hierarchy[cat] = {"children": [], "count": 0}
 
     for concept in valid_concepts:
         category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
 
-        # Skip if concept IS the category (prevents self-parenting)
-        if concept == category:
+        # ★ KEY FIX: Skip if the concept IS a category name (prevents duplicates)
+        if concept in all_category_names:
+            hierarchy.setdefault(category, {"children": [], "count": 0})
             hierarchy[category]["count"] += freq
             continue
 
+        hierarchy.setdefault(category, {"children": [], "count": 0})
         hierarchy[category]["children"].append((concept, freq))
         hierarchy[category]["count"] += freq
 
+    # ── Step 3: Assemble flat lists for Plotly ─────────────────────────
     labels, parents, values = [], [], []
 
-    # 1. Add explicit root node
+    # Root node
     root_label = "All Concepts"
-    total_count = sum(data["count"] for data in hierarchy.values())
+    total = sum(h["count"] for h in hierarchy.values())
     labels.append(root_label)
     parents.append("")
-    values.append(total_count)
+    values.append(total)
 
-    # 2. Add categories as children of root
+    # Category ring + concept ring
     for category, data in hierarchy.items():
         children = data["children"]
-        # Sort and limit children per category
+
+        # Sort by frequency descending, apply top-N limit
+        children.sort(key=lambda x: x[1], reverse=True)
         if top_n_per_category > 0 and len(children) > top_n_per_category:
-            children.sort(key=lambda x: x[1], reverse=True)
             children = children[:top_n_per_category]
 
-        cat_count = sum(freq for _, freq in children)
-        labels.append(category)
-        parents.append(root_label)  # Parent is now the explicit root node
-        values.append(cat_count)
+        cat_child_sum = sum(freq for _, freq in children)
 
-        # 3. Add concepts as children of category
+        # Category node (Ring 1)
+        labels.append(category)
+        parents.append(root_label)
+        values.append(cat_child_sum if cat_child_sum > 0 else data["count"])
+
+        # Concept nodes (Ring 2)
         for concept, freq in children:
+            # ★ SAFETY: Never add a concept that duplicates any category name
+            if concept in all_category_names:
+                continue
             labels.append(concept)
             parents.append(category)
-            values.append(freq)
+            values.append(max(freq, 1))
 
     return labels, parents, values
 
-def render_sunburst_chart(labels, parents, values, cmap_name="viridis", 
-                          label_size=20, width=900, height=700, 
+def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
+                          label_size=20, width=900, height=700,
                           theme=None, branchvalues="total",
                           show_labels=True, show_values=False,
                           hover_info="all", color_continuous_scale=None):
     """
-    ENHANCED Sunburst with hierarchical symbols, colormap support, and full customization.
-
-    Hierarchy:
-    - Level 0: Root (invisible)
-    - Level 1: Category (Parent) → ★
-    - Level 2: Concept (Child) → ★□
-    - Level 3+: Sub-concept → ★□◆
+    Sunburst with DISCRETE categorical colors — no more monotone gradients.
     """
     if not labels or len(labels) < 2:
-        st.info("Not enough categories for sunburst chart.")
+        st.info("Not enough data for sunburst chart.")
         return
 
     if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
+        theme = THEME_PRESETS.get("Bright (Default)", {})
 
-    # 1. Build parent map and calculate depth for each node
-    parent_map = {labels[i]: parents[i] for i in range(len(labels))}
+    # ── 1. Compute depth for each node ─────────────────────────────────
+    parent_map = dict(zip(labels, parents))
 
-    def get_depth(label, visited=None):
-        if visited is None:
-            visited = set()
-        if label in visited:
-            return 0
-        visited.add(label)
+    def get_depth(label, _cache={}):
+        if label in _cache:
+            return _cache[label]
         p = parent_map.get(label, "")
         if p == "":
-            return 0
-        return 1 + get_depth(p, visited)
+            _cache[label] = 0
+        else:
+            _cache[label] = 1 + get_depth(p)
+        return _cache[label]
 
+    # Clear cache on each call (Streamlit reruns)
+    get_depth.__defaults__ = ({},)
     depths = [get_depth(l) for l in labels]
 
-    # 2. Define Symbol Library (distinct geometric shapes)
-    SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈', '◇', '○', '□', '△', '◊']
+    # ── 2. Assign DISCRETE colors per category (Ring 1) ────────────────
+    # Gather unique category names (depth == 1 nodes)
+    category_nodes = [l for l, d in zip(labels, depths) if d == 1]
 
-    # Assign symbols based on hierarchy level
-    node_symbols = {}
-    for i, lab in enumerate(labels):
-        d = depths[i]
-        p = parents[i]
-        if d == 0:
-            node_symbols[lab] = SYMBOL_LIBRARY[0]
+    # Use a qualitative palette with enough distinct colors
+    try:
+        import matplotlib.pyplot as plt
+        cmap = plt.colormaps.get_cmap(cmap_name)
+        n_cats = max(len(category_nodes), 1)
+        discrete_colors = [
+            f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{int(a*255)})"
+            if a < 1.0 else
+            f"rgb({int(r*255)},{int(g*255)},{int(b*255)})"
+            for r, g, b, a in [cmap(i / max(n_cats - 1, 1)) for i in range(n_cats)]
+        ]
+    except Exception:
+        # Fallback: Plotly qualitative palette
+        import plotly.express as px
+        discrete_colors = px.colors.qualitative.Set2[:len(category_nodes)]
+
+    cat_color_map = dict(zip(category_nodes, discrete_colors))
+
+    # ── 3. Build color array for ALL nodes ─────────────────────────────
+    def get_category_ancestor(label):
+        """Walk up the tree to find which Ring-1 category a node belongs to."""
+        current = label
+        while True:
+            p = parent_map.get(current, "")
+            if p == "" or p == labels[0]:  # reached root
+                return current
+            if parent_map.get(p, "") == "" or parent_map.get(p, "") == labels[0]:
+                return p
+            current = p
+
+    node_colors = []
+    for label, depth in zip(labels, depths):
+        if depth == 0:
+            # Root: use theme background or white
+            node_colors.append(theme.get("plotly_paper", "#ffffff"))
+        elif depth == 1:
+            node_colors.append(cat_color_map.get(label, "#9E9E9E"))
         else:
-            ancestors = []
-            current = lab
-            visited = set()
-            while current != "" and current not in visited:
-                visited.add(current)
-                parent = parent_map.get(current, "")
-                if parent != "" and parent in node_symbols:
-                    ancestors.insert(0, node_symbols[parent])
-                current = parent
-            siblings = [labels[j] for j in range(len(labels)) if parents[j] == p and depths[j] == d]
-            sym_idx = siblings.index(lab) if lab in siblings else 0
-            own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
-            node_symbols[lab] = own_symbol
+            # Child: use its category's color with reduced opacity
+            ancestor = get_category_ancestor(label)
+            base_color = cat_color_map.get(ancestor, "#9E9E9E")
+            # Make child color lighter by inserting alpha
+            if base_color.startswith("rgb("):
+                base_color = base_color.replace("rgb(", "rgba(").replace(")", ",0.65)")
+            elif base_color.startswith("#"):
+                # Convert hex to rgba
+                h = base_color.lstrip("#")
+                r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+                base_color = f"rgba({r},{g},{b},0.65)"
+            node_colors.append(base_color)
 
-    # 3. Build Display Labels (with or without symbols)
-    display_labels = []
-    for i, lab in enumerate(labels):
-        d = depths[i]
-        if show_labels:
-            if d == 0:
-                display_labels.append(node_symbols[lab])
-            else:
-                chain = []
-                current = lab
-                visited = set()
-                while current != "" and current not in visited:
-                    visited.add(current)
-                    if current in node_symbols:
-                        chain.insert(0, node_symbols[current])
-                    current = parent_map.get(current, "")
-                combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
-                display_labels.append(combo)
+    # ── 4. Build hover text ────────────────────────────────────────────
+    hover_texts = []
+    for label, parent, val, depth in zip(labels, parents, values, depths):
+        if hover_info == "none":
+            hover_texts.append(None)
+        elif hover_info == "minimal":
+            hover_texts.append(f"{label}<br>Count: {val}")
         else:
-            display_labels.append(lab)
+            depth_name = ["Root", "Category", "Concept"][min(depth, 2)]
+            hover_texts.append(
+                f"<b>{label}</b><br>"
+                f"Level: {depth_name}<br>"
+                f"Parent: {parent or 'None'}<br>"
+                f"Value: {val}"
+            )
 
-    # 4. Generate Unique IDs (prevent Plotly ID collision)
-    unique_ids = []
-    seen = {}
-    for i, lab in enumerate(labels):
-        base = f"{lab}_d{depths[i]}"
-        if base in seen:
-            unique_ids.append(f"{base}_{seen[base]}")
-            seen[base] += 1
-        else:
-            unique_ids.append(base)
-            seen[base] = 1
-
-    parent_ids = []
-    for p in parents:
-        if p == "":
-            parent_ids.append("")
-        else:
-            found = False
-            for i, lab in enumerate(labels):
-                if lab == p:
-                    parent_ids.append(unique_ids[i])
-                    found = True
-                    break
-            if not found:
-                parent_ids.append("")
-
-    # 5. Color Mapping with Colormap Support
-    def get_root_parent(label):
-        p = parent_map.get(label, "")
-        if p == "":
-            return label
-        pp = parent_map.get(p, "")
-        if pp == "":
-            return p
-        return get_root_parent(p)
-
-    root_parents = [get_root_parent(l) for l in labels]
-    unique_categories = sorted(set([rp for rp, d in zip(root_parents, depths) if d >= 1]))
-
-    # Support for different colormaps via plotly express
-    if color_continuous_scale:
-        try:
-            color_scale = px.colors.sample_colorscale(color_continuous_scale, 
-                                                       np.linspace(0, 1, len(unique_categories)))
-            cat_color_map = {cat: color_scale[i % len(color_scale)] 
-                           for i, cat in enumerate(unique_categories)}
-        except Exception:
-            # Fallback to default colors
-            PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', 
-                           '#795548', '#2196F3', '#E91E63', '#FF5722', '#3F51B5',
-                           '#009688', '#607D8B', '#8BC34A', '#CDDC39', '#FFC107']
-            cat_color_map = {cat: PARENT_COLORS[i % len(PARENT_COLORS)] 
-                            for i, cat in enumerate(unique_categories)}
-    else:
-        PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', 
-                        '#795548', '#2196F3', '#E91E63', '#FF5722', '#3F51B5',
-                        '#009688', '#607D8B', '#8BC34A', '#CDDC39', '#FFC107']
-        cat_color_map = {cat: PARENT_COLORS[i % len(PARENT_COLORS)] 
-                        for i, cat in enumerate(unique_categories)}
-
-    plot_colors = []
-    for i, lab in enumerate(labels):
-        rp = root_parents[i]
-        plot_colors.append(cat_color_map.get(rp, '#9E9E9E'))
-
-    # 6. Build Legend Data
-    legend_entries = []
-    for i, lab in enumerate(labels):
-        d = depths[i]
-        sym = display_labels[i]
-        rp = root_parents[i]
-        color = cat_color_map.get(rp, '#9E9E9E')
-        legend_entries.append({
-            'symbol': sym,
-            'label': lab,
-            'depth': d,
-            'color': color,
-            'value': values[i]
-        })
-    legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
-
-    # 7. Create Plotly Figure with Enhanced Options
-    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
-
-    # Determine textinfo based on show_labels and show_values
-    if show_labels and show_values:
-        textinfo = 'label+value'
-    elif show_labels:
-        textinfo = 'label'
-    elif show_values:
-        textinfo = 'value'
-    else:
-        textinfo = 'none'
+    # ── 5. Create the Plotly Sunburst ──────────────────────────────────
+    import plotly.graph_objects as go
 
     fig = go.Figure(go.Sunburst(
-        ids=unique_ids,
-        labels=display_labels,
-        parents=parent_ids,
+        labels=labels,
+        parents=parents,
         values=values,
-        customdata=labels,  # Real names for hover tooltips
-        branchvalues=bv,
+        branchvalues=branchvalues,
         marker=dict(
-            colors=plot_colors,
-            line=dict(width=2, color="white")
+            colors=node_colors,
+            line=dict(
+                color=theme.get("node_border", "#ffffff"),
+                width=1.5
+            )
         ),
-        textinfo=textinfo,
-        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>' if hover_info == "all" else '<b>%{customdata}</b><extra></extra>',
+        textinfo="label" if show_labels else "none",
+        hovertext=hover_texts,
+        hoverinfo="text" if hover_info != "none" else "skip",
         insidetextorientation="radial",
-        textfont=dict(size=int(label_size), family="Arial, sans-serif", color="white")
+        maxdepth=3,
     ))
 
+    # ── 6. Layout ──────────────────────────────────────────────────────
     fig.update_layout(
-        margin=dict(l=0, r=0, t=80, b=0),
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font=dict(color=theme.get("font", "#000000")),
         width=width,
         height=height,
-        title=dict(
-            text="<b>Hierarchical Concept Map</b><br><sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>",
-            font=dict(size=16, family="Arial, sans-serif")
+        margin=dict(t=30, l=10, r=10, b=10),
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font=dict(
+            color=theme.get("font", "#000000"),
+            size=label_size
         ),
-        modebar=dict(
-            orientation='h',
-            bgcolor='rgba(255,255,255,0.7)',
-            color='#333333',
-            activecolor='#D32F2F'
-        )
+        sunburstcolorway=discrete_colors,  # Ensures Plotly respects discrete palette
     )
 
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("💡 **Export:** Click the 📷 Camera icon (top-right of chart) to download high-res PNG/SVG/PDF.")
 
-    # 8. Render Custom HTML Legend (grouped by depth)
-    if st.session_state.get('sunburst_show_legend', True):
-        st.markdown("### 📊 Symbol-to-Label Legend")
-        depth_names = {0: "Root", 1: "Category (Parent)", 2: "Concept (Child)", 3: "Sub-Concept", 4: "Detail"}
-        for d in sorted(set([e['depth'] for e in legend_entries])):
-            depth_label = depth_names.get(d, f"Level {d}")
-            st.markdown(f"**{depth_label}**")
-            entries_at_depth = [e for e in legend_entries if e['depth'] == d]
-            n_cols = min(4, max(1, len(entries_at_depth)))
-            cols = st.columns(n_cols)
-            for i, entry in enumerate(entries_at_depth):
-                with cols[i % n_cols]:
-                    st.markdown(
-                        f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}15;
-                        border-left:4px solid {entry['color']}; margin-bottom:6px;'>
-                        <span style='font-size:18px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
-                        <span style='font-size:12px; color:#333; font-weight:500;'>{entry['label']}</span>
-                        <span style='font-size:10px; color:#666; float:right;'>({entry['value']})</span>
-                        </div>""",
-                        unsafe_allow_html=True
-                    )
-
+    # ── 7. Optional Legend Table ───────────────────────────────────────
+    if st.session_state.get('sunburst_show_legend', True) and category_nodes:
+        st.markdown("**Category Color Legend:**")
+        legend_df = pd.DataFrame({
+            "Category": category_nodes,
+            "Color": [
+                f'<span style="display:inline-block;width:16px;height:16px;'
+                f'background:{cat_color_map.get(c, "#999")};'
+                f'border-radius:3px;margin-right:6px;"></span> {c}'
+                for c in category_nodes
+            ]
+        })
+        st.markdown(
+            legend_df.to_html(escape=False, index=False),
+            unsafe_allow_html=True
+        )
 def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
     """Render a radar chart for top concepts based on distillation metrics."""
     if theme is None:
