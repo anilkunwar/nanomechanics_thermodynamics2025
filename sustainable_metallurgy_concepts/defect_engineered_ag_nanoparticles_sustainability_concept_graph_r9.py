@@ -3032,62 +3032,55 @@ def render_graph_fallback(nx_graph, concept_abstract_map, theme=None, show_edge_
 # ==========================================
 # SUNBURST & RADAR CHARTS
 # ==========================================
-def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict, 
+def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict,
                                                         top_n_per_category: int = 40) -> Tuple[List, List, List]:
     """
-    FIXED: Proper 3-level hierarchy construction.
-    Level 0: Root (empty parent)
+    FIXED: Proper 3-level hierarchy construction with explicit root node.
+    Level 0: Root ("All Concepts")
     Level 1: Category (Parent) - e.g., defect_engineering, sustainability_impact
     Level 2: Concept (Child) - e.g., twins, stacking_faults
-
-    CRITICAL FIX: A concept that IS its own category (e.g., "defect_engineering" 
-    maps to category "defect_engineering") is treated as a CATEGORY ONLY, not 
-    as a child of itself. This prevents self-loops and duplicate entries.
     """
-    # Get category mapping for all concepts
     category_map = abstract_concepts_to_categories(valid_concepts)
-
-    # Build proper hierarchy structure
     hierarchy = defaultdict(lambda: {"children": [], "count": 0})
 
     for concept in valid_concepts:
-        # Get the category for this concept
         category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
 
-        # CRITICAL FIX: Skip if concept IS the category (prevents self-parenting)
-        # e.g., "defect_engineering" maps to "defect_engineering" -> skip as child
+        # Skip if concept IS the category (prevents self-parenting)
         if concept == category:
-            # Still accumulate count for the category
             hierarchy[category]["count"] += freq
             continue
 
-        # Add concept as child of its category
         hierarchy[category]["children"].append((concept, freq))
         hierarchy[category]["count"] += freq
 
-    # Sort and limit children per category
-    for parent in list(hierarchy.keys()):
-        children = hierarchy[parent]["children"]
+    labels, parents, values = [], [], []
+
+    # 1. Add explicit root node
+    root_label = "All Concepts"
+    total_count = sum(data["count"] for data in hierarchy.values())
+    labels.append(root_label)
+    parents.append("")
+    values.append(total_count)
+
+    # 2. Add categories as children of root
+    for category, data in hierarchy.items():
+        children = data["children"]
+        # Sort and limit children per category
         if top_n_per_category > 0 and len(children) > top_n_per_category:
             children.sort(key=lambda x: x[1], reverse=True)
             children = children[:top_n_per_category]
-        hierarchy[parent]["count"] = sum(cnt for _, cnt in children)
-        hierarchy[parent]["children"] = children
 
-    # Build sunburst data structures with proper 3-level hierarchy
-    labels, parents, values = [], [], []
-
-    # Add categories as level 1 (children of root)
-    for category, data in hierarchy.items():
+        cat_count = sum(freq for _, freq in children)
         labels.append(category)
-        parents.append("")  # Root level
-        values.append(data["count"])
+        parents.append(root_label)  # Parent is now the explicit root node
+        values.append(cat_count)
 
-        # Add concepts as level 2 (children of category)
-        for concept, freq in data["children"]:
+        # 3. Add concepts as children of category
+        for concept, freq in children:
             labels.append(concept)
-            parents.append(category)  # Parent is the category
+            parents.append(category)
             values.append(freq)
 
     return labels, parents, values
@@ -3384,6 +3377,62 @@ def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
+
+def render_tsne_projection(valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]], 
+                           embed_model, theme: Dict = None, n_components: int = 2, perplexity: int = 30):
+    """Render t-SNE projection of concept embeddings."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+
+    if len(valid_concepts) < 10:
+        st.info("Need at least 10 concepts for t-SNE projection.")
+        return
+
+    try:
+        from sklearn.manifold import TSNE
+        import plotly.express as px
+
+        # Encode concepts
+        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+
+        # Adjust perplexity if too large for the number of samples
+        actual_perplexity = min(perplexity, len(valid_concepts) - 1)
+        tsne = TSNE(n_components=n_components, random_state=42, perplexity=actual_perplexity)
+        coords = tsne.fit_transform(embeddings)
+
+        # Get categories and frequencies for coloring and sizing
+        category_map = abstract_concepts_to_categories(valid_concepts)
+        categories = [category_map.get(c, 'general') for c in valid_concepts]
+        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+
+        if n_components == 2:
+            fig = px.scatter(
+                x=coords[:, 0], y=coords[:, 1], 
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'},
+                color_discrete_sequence=px.colors.qualitative.Set2
+            )
+        else:
+            fig = px.scatter_3d(
+                x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="3D t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'}
+            )
+
+        fig.update_layout(
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font_color=theme.get("font", "#000000"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"t-SNE projection failed: {e}")
 
 def render_community_detection(nx_graph, valid_concepts, concept_abstract_map, theme=None):
     if theme is None:
