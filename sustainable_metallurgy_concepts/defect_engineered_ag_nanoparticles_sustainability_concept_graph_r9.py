@@ -4049,6 +4049,54 @@ def render_reasoning_dashboard(nx_graph, valid_concepts, ontology, extractor):
 # ==========================================
 # MAIN APPLICATION (ENHANCED WITH REASONING)
 # ==========================================
+
+# ==========================================
+# GRAPH METRICS DASHBOARD
+# ==========================================
+def compute_graph_metrics(G: nx.Graph) -> dict:
+    if G.number_of_nodes() == 0:
+        return {}
+    metrics = {
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+        "density": nx.density(G),
+        "avg_degree": np.mean([d for _, d in G.degree()]),
+        "clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0,
+        "connected_components": nx.number_connected_components(G),
+        "avg_clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+    }
+    try:
+        bc = nx.betweenness_centrality(G, normalized=True, k=min(100, G.number_of_nodes()))
+        top_bridges = sorted(bc.items(), key=lambda x: x[1], reverse=True)[:10]
+        metrics["top_bridges"] = top_bridges
+        metrics["avg_betweenness"] = np.mean(list(bc.values()))
+    except Exception:
+        metrics["top_bridges"] = []
+    return metrics
+
+
+
+def display_metric_dashboard(metrics: dict, theme=None):
+    if not metrics:
+        st.warning("No graph metrics available.")
+        return
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Nodes", metrics["nodes"]); col2.metric("Edges", metrics["edges"])
+    col3.metric("Density", f"{metrics['density']:.3f}"); col4.metric("Avg Degree", f"{metrics['avg_degree']:.2f}")
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Clustering", f"{metrics['clustering']:.3f}")
+    col6.metric("Components", metrics["connected_components"])
+    col7.metric("Avg Betweenness", f"{metrics.get('avg_betweenness', 0):.3f}")
+    if metrics.get("top_bridges"):
+        st.markdown("**Top Bridge Concepts (High Betweenness)**")
+        bridge_df = pd.DataFrame(metrics["top_bridges"], columns=["Concept", "Bridge Score"])
+        st.dataframe(bridge_df, use_container_width=True)
+
+# ==========================================
+# EXTRA VISUALIZATIONS
+# ==========================================
+
+
 def main():
     st.title("AgNP-Sustainability-ConceptGraph: Advanced NLP-Enhanced Explorer")
     st.caption("Multi-level reasoning concept graph for Ag nanoparticles sustainable metallurgy | Ontology-aware resolution | Cause-effect extraction")
