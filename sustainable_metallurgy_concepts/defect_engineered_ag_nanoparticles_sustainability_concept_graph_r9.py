@@ -3032,37 +3032,68 @@ def render_graph_fallback(nx_graph, concept_abstract_map, theme=None, show_edge_
 # ==========================================
 # SUNBURST & RADAR CHARTS
 # ==========================================
-def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict, top_n_per_category: int = 40):
-    hierarchy = defaultdict(lambda: {"children": [], "count": 0})
+def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict, 
+                                                        top_n_per_category: int = 40) -> Tuple[List, List, List]:
+    """
+    FIXED: Proper 3-level hierarchy construction.
+    Level 0: Root (empty parent)
+    Level 1: Category (Parent) - e.g., defect_engineering, sustainability_impact
+    Level 2: Concept (Child) - e.g., twins, stacking_faults
+    """
+    # Get category mapping for all concepts
     category_map = abstract_concepts_to_categories(valid_concepts)
+
+    # Build proper hierarchy structure
+    hierarchy = defaultdict(lambda: {"children": [], "count": 0})
+
     for concept in valid_concepts:
+        # Get the category for this concept
         category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
+
+        # Add concept as child of its category
         hierarchy[category]["children"].append((concept, freq))
         hierarchy[category]["count"] += freq
+
+    # Sort and limit children per category
     for parent in list(hierarchy.keys()):
         children = hierarchy[parent]["children"]
         if top_n_per_category > 0 and len(children) > top_n_per_category:
             children.sort(key=lambda x: x[1], reverse=True)
             children = children[:top_n_per_category]
-            hierarchy[parent]["count"] = sum(cnt for _, cnt in children)
-            hierarchy[parent]["children"] = children
+        hierarchy[parent]["count"] = sum(cnt for _, cnt in children)
+        hierarchy[parent]["children"] = children
+
+    # Build sunburst data structures with proper 3-level hierarchy
     labels, parents, values = [], [], []
-    for parent, data in hierarchy.items():
-        labels.append(parent); parents.append(""); values.append(data["count"])
-        for child, cnt in data["children"]:
-            labels.append(child); parents.append(parent); values.append(cnt)
+
+    # Add categories as level 1 (children of root)
+    for category, data in hierarchy.items():
+        labels.append(category)
+        parents.append("")  # Root level
+        values.append(data["count"])
+
+        # Add concepts as level 2 (children of category)
+        for concept, freq in data["children"]:
+            labels.append(concept)
+            parents.append(category)  # Parent is the category
+            values.append(freq)
+
     return labels, parents, values
 
-def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_size=20, 
-                          width=900, height=700, theme=None, branchvalues="total"):
+def render_sunburst_chart(labels, parents, values, cmap_name="viridis", 
+                          label_size=20, width=900, height=700, 
+                          theme=None, branchvalues="total",
+                          show_labels=True, show_values=False,
+                          hover_info="all", color_continuous_scale=None):
     """
-    Pure Symbol Sunburst with Hierarchical Combinations:
-    - Interior shows symbol combinations (★, ★□, ★□◆) inside slices
-    - Parent = ★, Child = ★□, Grandchild = ★□◆, etc.
-    - Legend maps each unique symbol-combination to its label
-    - Hover tooltips show full names
-    - Native Plotly camera export (no Kaleido needed)
+    ENHANCED Sunburst with hierarchical symbols, colormap support, and full customization.
+
+    Hierarchy:
+    - Level 0: Root (invisible)
+    - Level 1: Category (Parent) → ★
+    - Level 2: Concept (Child) → ★□
+    - Level 3+: Sub-concept → ★□◆
     """
     if not labels or len(labels) < 2:
         st.info("Not enough categories for sunburst chart.")
@@ -3088,23 +3119,16 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
     depths = [get_depth(l) for l in labels]
 
     # 2. Define Symbol Library (distinct geometric shapes)
-    # Each depth gets a unique base symbol
     SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈', '◇', '○', '□', '△', '◊']
 
-    # Assign a unique symbol to each node based on its position in the hierarchy
-    # Root gets first symbol, each new child gets next available
+    # Assign symbols based on hierarchy level
     node_symbols = {}
-    used_symbols = {}
-
     for i, lab in enumerate(labels):
         d = depths[i]
         p = parents[i]
-
         if d == 0:
-            # Root: use first symbol
             node_symbols[lab] = SYMBOL_LIBRARY[0]
         else:
-            # Child: combine ALL ancestor symbols + own unique symbol
             ancestors = []
             current = lab
             visited = set()
@@ -3114,38 +3138,33 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
                 if parent != "" and parent in node_symbols:
                     ancestors.insert(0, node_symbols[parent])
                 current = parent
-
-            # Pick a unique symbol for this node (based on index within siblings)
             siblings = [labels[j] for j in range(len(labels)) if parents[j] == p and depths[j] == d]
             sym_idx = siblings.index(lab) if lab in siblings else 0
             own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
-
-            # Store this node's symbol
             node_symbols[lab] = own_symbol
 
-    # 3. Build Hierarchical Display Labels (Symbol Combinations)
-    # Parent = ★, Child = ★□, Grandchild = ★□◆
+    # 3. Build Display Labels (with or without symbols)
     display_labels = []
     for i, lab in enumerate(labels):
         d = depths[i]
-        if d == 0:
-            # Root: single symbol
-            display_labels.append(node_symbols[lab])
+        if show_labels:
+            if d == 0:
+                display_labels.append(node_symbols[lab])
+            else:
+                chain = []
+                current = lab
+                visited = set()
+                while current != "" and current not in visited:
+                    visited.add(current)
+                    if current in node_symbols:
+                        chain.insert(0, node_symbols[current])
+                    current = parent_map.get(current, "")
+                combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
+                display_labels.append(combo)
         else:
-            # Build chain: parent_sym + child_sym + grandchild_sym...
-            chain = []
-            current = lab
-            visited = set()
-            while current != "" and current not in visited:
-                visited.add(current)
-                if current in node_symbols:
-                    chain.insert(0, node_symbols[current])
-                current = parent_map.get(current, "")
-            # Show combination (limit to 3 symbols max for readability)
-            combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
-            display_labels.append(combo)
+            display_labels.append(lab)
 
-    # 4. Generate Unique IDs (prevent Plotly collisions)
+    # 4. Generate Unique IDs (prevent Plotly ID collision)
     unique_ids = []
     seen = {}
     for i, lab in enumerate(labels):
@@ -3171,7 +3190,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
             if not found:
                 parent_ids.append("")
 
-    # 5. Color Mapping (each category gets a distinct color, children inherit)
+    # 5. Color Mapping with Colormap Support
     def get_root_parent(label):
         p = parent_map.get(label, "")
         if p == "":
@@ -3184,16 +3203,33 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
     root_parents = [get_root_parent(l) for l in labels]
     unique_categories = sorted(set([rp for rp, d in zip(root_parents, depths) if d >= 1]))
 
-    PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', '#795548', '#2196F3', '#E91E63',
-                     '#FF5722', '#3F51B5', '#009688', '#FF9800', '#795548', '#607D8B', '#9C27B0']
-    cat_color_map = {cat: PARENT_COLORS[i % len(PARENT_COLORS)] for i, cat in enumerate(unique_categories)}
+    # Support for different colormaps via plotly express
+    if color_continuous_scale:
+        try:
+            color_scale = px.colors.sample_colorscale(color_continuous_scale, 
+                                                       np.linspace(0, 1, len(unique_categories)))
+            cat_color_map = {cat: color_scale[i % len(color_scale)] 
+                           for i, cat in enumerate(unique_categories)}
+        except Exception:
+            # Fallback to default colors
+            PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', 
+                           '#795548', '#2196F3', '#E91E63', '#FF5722', '#3F51B5',
+                           '#009688', '#607D8B', '#8BC34A', '#CDDC39', '#FFC107']
+            cat_color_map = {cat: PARENT_COLORS[i % len(PARENT_COLORS)] 
+                            for i, cat in enumerate(unique_categories)}
+    else:
+        PARENT_COLORS = ['#D32F2F', '#00BCD4', '#FF9800', '#4CAF50', '#9C27B0', 
+                        '#795548', '#2196F3', '#E91E63', '#FF5722', '#3F51B5',
+                        '#009688', '#607D8B', '#8BC34A', '#CDDC39', '#FFC107']
+        cat_color_map = {cat: PARENT_COLORS[i % len(PARENT_COLORS)] 
+                        for i, cat in enumerate(unique_categories)}
 
     plot_colors = []
     for i, lab in enumerate(labels):
         rp = root_parents[i]
         plot_colors.append(cat_color_map.get(rp, '#9E9E9E'))
 
-    # 6. Build Legend Data: symbol-combination -> label mapping
+    # 6. Build Legend Data
     legend_entries = []
     for i, lab in enumerate(labels):
         d = depths[i]
@@ -3207,26 +3243,34 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
             'color': color,
             'value': values[i]
         })
-
-    # Sort by depth then value for logical legend order
     legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
 
-    # 7. Create Plotly Figure
+    # 7. Create Plotly Figure with Enhanced Options
     bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
+
+    # Determine textinfo based on show_labels and show_values
+    if show_labels and show_values:
+        textinfo = 'label+value'
+    elif show_labels:
+        textinfo = 'label'
+    elif show_values:
+        textinfo = 'value'
+    else:
+        textinfo = 'none'
 
     fig = go.Figure(go.Sunburst(
         ids=unique_ids,
-        labels=display_labels,      # ONLY symbol combinations inside chart
+        labels=display_labels,
         parents=parent_ids,
         values=values,
-        customdata=labels,          # Real names for hover tooltips
+        customdata=labels,  # Real names for hover tooltips
         branchvalues=bv,
         marker=dict(
-            colors=plot_colors, 
+            colors=plot_colors,
             line=dict(width=2, color="white")
         ),
-        textinfo='label',           # Show symbol combinations directly inside slices
-        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>',
+        textinfo=textinfo,
+        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>' if hover_info == "all" else '<b>%{customdata}</b><extra></extra>',
         insidetextorientation="radial",
         textfont=dict(size=int(label_size), family="Arial, sans-serif", color="white")
     ))
@@ -3235,13 +3279,12 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
         margin=dict(l=0, r=0, t=80, b=0),
         paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
         font=dict(color=theme.get("font", "#000000")),
-        width=width, 
+        width=width,
         height=height,
         title=dict(
             text="<b>Hierarchical Concept Map</b><br><sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>",
             font=dict(size=16, family="Arial, sans-serif")
         ),
-        # Enable native Plotly modebar with camera export
         modebar=dict(
             orientation='h',
             bgcolor='rgba(255,255,255,0.7)',
@@ -3253,231 +3296,27 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
     st.plotly_chart(fig, use_container_width=True)
     st.caption("💡 **Export:** Click the 📷 Camera icon (top-right of chart) to download high-res PNG/SVG/PDF.")
 
-    # 8. Render Custom HTML Legend — Symbol → Label Mapping Table
-    st.markdown("### 📊 Symbol-to-Label Legend")
-
-    # Group by depth for organized display
-    depth_names = {0: "Root", 1: "Category (Parent)", 2: "Concept (Child)", 3: "Sub-Concept", 4: "Detail"}
-
-    for d in sorted(set([e['depth'] for e in legend_entries])):
-        depth_label = depth_names.get(d, f"Level {d}")
-        st.markdown(f"**{depth_label}**")
-
-        # Create columns based on number of entries
-        entries_at_depth = [e for e in legend_entries if e['depth'] == d]
-        n_cols = min(4, max(1, len(entries_at_depth)))
-        cols = st.columns(n_cols)
-
-        for i, entry in enumerate(entries_at_depth):
-            with cols[i % n_cols]:
-                st.markdown(
-                    f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}15; 
+    # 8. Render Custom HTML Legend (grouped by depth)
+    if st.session_state.get('sunburst_show_legend', True):
+        st.markdown("### 📊 Symbol-to-Label Legend")
+        depth_names = {0: "Root", 1: "Category (Parent)", 2: "Concept (Child)", 3: "Sub-Concept", 4: "Detail"}
+        for d in sorted(set([e['depth'] for e in legend_entries])):
+            depth_label = depth_names.get(d, f"Level {d}")
+            st.markdown(f"**{depth_label}**")
+            entries_at_depth = [e for e in legend_entries if e['depth'] == d]
+            n_cols = min(4, max(1, len(entries_at_depth)))
+            cols = st.columns(n_cols)
+            for i, entry in enumerate(entries_at_depth):
+                with cols[i % n_cols]:
+                    st.markdown(
+                        f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}15;
                         border-left:4px solid {entry['color']}; margin-bottom:6px;'>
                         <span style='font-size:18px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
                         <span style='font-size:12px; color:#333; font-weight:500;'>{entry['label']}</span>
                         <span style='font-size:10px; color:#666; float:right;'>({entry['value']})</span>
-                    </div>""",
-                    unsafe_allow_html=True
-                )
-
-
-# ==========================================
-# EXPORT FUNCTIONS (ENHANCED)
-# ==========================================
-def export_graph(nx_graph, concept_abstract_map, format_type: str):
-    if format_type == "GraphML":
-        try:
-            nx.write_graphml_lxml(nx_graph, "agnp_graph.graphml")
-        except:
-            nx.write_graphml(nx_graph, "agnp_graph.graphml")
-        with open("agnp_graph.graphml", "rb") as f:
-            return f.read(), "application/graphml+xml", "agnp_graph.graphml"
-    elif format_type == "JSON":
-        data = nx.node_link_data(nx_graph)
-        json_str = json.dumps(data, indent=2, default=str)
-        return json_str.encode('utf-8'), "application/json", "agnp_graph.json"
-    elif format_type == "CSV (Edges)":
-        edge_data = []
-        for u, v, data in nx_graph.edges(data=True):
-            row = {"source": u, "target": v}
-            row.update({k: v for k, v in data.items() if isinstance(v, (str, int, float, bool))})
-            edge_data.append(row)
-        csv_df = pd.DataFrame(edge_data)
-        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "agnp_edges.csv"
-    elif format_type == "CSV (Nodes)":
-        node_data = []
-        for node in nx_graph.nodes():
-            row = {"concept": node, "frequency": len(concept_abstract_map.get(node, [])),
-                   "degree": nx_graph.degree(node),
-                   "concept_type": nx_graph.nodes[node].get('concept_type', 'general')}
-            row.update({k: v for k, v in nx_graph.nodes[node].items()})
-            node_data.append(row)
-        csv_df = pd.DataFrame(node_data)
-        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "agnp_nodes.csv"
-    elif format_type == "PNG":
-        try:
-            pos = nx.spring_layout(nx_graph, seed=42)
-            plt.figure(figsize=(14, 12), dpi=300)
-            node_colors = [get_ag_sintering_category_color(n) for n in nx_graph.nodes()]
-            nx.draw(nx_graph, pos, with_labels=True, node_color=node_colors, edge_color='gray',
-                   node_size=400, font_size=7, font_weight='bold', edgecolors='white', linewidths=1)
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=300, bbox_inches='tight', facecolor='white')
-            buf.seek(0); plt.close()
-            return buf.read(), "image/png", "agnp_graph.png"
-        except Exception as e:
-            st.error(f"PNG export failed: {e}")
-            return None, None, None
-    elif format_type == "SVG":
-        try:
-            pos = nx.spring_layout(nx_graph, seed=42)
-            plt.figure(figsize=(14, 12), dpi=150)
-            node_colors = [get_ag_sintering_category_color(n) for n in nx_graph.nodes()]
-            nx.draw(nx_graph, pos, with_labels=True, node_color=node_colors, edge_color='gray',
-                   node_size=400, font_size=7, font_weight='bold', edgecolors='white', linewidths=1)
-            buf = io.BytesIO()
-            plt.savefig(buf, format='svg', bbox_inches='tight', facecolor='white')
-            buf.seek(0); plt.close()
-            return buf.read(), "image/svg+xml", "agnp_graph.svg"
-        except Exception as e:
-            st.error(f"SVG export failed: {e}")
-            return None, None, None
-    return None, None, None
-
-# ==========================================
-# GRAPH METRICS DASHBOARD
-# ==========================================
-def compute_graph_metrics(G: nx.Graph) -> dict:
-    if G.number_of_nodes() == 0:
-        return {}
-    metrics = {
-        "nodes": G.number_of_nodes(),
-        "edges": G.number_of_edges(),
-        "density": nx.density(G),
-        "avg_degree": np.mean([d for _, d in G.degree()]),
-        "clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0,
-        "connected_components": nx.number_connected_components(G),
-        "avg_clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
-    }
-    try:
-        bc = nx.betweenness_centrality(G, normalized=True, k=min(100, G.number_of_nodes()))
-        top_bridges = sorted(bc.items(), key=lambda x: x[1], reverse=True)[:10]
-        metrics["top_bridges"] = top_bridges
-        metrics["avg_betweenness"] = np.mean(list(bc.values()))
-    except Exception:
-        metrics["top_bridges"] = []
-    return metrics
-
-def display_metric_dashboard(metrics: dict, theme=None):
-    if not metrics:
-        st.warning("No graph metrics available.")
-        return
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Nodes", metrics["nodes"]); col2.metric("Edges", metrics["edges"])
-    col3.metric("Density", f"{metrics['density']:.3f}"); col4.metric("Avg Degree", f"{metrics['avg_degree']:.2f}")
-    col5, col6, col7 = st.columns(3)
-    col5.metric("Clustering", f"{metrics['clustering']:.3f}")
-    col6.metric("Components", metrics["connected_components"])
-    col7.metric("Avg Betweenness", f"{metrics.get('avg_betweenness', 0):.3f}")
-    if metrics.get("top_bridges"):
-        st.markdown("**Top Bridge Concepts (High Betweenness)**")
-        bridge_df = pd.DataFrame(metrics["top_bridges"], columns=["Concept", "Bridge Score"])
-        st.dataframe(bridge_df, use_container_width=True)
-
-# ==========================================
-# EXTRA VISUALIZATIONS
-# ==========================================
-def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, theme=None):
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        st.info("No 'Year' data available for timeline visualization.")
-        return
-    years = df_filtered["Year"].dropna().astype(int)
-    if len(years) == 0:
-        st.info("No valid year data found.")
-        return
-    year_range = sorted(years.unique())
-    if len(year_range) < 2:
-        st.info("Need at least 2 different years for timeline.")
-        return
-    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:10]
-    timeline_data = []
-    for year in year_range:
-        year_mask = df_filtered["Year"] == year
-        year_df = df_filtered[year_mask]
-        year_text = ""
-        for idx, row in year_df.iterrows():
-            for col in df_filtered.columns:
-                if pd.notna(row[col]):
-                    year_text += " " + str(row[col])
-        for concept in top_concepts:
-            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
-            timeline_data.append({"Year": year, "Concept": concept, "Count": count})
-    if not timeline_data:
-        st.info("No timeline data to display.")
-        return
-    timeline_df = pd.DataFrame(timeline_data)
-    fig = px.line(timeline_df, x="Year", y="Count", color="Concept",
-                  title="Concept Frequency Over Time",
-                  labels={"Count": "Mentions", "Year": "Publication Year"},
-                  template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
-    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-                      plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
-                      font_color=theme.get("font", "#000000"))
-    st.plotly_chart(fig, use_container_width=True)
-
-def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, top_n=30, theme=None):
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:top_n]
-    if len(top_concepts) < 3:
-        st.info("Need at least 3 concepts for heatmap.")
-        return
-    n = len(top_concepts)
-    matrix = np.zeros((n, n))
-    for i, c1 in enumerate(top_concepts):
-        for j, c2 in enumerate(top_concepts):
-            if i == j:
-                matrix[i][j] = len(concept_abstract_map.get(c1, []))
-            elif nx_graph.has_edge(c1, c2):
-                matrix[i][j] = nx_graph[c1][c2].get('cooccurrence', 0)
-    fig = px.imshow(matrix, x=top_concepts, y=top_concepts,
-                    labels=dict(x="Concept", y="Concept", color="Co-occurrence"),
-                    title=f"Co-occurrence Heatmap (Top {n} Concepts)",
-                    color_continuous_scale="Viridis")
-    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-                      font_color=theme.get("font", "#000000"))
-    st.plotly_chart(fig, use_container_width=True)
-
-def render_tsne_projection(valid_concepts, concept_abstract_map, embed_model, theme=None):
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if len(valid_concepts) < 5:
-        st.info("Need at least 5 concepts for t-SNE projection.")
-        return
-    try:
-        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
-        perplexity = min(30, len(valid_concepts) - 1)
-        tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
-        coords = tsne.fit_transform(embeddings)
-        category_map = abstract_concepts_to_categories(valid_concepts)
-        categories = [category_map.get(c, 'general') for c in valid_concepts]
-        frequencies = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
-        df_tsne = pd.DataFrame({
-            'x': coords[:, 0], 'y': coords[:, 1],
-            'concept': valid_concepts, 'category': categories, 'frequency': frequencies
-        })
-        fig = px.scatter(df_tsne, x='x', y='y', color='category', size='frequency',
-                         hover_data=['concept', 'frequency'],
-                         title='t-SNE Projection of Concept Embeddings',
-                         labels={'x': 't-SNE 1', 'y': 't-SNE 2'},
-                         template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
-        fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-                          font_color=theme.get("font", "#000000"))
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.warning(f"t-SNE projection failed: {e}")
+                        </div>""",
+                        unsafe_allow_html=True
+                    )
 
 def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
     """Render a radar chart for top concepts based on distillation metrics."""
@@ -4009,19 +3848,87 @@ def render_sidebar():
 
         # Sunburst Options
         st.markdown("---")
-        st.subheader("Sunburst Options")
+        st.subheader("🎨 Sunburst Chart Customization")
+
+        # Colormap selection (17+ options)
+        st.session_state['sunburst_cmap'] = st.selectbox(
+            "Colormap:",
+            options=["viridis", "plasma", "inferno", "magma", "cividis", 
+                    "turbo", "rainbow", "hsv", "coolwarm", "RdBu", "Spectral",
+                    "tab10", "tab20", "Pastel1", "Set1", "Set2", "Set3",
+                    "YlOrRd", "PuBuGn", "GnBu", "YlGnBu"],
+            index=0,
+            help="Choose color scheme for sunburst categories",
+            key="sunburst_cmap_select"
+        )
+
+        # Label/value visibility toggles
+        col_labels, col_values = st.columns(2)
+        with col_labels:
+            st.session_state['sunburst_show_labels'] = st.checkbox(
+                "Show symbols", value=True,
+                help="Display symbol combinations inside chart segments",
+                key="sunburst_show_labels_chk"
+            )
+        with col_values:
+            st.session_state['sunburst_show_values'] = st.checkbox(
+                "Show values", value=False,
+                help="Display numerical values inside chart segments",
+                key="sunburst_show_values_chk"
+            )
+
+        # Hover info density
+        st.session_state['sunburst_hover_info'] = st.selectbox(
+            "Hover information:",
+            options=["all", "minimal", "none"],
+            index=0,
+            help="Amount of information shown on hover tooltip",
+            key="sunburst_hover_select"
+        )
+
+        # Branch values mode
+        st.session_state['sunburst_branchvalues'] = st.selectbox(
+            "Branch values mode:", ["total", "remainder"], index=0,
+            help="How to calculate branch sizes: total=sum of children, remainder=parent minus children",
+            key="sunburst_branch_mode"
+        )
+
+        # Dimensions
+        col_w, col_h = st.columns(2)
+        with col_w:
+            st.session_state['sunburst_width'] = st.slider(
+                "Chart width (px)", 600, 1400, 900, step=50,
+                key="sunburst_width_slider"
+            )
+        with col_h:
+            st.session_state['sunburst_height'] = st.slider(
+                "Chart height (px)", 500, 1200, 700, step=50,
+                key="sunburst_height_slider"
+            )
+
+        # Label font size
+        st.session_state['sunburst_label_size'] = st.slider(
+            "Symbol font size", 8, 30, 20, step=1,
+            help="Size of symbols inside sunburst slices",
+            key="sunburst_label_size_slider"
+        )
+
+        # Legend toggle
+        st.session_state['sunburst_show_legend'] = st.checkbox(
+            "Show symbol legend", value=True,
+            help="Display symbol-to-label mapping table below chart",
+            key="sunburst_show_legend_chk"
+        )
+
+        # Category filter
         if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
             all_cats = list(set(abstract_concepts_to_categories(st.session_state['analysis_data']['valid_concepts']).values()))
             st.session_state['sunburst_categories'] = st.multiselect(
                 "Filter categories:", options=all_cats, default=all_cats, key="sunburst_cat_filter"
             )
-            st.session_state['sunburst_branchvalues'] = st.selectbox(
-                "Branch values mode:", ["total", "remainder"], index=0, key="sunburst_branch_mode"
-            )
         else:
-            st.info("Build graph first to configure sunburst.")
+            st.info("Build graph first to filter categories.")
             st.session_state['sunburst_categories'] = []
-            st.session_state['sunburst_branchvalues'] = "total"
 
         st.markdown("---")
         if st.button("Clear Cache"):
@@ -4589,12 +4496,16 @@ def main():
                                                                     top_n_per_category=st.session_state.get('top_n_sunburst', 0))
                 render_sunburst_chart(
                     labels, parents, values,
-                    cmap_name=cmap,
+                    cmap_name=st.session_state.get('sunburst_cmap', cmap),
+                    color_continuous_scale=st.session_state.get('sunburst_cmap', None),
                     theme=theme,
                     branchvalues=bv_mode,
-                    label_size=st.session_state.get('sunburst_label_size') or 14,
+                    label_size=st.session_state.get('sunburst_label_size') or 20,
                     width=st.session_state.get('sunburst_width') or 900,
-                    height=st.session_state.get('sunburst_height') or 700
+                    height=st.session_state.get('sunburst_height') or 700,
+                    show_labels=st.session_state.get('sunburst_show_labels', True),
+                    show_values=st.session_state.get('sunburst_show_values', False),
+                    hover_info=st.session_state.get('sunburst_hover_info', 'all')
                 )
 
 
