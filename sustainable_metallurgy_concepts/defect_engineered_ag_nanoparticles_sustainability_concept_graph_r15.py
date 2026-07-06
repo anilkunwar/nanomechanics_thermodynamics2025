@@ -3921,11 +3921,6 @@ def render_sidebar():
                 help="Font size for edge weight labels"
             )
 
-        # Ensure edge label color has valid default
-        edge_color_value = st.session_state.get('edge_label_color')
-        if not edge_color_value or edge_color_value == '':
-            edge_color_value = '#000000'
-        st.session_state['edge_label_color'] = edge_color_value
             st.session_state['edge_label_color'] = st.color_picker(
                 "Edge label color", value="#000000",
                 help="Color for edge weight labels (default matches theme)"
@@ -3937,31 +3932,36 @@ def render_sidebar():
                 help="Where to place edge labels along the edge"
             )
 
+            # Ensure edge label color has valid default
+            edge_color_value = st.session_state.get('edge_label_color')
+            if not edge_color_value or edge_color_value == '':
+                edge_color_value = '#000000'
+            st.session_state['edge_label_color'] = edge_color_value
         with st.expander("Sunburst Chart Settings"):
             st.session_state['sunburst_label_size'] = st.slider(
-
-        st.session_state['sunburst_font_family'] = st.selectbox(
-            "Sunburst font family",
-            ["Arial, sans-serif", "Inter, Segoe UI, Roboto, sans-serif",
-             "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
-            index=0,
-            help="Font family for sunburst chart labels",
-            key="sunburst_font_family_select"
-        )
                 "Sunburst label size", 10, 24, 14, step=1,
                 help="Font size for sunburst chart labels"
             )
+            st.session_state['sunburst_font_family'] = st.selectbox(
+                "Sunburst font family",
+                ["Arial, sans-serif", "Inter, Segoe UI, Roboto, sans-serif",
+                "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
+                index=0,
+                help="Font family for sunburst chart labels",
+                key="sunburst_font_family_select"
+            )
             st.session_state['sunburst_width'] = st.slider(
-                "Sunburst width", 600, 1200, 900, step=50
+                "Sunburst width", 600, 1400, 900, step=50,
+                key="sunburst_width_slider"
             )
             st.session_state['sunburst_height'] = st.slider(
-                "Sunburst height", 500, 1000, 700, step=50
+                "Sunburst height", 500, 1200, 700, step=50,
+                key="sunburst_height_slider"
             )
             st.session_state['sunburst_show_legend'] = st.checkbox(
                 "Show category legend", value=True
             )
 
-                # Graph Editing Section
         st.markdown("---")
         st.subheader("Graph Editing")
         with st.expander("Remove Nodes"):
@@ -4823,15 +4823,6 @@ def main():
                     hover_info=st.session_state.get('sunburst_hover_info', 'all'),
                     font_family=st.session_state.get('sunburst_font_family',
                         st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'))
-                )
-                    theme=theme,
-                    branchvalues=bv_mode,
-                    label_size=st.session_state.get('sunburst_label_size') or 20,
-                    width=st.session_state.get('sunburst_width') or 900,
-                    height=st.session_state.get('sunburst_height') or 700,
-                    show_labels=st.session_state.get('sunburst_show_labels', True),
-                    show_values=st.session_state.get('sunburst_show_values', False),
-                    hover_info=st.session_state.get('sunburst_hover_info', 'all')
                 )
 
 
