@@ -3881,7 +3881,8 @@ def render_sidebar():
                     help="Labels longer than this threshold will be replaced by N1, N2, etc."
                 )
             else:
-                st.session_state['max_label_length'] = 15with st.expander("Edge Label Settings"):
+                st.session_state['max_label_length'] = 15
+        with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
                 "Edge label font size", 6, 18, 10, step=1,
                 help="Font size for edge weight labels"
