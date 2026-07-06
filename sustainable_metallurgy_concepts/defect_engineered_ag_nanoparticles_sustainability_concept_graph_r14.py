@@ -2696,12 +2696,12 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         edge_label_mode="hover", show_reasoning=False,
                         edge_label_size=10, edge_label_color=None,
                         node_label_position="center", edge_label_position="middle",
-                        node_font_face="Inter, Segoe UI, Roboto, sans-serif"):
+                        node_font_face="Inter, Segoe UI, Roboto, sans-serif",
+                        use_abbreviated_labels=False, max_label_length=15):
     """
-    Enhanced PyVis renderer with customizable label placement.
+    Enhanced PyVis renderer with N1, N2... abbreviated labels for long names.
     All new parameters have safe defaults so main() can omit them.
     """
-    # Safety: ensure all customization params have valid values
     if node_label_size is None:
         node_label_size = 12
     if edge_label_size is None:
@@ -2714,6 +2714,8 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         node_font_face = "Inter, Segoe UI, Roboto, sans-serif"
     if edge_label_color is None:
         edge_label_color = theme['font'] if theme else "#000000"
+    if max_label_length is None:
+        max_label_length = 15
 
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
         degrees = dict(nx_graph.degree(weight='weight'))
@@ -2784,12 +2786,28 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     label_align_map = {"center": "center", "top": "top", "bottom": "bottom", "left": "left", "right": "right"}
     node_align = label_align_map.get(node_label_position, "center")
 
+    # --- NEW: Initialize label mapping for abbreviated labels ---
+    label_map = {}
+    n_counter = 1
+
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
         size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
         color = get_ag_sintering_category_color(node, cmap_colors)
         degree = int(nx_graph.degree(node))
-        label = custom_labels.get(node, node) if custom_labels else node
+
+        original_label = custom_labels.get(node, node) if custom_labels else node
+
+        # --- NEW: Abbreviation Logic ---
+        if use_abbreviated_labels and len(original_label) > max_label_length:
+            short_label = f"N{n_counter}"
+            label_map[short_label] = original_label
+            n_counter += 1
+            label = short_label
+        else:
+            label = original_label
+        # --------------------------------
+
         concept_type = nx_graph.nodes[node].get('concept_type', 'general')
         x, y = (pos.get(node, (0, 0))[0] * 1200, pos.get(node, (0, 0))[1] * 1200)
 
@@ -2802,7 +2820,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
             font={'color': theme['font'], 'size': int(node_label_size), 'face': node_font_face,
                   'strokeWidth': 0, 'vadjust': vadjust, 'align': node_align},
             title=(f"<div style='font-family:{node_font_face};'>"
-                   f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{node}</b><br>"
+                   f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{original_label}</b><br>"
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Type:</span> {concept_type}<br>"
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Degree:</span> {degree}<br>"
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
@@ -2872,6 +2890,29 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     """
     html_content = html_content.replace('</head>', custom_css + '</head>')
     st.components.v1.html(html_content, height=790, scrolling=True)
+
+    # ==========================================
+    # NEW: Render Legend if abbreviated labels were used
+    # ==========================================
+    if use_abbreviated_labels and label_map:
+        st.markdown("---")
+        st.markdown("### 🗺️ Node Label Legend")
+        st.caption("Hover over nodes in the interactive graph to see their full names.")
+
+        # Sort legend by the numeric value of N1, N2, etc.
+        sorted_legend = sorted(label_map.items(), key=lambda x: int(x[0][1:]))
+
+        cols = st.columns(4)
+        for i, (short, full) in enumerate(sorted_legend):
+            with cols[i % 4]:
+                st.markdown(
+                    f"""<div style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
+                    border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;'>
+                    <b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:14px;'>{short}</b>:
+                    <span style='font-size:13px; color:{theme.get('font', '#1e293b')};'>{full}</span>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
 
     try:
         html_bytes = html_content.encode('utf-8')
@@ -3108,11 +3149,10 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
                           hover_info="all", color_continuous_scale=None):
     """
     ENHANCED Sunburst with hierarchical symbols, PER-NODE colormap coloring,
-    and full customization. Each slice gets its own hue for maximum visual
-    distinction. Root node is hidden (structural only).
+    and full customization. Root node is visible with theme-matched color.
 
     Hierarchy:
-    - Level 0: Root (hidden structural node)  → ✦
+    - Level 0: Root (visible center)  → ✦
     - Level 1: Category (Parent) → ★
     - Level 2: Concept (Child)   → ★□
     - Level 3+: Sub-concept      → ★□◆
@@ -3173,7 +3213,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
         d = depths[i]
         if show_labels:
             if d == 0:
-                display_labels.append("")   # Root: no label visible
+                display_labels.append(node_symbols[lab])  # Show root symbol
             else:
                 chain = []
                 current = lab
@@ -3186,7 +3226,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
                 combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
                 display_labels.append(combo)
         else:
-            display_labels.append(lab if d > 0 else "")
+            display_labels.append(lab)
 
     # ── 5. Unique IDs for Plotly hierarchy ──
     unique_ids = []
@@ -3217,30 +3257,17 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
     # ═══════════════════════════════════════════════════════
     #  COLORFUL PER-NODE COLORING
     # ═══════════════════════════════════════════════════════
-    # Priority: color_continuous_scale (plotly name) > cmap_name (matplotlib name)
-    # If neither works, fall back to qualitative palettes.
-
     n_nodes = len(labels)
-
-    # Determine which colormap name to use
-    cmap_to_use = None
-    if color_continuous_scale:
-        cmap_to_use = color_continuous_scale
-    elif cmap_name:
-        cmap_to_use = cmap_name
-    else:
-        cmap_to_use = "Spectral"
+    cmap_to_use = color_continuous_scale or cmap_name or "Spectral"
 
     plot_colors = []
     try:
-        # Try matplotlib first (supports Spectral, viridis, plasma, etc.)
         cmap_obj = plt.cm.get_cmap(cmap_to_use)
         t_vals = np.linspace(0.05, 0.95, n_nodes)
         rgbas = [cmap_obj(t) for t in t_vals]
         plot_colors = [matplotlib.colors.to_hex(rgba) for rgba in rgbas]
     except Exception:
         try:
-            # Try plotly express continuous scales
             import plotly.express as px
             if hasattr(px.colors.sequential, cmap_to_use):
                 px_scale = getattr(px.colors.sequential, cmap_to_use)
@@ -3249,7 +3276,6 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
             else:
                 raise ValueError("Not a plotly sequential scale")
         except Exception:
-            # Ultimate fallback: concatenate qualitative palettes
             try:
                 from plotly.express import colors as px_colors
                 qual_palettes = [
@@ -3273,8 +3299,6 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
     legend_entries = []
     for i, lab in enumerate(labels):
         d = depths[i]
-        if d == 0:
-            continue        # Skip root from legend
         sym = display_labels[i]
         color = plot_colors[i]
         legend_entries.append({
@@ -3298,12 +3322,12 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
     else:
         textinfo = 'none'
 
-    # ROOT FIX: Make root invisible by setting its color to transparent
-    # and its label to empty. Only children are visible.
+    # FIX: Subtle borders instead of thick white lines; root gets theme color
     sunburst_colors = plot_colors.copy()
     for i in range(len(labels)):
         if depths[i] == 0:
-            sunburst_colors[i] = "rgba(0,0,0,0)"   # Transparent root
+            # Root: use a visible theme-matched color, not transparent
+            sunburst_colors[i] = theme.get("plotly_paper", "#f8f9fa")
 
     fig = go.Figure(go.Sunburst(
         ids=unique_ids,
@@ -3314,7 +3338,7 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
         branchvalues=bv,
         marker=dict(
             colors=sunburst_colors,
-            line=dict(width=2, color="white")
+            line=dict(width=0.5, color="rgba(255,255,255,0.25)")  # Subtle gaps
         ),
         textinfo=textinfo,
         hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>'
@@ -3842,8 +3866,22 @@ def render_sidebar():
                  "Times New Roman, serif"],
                 index=0
             )
-
-        with st.expander("Edge Label Settings"):
+            # ==========================================
+            # NEW: Abbreviated Labels Controls
+            # ==========================================
+            st.session_state['use_abbreviated_labels'] = st.checkbox(
+                "Use short labels (N1, N2...) for long names",
+                value=False,
+                help="Replaces long node labels with N1, N2... and generates a legend below the graph."
+            )
+            if st.session_state['use_abbreviated_labels']:
+                st.session_state['max_label_length'] = st.slider(
+                    "Max label length before abbreviation",
+                    min_value=5, max_value=50, value=15, step=1,
+                    help="Labels longer than this threshold will be replaced by N1, N2, etc."
+                )
+            else:
+                st.session_state['max_label_length'] = 15with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
                 "Edge label font size", 6, 18, 10, step=1,
                 help="Font size for edge weight labels"
@@ -4686,7 +4724,10 @@ def main():
                     node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
                     edge_label_size=st.session_state.get('edge_label_size') or 10,
                     edge_label_color=st.session_state.get('edge_label_color') or None,
-                    edge_label_position=st.session_state.get('edge_label_position') or 'middle'
+                    edge_label_position=st.session_state.get('edge_label_position') or 'middle',
+                    # --- NEW PARAMETERS ---
+                    use_abbreviated_labels=st.session_state.get('use_abbreviated_labels', False),
+                    max_label_length=st.session_state.get('max_label_length', 15)
                 )
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(
