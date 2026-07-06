@@ -3937,31 +3937,6 @@ def render_sidebar():
             if not edge_color_value or edge_color_value == '':
                 edge_color_value = '#000000'
             st.session_state['edge_label_color'] = edge_color_value
-        with st.expander("Sunburst Chart Settings"):
-            st.session_state['sunburst_label_size'] = st.slider(
-                "Sunburst label size", 10, 24, 14, step=1,
-                help="Font size for sunburst chart labels"
-            )
-            st.session_state['sunburst_font_family'] = st.selectbox(
-                "Sunburst font family",
-                ["Arial, sans-serif", "Inter, Segoe UI, Roboto, sans-serif",
-                "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
-                index=0,
-                help="Font family for sunburst chart labels",
-                key="sunburst_font_family_select"
-            )
-            st.session_state['sunburst_width'] = st.slider(
-                "Sunburst width", 600, 1400, 900, step=50,
-                key="sunburst_width_slider"
-            )
-            st.session_state['sunburst_height'] = st.slider(
-                "Sunburst height", 500, 1200, 700, step=50,
-                key="sunburst_height_slider"
-            )
-            st.session_state['sunburst_show_legend'] = st.checkbox(
-                "Show category legend", value=True
-            )
-
         st.markdown("---")
         st.subheader("Graph Editing")
         with st.expander("Remove Nodes"):
@@ -4052,7 +4027,19 @@ def render_sidebar():
             index=0,
             help="Choose color scheme for sunburst categories",
             key="sunburst_cmap_select"
+
+
         )
+
+        st.session_state['sunburst_font_family'] = st.selectbox(
+            "Sunburst font family",
+            ["Arial, sans-serif", "Inter, Segoe UI, Roboto, sans-serif",
+             "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
+            index=0,
+            help="Font family for sunburst chart labels",
+            key="sunburst_font_family_select"
+        )
+
 
         # Label/value visibility toggles
         col_labels, col_values = st.columns(2)
