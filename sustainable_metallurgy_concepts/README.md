@@ -58,6 +58,39 @@ focuse on Alloy Names too, V3 with these features - (Ontology-aware concept reso
 taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
 Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
 
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v10.0-turquoise)](https://defect-engineered-ag-np-sustainability-concept-graph10.streamlit.app/) ( Enhanced and robust visualization, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, 
+focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v11.0-turquoise)](https://defect-engineered-ag-np-sustainability-concept-graph11.streamlit.app/) ( Enhanced and robust visualization, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, 
+focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v12.0-turquoise)](https://defect-engineered-ag-np-sustainability-concept-graph12.streamlit.app/) ( Enhanced and robust visualization, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, 
+focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v13.0-turquoise)](https://defect-engineered-ag-np-sustainability-concept-graph13.streamlit.app/) ( Enhanced and robust visualization, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, 
+focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v14.0-turquoise)](https://defect-engineered-ag-np-sustainability-concept-graph14.streamlit.app/) ( Enhanced and robust visualization, Concise annotations for labels and mapping in legends, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, 
+focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+
+
+
+
+
+
+
 
 
 
