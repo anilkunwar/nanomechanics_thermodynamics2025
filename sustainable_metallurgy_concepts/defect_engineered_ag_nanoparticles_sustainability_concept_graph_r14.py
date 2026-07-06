@@ -3877,7 +3877,7 @@ def render_sidebar():
             if st.session_state['use_abbreviated_labels']:
                 st.session_state['max_label_length'] = st.slider(
                     "Max label length before abbreviation",
-                    min_value=5, max_value=50, value=15, step=1,
+                    min_value=2, max_value=50, value=15, step=1,
                     help="Labels longer than this threshold will be replaced by N1, N2, etc."
                 )
             else:
