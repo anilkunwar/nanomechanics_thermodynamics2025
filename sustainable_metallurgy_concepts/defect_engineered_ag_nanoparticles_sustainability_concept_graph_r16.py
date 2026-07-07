@@ -2697,9 +2697,13 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         edge_label_size=10, edge_label_color=None,
                         node_label_position="center", edge_label_position="middle",
                         node_font_face="Inter, Segoe UI, Roboto, sans-serif",
-                        use_abbreviated_labels=False, max_label_length=15):
+                        use_abbreviated_labels=False, max_label_length=15,
+                       enable_node_highlight=False):
     """
     Enhanced PyVis renderer with N1, N2... abbreviated labels for long names.
+
+    When enable_node_highlight is True, clicking a node highlights connected
+    neighbors with gold borders and overlays edge relationship descriptions.
     All new parameters have safe defaults so main() can omit them.
     """
     if node_label_size is None:
@@ -2921,6 +2925,154 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     </style>
     """
     html_content = html_content.replace('</head>', custom_css + '</head>')
+
+    # --- NODE HIGHLIGHT & EDGE DESCRIPTION INJECTION ---
+    if enable_node_highlight:
+        highlight_js = """
+    <script>
+    (function() {
+        var checkExist = setInterval(function() {
+            if (typeof network !== 'undefined' && network !== null && network.body && network.body.data) {
+                clearInterval(checkExist);
+
+                var nodesDS = network.body.data.nodes;
+                var edgesDS = network.body.data.edges;
+                var savedNodeColors = {};
+                var savedEdgeStates = {};
+                var activeNodeId = null;
+
+                function resetAll() {
+                    // Restore all node colors
+                    var nodeRestores = [];
+                    for (var nid in savedNodeColors) {
+                        nodeRestores.push({id: nid, color: savedNodeColors[nid]});
+                    }
+                    if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
+                    savedNodeColors = {};
+
+                    // Restore all edge states
+                    var edgeRestores = [];
+                    for (var eid in savedEdgeStates) {
+                        edgeRestores.push(savedEdgeStates[eid]);
+                    }
+                    if (edgeRestores.length > 0) edgesDS.update(edgeRestores);
+                    savedEdgeStates = {};
+
+                    activeNodeId = null;
+                }
+
+                network.on("selectNode", function(params) {
+                    var nodeId = params.nodes[0];
+
+                    // If clicking a different node, reset previous state first
+                    if (activeNodeId !== null && activeNodeId !== nodeId) {
+                        resetAll();
+                    }
+                    activeNodeId = nodeId;
+
+                    var connectedEdges = network.getConnectedEdges(nodeId);
+                    var connectedNodes = network.getConnectedNodes(nodeId);
+
+                    // 1. Highlight connected nodes with gold border
+                    var nodeUpdates = [];
+                    connectedNodes.forEach(function(nId) {
+                        var n = nodesDS.get(nId);
+                        if (n && !savedNodeColors[nId]) {
+                            savedNodeColors[nId] = JSON.parse(JSON.stringify(n.color));
+                            var newColor = JSON.parse(JSON.stringify(n.color));
+                            if (typeof newColor === 'string') {
+                                newColor = {background: newColor, border: '#FFD700'};
+                            } else {
+                                newColor.border = '#FFD700';
+                                if (newColor.highlight) newColor.highlight.border = '#FFD700';
+                                if (newColor.hover) newColor.hover.border = '#FFD700';
+                            }
+                            nodeUpdates.push({id: nId, color: newColor});
+                        }
+                    });
+                    if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
+
+                    // 2. Highlight edges and show relationship descriptions
+                    var edgeUpdates = [];
+                    connectedEdges.forEach(function(eId) {
+                        var e = edgesDS.get(eId);
+                        if (e && !savedEdgeStates[eId]) {
+                            // Save original state
+                            savedEdgeStates[eId] = {
+                                id: eId,
+                                label: e.label,
+                                font: e.font ? JSON.parse(JSON.stringify(e.font)) : undefined,
+                                color: e.color ? JSON.parse(JSON.stringify(e.color)) : undefined,
+                                width: e.width,
+                                dashes: e.dashes
+                            };
+
+                            // Extract description from HTML title
+                            var descText = "";
+                            if (e.title) {
+                                var temp = document.createElement('div');
+                                temp.innerHTML = e.title;
+                                descText = temp.textContent || temp.innerText || "";
+                                descText = descText.replace(/\s+/g, ' ').trim();
+                            }
+
+                            // Parse edge metadata from title
+                            var w = e.value || e.width || 1;
+                            var edgeType = "unknown";
+                            var isInferred = false;
+
+                            var typeMatch = descText.match(/Type:\s*(\w+)/i);
+                            if (typeMatch) edgeType = typeMatch[1];
+
+                            if (descText.indexOf("Inferred: true") !== -1) isInferred = true;
+
+                            // Build rich label: weight + relationship type
+                            var displayLabel = "W:" + (typeof w === 'number' ? w.toFixed(1) : w) + " | " + edgeType;
+                            if (isInferred) displayLabel += " [INF]";
+
+                            edgeUpdates.push({
+                                id: eId,
+                                label: displayLabel,
+                                font: {
+                                    align: 'middle',
+                                    color: '#D32F2F',
+                                    size: 11,
+                                    strokeWidth: 2,
+                                    strokeColor: '#ffffff',
+                                    face: 'Inter, Segoe UI, Roboto, sans-serif',
+                                    background: 'rgba(255,255,255,0.85)'
+                                },
+                                color: {
+                                    color: '#D32F2F',
+                                    highlight: '#D32F2F',
+                                    hover: '#D32F2F',
+                                    opacity: 1.0
+                                },
+                                width: Math.max((e.width || 1), 3),
+                                dashes: false
+                            });
+                        }
+                    });
+                    if (edgeUpdates.length > 0) edgesDS.update(edgeUpdates);
+                });
+
+                network.on("deselectNode", function(params) {
+                    resetAll();
+                });
+
+                // Also reset when clicking on empty canvas
+                network.on("click", function(params) {
+                    if (params.nodes.length === 0 && activeNodeId !== null) {
+                        resetAll();
+                    }
+                });
+            }
+        }, 250); // Check every 250ms until network is ready
+    })();
+    </script>
+    """
+        html_content = html_content.replace('</body>', highlight_js + '</body>')
+
     st.components.v1.html(html_content, height=790, scrolling=True)
 
     # ==========================================
@@ -3879,6 +4031,13 @@ def render_sidebar():
         st.markdown("---")
         st.subheader("Visualization Customization")
 
+        # --- NEW: Interactive Highlight Toggle ---
+        st.session_state['enable_node_highlight'] = st.checkbox(
+            "🔍 Enable Node Selection Highlight & Descriptions",
+            value=False,
+            help="When enabled, clicking a node highlights connected nodes with gold borders and overlays edge weights/relationship descriptions."
+        )
+
         with st.expander("Node & Label Settings"):
             st.session_state['node_label_size'] = st.slider(
                 "Node label font size", 8, 24, 12, step=1,
@@ -4763,7 +4922,8 @@ def main():
                     edge_label_position=st.session_state.get('edge_label_position') or 'middle',
                     # --- NEW PARAMETERS ---
                     use_abbreviated_labels=st.session_state.get('use_abbreviated_labels', False),
-                    max_label_length=st.session_state.get('max_label_length', 15)
+                    max_label_length=st.session_state.get('max_label_length', 15),
+                    enable_node_highlight=st.session_state.get('enable_node_highlight', False)
                 )
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(
