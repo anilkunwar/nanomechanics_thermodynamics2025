@@ -3069,8 +3069,27 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         if (e.title) {
                             var tmpDiv = document.createElement('div');
                             tmpDiv.innerHTML = e.title;
-                            var desc = (tmpDiv.textContent || tmpDiv.innerText || '').replace(/\s+/g,' ').trim();
-                            var m = desc.match(/Type:\s*(\w+)/i);
+                            var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
+                            var _out = '', _sp = true;
+                            for (var _ci = 0; _ci < _txt.length; _ci++) {
+                                var _cc = _txt.charCodeAt(_ci);
+                                if (_cc === 32 || _cc === 9 || _cc === 10 || _cc === 13) {
+                                    if (!_sp) { _out += ' '; _sp = true; }
+                                } else { _out += _txt[_ci]; _sp = false; }
+                            }
+                            var desc = _out.trim();
+                            var m = null;
+                            var _tidx = desc.toLowerCase().indexOf('type:');
+                            if (_tidx >= 0) {
+                                var _after = desc.slice(_tidx + 5).trim();
+                                var _ei = 0;
+                                while (_ei < _after.length) {
+                                    var _c = _after.charCodeAt(_ei);
+                                    if ((65 <= _c && _c <= 90) || (97 <= _c && _c <= 122) || (48 <= _c && _c <= 57) || _c === 95 || _c === 45) { _ei++; }
+                                    else { break; }
+                                }
+                                if (_ei > 0) m = [_after.slice(0, _ei)];
+                            }
                             if (m) edgeType = m[1];
                             if (desc.indexOf('Inferred: true') !== -1) isInferred = true;
                         }
@@ -3094,7 +3113,8 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     })();
     </script>
     """
-        html_content = html_content.replace('</body>', highlight_js + '</body>')    st.components.v1.html(html_content, height=790, scrolling=True)
+        html_content = html_content.replace('</body>', highlight_js + '</body>')
+    st.components.v1.html(html_content, height=790, scrolling=True)
 
     # ==========================================
     # NEW: Render Legend if abbreviated labels were used
