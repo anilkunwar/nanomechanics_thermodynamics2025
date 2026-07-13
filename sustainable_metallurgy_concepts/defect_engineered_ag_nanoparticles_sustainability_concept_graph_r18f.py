@@ -49,8 +49,8 @@ import gc
 import hashlib
 import io
 import base64
-import webbrowser          # 🔥 PERMANENT GRAPH
-import shutil              # 🔥 PERMANENT GRAPH
+import webbrowser          # for permanent graph
+import shutil              # for permanent graph
 from collections import defaultdict, Counter, deque
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Union, Any, Set
@@ -104,7 +104,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 JSON_METADATA_DIR = os.path.join(SCRIPT_DIR, "json_metadatabase")
 os.makedirs(JSON_METADATA_DIR, exist_ok=True)
 
-# 🔥 PERMANENT GRAPH: Directory for exported HTML graphs
+# Permanent graph output directory
 PERMANENT_GRAPH_DIR = os.path.join(SCRIPT_DIR, "exported_graphs")
 os.makedirs(PERMANENT_GRAPH_DIR, exist_ok=True)
 
@@ -3106,13 +3106,33 @@ def render_graph_section(ontology: DomainOntology, G=None, concept_abstract_map=
     # --- Build button ---
     if st.button("🔬 Build & Render Graph", type="primary", key="build_graph_btn"):
         with st.spinner("Building concept graph with definitions..."):
-            # We need to pass extra nodes and edges if any (from extracted data)
-            # For now, we'll use only ontology nodes/edges.
-            # Later we can integrate extracted concepts via st.session_state.
+            # Prepare extra nodes and edges from the NetworkX graph (if provided)
             extra_nodes = {}
             extra_edges = []
-            # If we have a NetworkX graph from analysis, we could extract extra nodes.
-            # Here we just use ontology.
+            if G is not None and concept_abstract_map is not None:
+                # Add nodes that are not in ontology
+                for node in G.nodes():
+                    if node not in ontology.concepts:
+                        # Determine concept type from graph node attributes
+                        concept_type_str = G.nodes[node].get('concept_type', 'general')
+                        # Map string to ConceptType
+                        try:
+                            ct = ConceptType(concept_type_str)
+                        except ValueError:
+                            ct = ConceptType.GENERAL
+                        extra_nodes[node] = ct
+                # Add edges that are not ontology relationships
+                for u, v, data in G.edges(data=True):
+                    edge_type_str = data.get('edge_type', 'cooccurrence')
+                    # Try to map to RelationshipType
+                    try:
+                        rel_type = RelationshipType(edge_type_str)
+                    except ValueError:
+                        rel_type = RelationshipType.CO_OCCURS
+                    label = get_rel_label(rel_type)
+                    confidence = data.get('weight', 1.0)
+                    extra_edges.append((u, v, label, confidence))
+            
             net = build_permanent_graph(
                 ontology=ontology,
                 extra_nodes=extra_nodes,
@@ -3184,10 +3204,1440 @@ def render_graph_section(ontology: DomainOntology, G=None, concept_abstract_map=
             webbrowser.open(f"file://{os.path.abspath(st.session_state['current_graph_path'])}")
 
 # ==========================================
-# VISUALIZATION FUNCTIONS (ENHANCED WITH REASONING) - REPLACED BY PERMANENT GRAPH
+# VISUALIZATION FUNCTIONS (ENHANCED WITH REASONING)
 # ==========================================
-# The old render_graph_pyvis is now replaced by render_graph_section.
-# The rest of the visualization functions (Plotly, etc.) remain unchanged.
+def get_ag_sintering_category_color(concept: str, cmap_colors: Optional[List[str]] = None) -> str:
+    if cmap_colors:
+        return cmap_colors[hash(concept) % len(cmap_colors)]
+
+    concept_lower = concept.lower()
+    category = 'general'
+    for pattern, cat in AG_SUSTAINABILITY_CATEGORY_MAPPING.items():
+        if re.search(pattern, concept_lower):
+            category = cat
+            break
+
+    # Color scheme tailored for Materials Science & Sustainability
+    color_map = {
+        'core_material': '#D32F2F',             # Red (Ag, SiC, GaN, Substrates)
+        'sintering_process': '#00BCD4',         # Cyan (Pressureless sintering, diffusion)
+        'defect_engineering': '#FF9800',        # Orange (Stacking faults, twins, ISF, ESF)
+        'sustainability_impact': '#4CAF50',     # Green (Cleaner production, net-zero, e-waste)
+        'thermal_mechanical_response': '#9C27B0', # Purple (Thermal shock, yield, conductivity)
+        'microstructural_defects': '#795548',   # Brown (Micro-voids, lattice strain)
+        'cleaner_production_metrics': '#2196F3', # Blue (Energy efficiency, lifecycle)
+        'general': '#9E9E9E'                    # Grey
+    }
+    return color_map.get(category, '#9E9E9E')
+
+def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
+                        min_node_size=8, max_node_size=40, cmap_name="viridis",
+                        custom_labels=None, node_label_size=12, top_n_nodes=0,
+                        theme=None, physics_preset=None, show_edge_weights=False,
+                        edge_label_mode="hover", show_reasoning=False,
+                        edge_label_size=10, edge_label_color=None,
+                        node_label_position="center", edge_label_position="middle",
+                        node_font_face="Inter, Segoe UI, Roboto, sans-serif",
+                        use_abbreviated_labels=False, max_label_length=15,
+                       enable_node_highlight=False,
+                       show_definitions=True):
+    """
+    Enhanced PyVis renderer with N1, N2... abbreviated labels for long names.
+
+    When enable_node_highlight is True, clicking a node highlights connected
+    neighbors with gold borders and overlays edge relationship descriptions.
+    All new parameters have safe defaults so main() can omit them.
+    """
+    if node_label_size is None:
+        node_label_size = 12
+    if edge_label_size is None:
+        edge_label_size = 10
+    if node_label_position is None:
+        node_label_position = "center"
+    if edge_label_position is None:
+        edge_label_position = "middle"
+    if node_font_face is None:
+        node_font_face = "Inter, Segoe UI, Roboto, sans-serif"
+    if edge_label_color is None:
+        edge_label_color = theme['font'] if theme else "#000000"
+    if max_label_length is None:
+        max_label_length = 15
+
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if physics_preset is None:
+        physics_preset = PHYSICS_PRESETS["Stable (Default)"]
+
+    pos = {}
+    if len(nx_graph.nodes()) > 0:
+        try:
+            if len(nx_graph.nodes()) < 300:
+                pos = nx.kamada_kawai_layout(nx_graph, weight='weight')
+            else:
+                pos = nx.spring_layout(nx_graph, k=2.5, iterations=200, seed=42, weight='weight')
+        except Exception:
+            pos = nx.spring_layout(nx_graph, k=2.5, iterations=200, seed=42, weight='weight')
+
+    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
+
+    net = Network(
+        height="780px", width="100%", bgcolor=theme['bg'], font_color=theme['font'],
+        select_menu=True, notebook=False, cdn_resources='remote'
+    )
+
+    if physics_enabled and physics_preset.get("gravity", 0) != 0:
+        net.set_options(f"""
+        var options = {{
+          "physics": {{
+            "enabled": true,
+            "solver": "barnesHut",
+            "barnesHut": {{
+              "gravitationalConstant": {physics_preset['gravity']},
+              "centralGravity": {physics_preset['central_gravity']},
+              "springLength": {physics_preset['spring_length']},
+              "springConstant": {physics_preset['spring_strength']},
+              "damping": {physics_preset['damping']},
+              "overlap": 0.15
+            }},
+            "stabilization": {{
+              "enabled": true,
+              "iterations": {physics_preset['stabilization']},
+              "updateInterval": 30,
+              "onlyDynamicEdges": false,
+              "fit": true
+            }}
+          }},
+          "interaction": {{
+            "hover": true,
+            "tooltipDelay": 180,
+            "hideEdgesOnDrag": false,
+            "zoomView": true,
+            "dragView": true
+          }}
+        }}
+        """)
+    else:
+        net.set_options("""
+        var options = {
+          "physics": { "enabled": false },
+          "interaction": { "hover": true, "dragNodes": true, "dragView": true, "zoomView": true }
+        }
+        """)
+
+    label_align_map = {"center": "center", "top": "top", "bottom": "bottom", "left": "left", "right": "right"}
+    node_align = label_align_map.get(node_label_position, "center")
+
+    # --- NEW: Initialize label mapping for abbreviated labels ---
+    label_map = {}
+    n_counter = 1
+
+    for i, node in enumerate(nx_graph.nodes()):
+        freq = len(concept_abstract_map.get(node, []))
+        size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
+        color = get_ag_sintering_category_color(node, cmap_colors)
+        degree = int(nx_graph.degree(node))
+
+        original_label = custom_labels.get(node, node) if custom_labels else node
+
+        # --- IMPROVED: Abbreviation Logic with Inside-Node Positioning ---
+        if use_abbreviated_labels and len(original_label) > max_label_length:
+            short_label = f"N{n_counter}"
+            label_map[short_label] = original_label
+            n_counter += 1
+            label = short_label
+
+            # Force label inside node for abbreviated labels
+            # Use circle shape (label inside) instead of dot (label outside)
+            node_shape = 'circle'
+            # Scale font to fit inside the node
+            inside_font_size = max(8, min(int(size * 0.55), 14))
+            # White text for contrast against colored node background
+            font_color = '#ffffff'
+            font_stroke_width = 1
+            font_stroke_color = 'rgba(0,0,0,0.3)'
+            font_vadjust = 0  # Center vertically in circle
+            font_align = 'center'
+            font_bold = {'color': '#ffffff', 'size': inside_font_size, 'face': node_font_face, 'vadjust': 0, 'mod': 'bold'}
+        else:
+            label = original_label
+            node_shape = 'dot'
+            inside_font_size = int(node_label_size)
+            font_color = theme['font']
+            font_stroke_width = 0
+            font_stroke_color = theme['node_border']
+            font_vadjust = -6 if node_align == "center" else (-12 if node_align == "top" else 12)
+            font_align = node_align
+            font_bold = None
+        # ------------------------------------------------------------------
+
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        definition = nx_graph.nodes[node].get('definition', '')
+
+        x, y = (pos.get(node, (0, 0))[0] * 1200, pos.get(node, (0, 0))[1] * 1200)
+
+        if font_bold:
+            font_dict = {
+                'color': font_color, 'size': inside_font_size, 'face': node_font_face,
+                'strokeWidth': font_stroke_width, 'strokeColor': font_stroke_color,
+                'vadjust': font_vadjust, 'align': font_align,
+                'bold': font_bold
+            }
+        else:
+            font_dict = {
+                'color': font_color, 'size': inside_font_size, 'face': node_font_face,
+                'strokeWidth': font_stroke_width, 'strokeColor': font_stroke_color,
+                'vadjust': font_vadjust, 'align': font_align
+            }
+
+        net.add_node(
+            node, label=label, size=size, x=x, y=y,
+            color={'background': color, 'border': theme['node_border'],
+                   'highlight': {'background': theme['highlight_bg'], 'border': '#ffffff'},
+                   'hover': {'background': theme['hover_bg'], 'border': '#ffffff'}},
+            font=font_dict,
+            title=(f"<div style='font-family:{node_font_face};'>"
+
+                   f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{original_label}</b><br>"
+
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Type:</span> {concept_type}<br>"
+
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Degree:</span> {degree}<br>"
+
+                   f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
+
+                   + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if (show_definitions and definition) else "")
+
+                   + "</div>"),
+
+            borderWidth=2, borderWidthSelected=3,
+            shadow={'enabled': True, 'color': theme['shadow_color'], 'size': 12, 'x': 4, 'y': 4},
+            shape=node_shape, mass=max(1, 1 + freq * 0.05)
+        )
+    color_map = {
+        'cooccurrence': theme['edge_cooccurrence'], 'semantic': theme['edge_semantic'],
+        'bridge': theme['edge_bridge'], 'inferred': theme.get('edge_inferred', '#8b5cf6'),
+        'causes': theme.get('edge_cause', '#ef4444'), 'hypernym': theme.get('edge_hypernym', '#22c55e'),
+        'hyponym': theme.get('edge_hypernym', '#22c55e'), 'manual': theme['edge_semantic'],
+        'unknown': theme['edge_unknown']
+    }
+
+    all_weights = [nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()]
+    weight_threshold = np.percentile(all_weights, 80) if all_weights else 0
+    actual_edge_label_color = edge_label_color if edge_label_color else theme['font']
+
+    for u, v in nx_graph.edges():
+        w = nx_graph[u][v].get('weight', 1)
+        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
+        is_inferred = nx_graph[u][v].get('inferred', False)
+        color = color_map.get('inferred' if is_inferred and edge_type not in ['hypernym', 'hyponym', 'causes'] else edge_type, color_map['unknown'])
+        width = float(np.clip(w * 0.4, 0.8, 3.5))
+        dashes = True if is_inferred else False
+
+        edge_kwargs = dict(
+            value=float(np.clip(w, 0.5, 5)), width=width,
+            color={'color': color, 'highlight': theme['highlight_bg'], 'hover': theme['hover_bg'], 'opacity': 0.85},
+            smooth={'type': 'continuous', 'roundness': 0.35},
+            title=f"<span style='font-family:{node_font_face};'>Weight: <b>{w:.2f}</b><br>Type: {edge_type}<br>Inferred: {is_inferred}</span>",
+            dashes=dashes
+        )
+
+        if edge_label_mode == "all":
+            edge_kwargs['label'] = f"{w:.1f}"
+            edge_kwargs['font'] = {'color': actual_edge_label_color, 'size': int(edge_label_size),
+                                     'background': theme['tooltip_bg'], 'strokeWidth': 2,
+                                     'strokeColor': theme['node_border'], 'align': edge_label_position,
+                                     'face': node_font_face}
+        elif edge_label_mode == "threshold" and w >= weight_threshold:
+            edge_kwargs['label'] = f"{w:.1f}"
+            edge_kwargs['font'] = {'color': actual_edge_label_color, 'size': int(edge_label_size),
+                                     'background': theme['tooltip_bg'], 'strokeWidth': 2,
+                                     'strokeColor': theme['node_border'], 'align': edge_label_position,
+                                     'face': node_font_face}
+
+        net.add_edge(u, v, **edge_kwargs)
+
+    html_content = net.generate_html()
+    custom_css = f"""
+    <style>
+        body {{ background: {theme['bg']}; margin: 0; padding: 0; font-family: '{node_font_face}', sans-serif; }}
+        #mynetwork {{ border-radius: 16px; box-shadow: 0 12px 48px {theme['shadow_color']}; outline: none; }}
+        div.vis-tooltip {{ background: {theme['tooltip_bg']} !important; color: {theme['tooltip_text']} !important;
+            border: 1px solid {theme['tooltip_border']} !important; border-radius: 10px !important;
+            padding: 14px 18px !important; font-family: '{node_font_face}', sans-serif !important;
+            font-size: 13px !important; line-height: 1.5 !important;
+            box-shadow: 0 8px 32px {theme['shadow_color']} !important; max-width: 320px !important;
+            white-space: normal !important; }}
+        div.vis-network div.vis-manipulation {{ background: {theme['tooltip_bg']} !important;
+            border-top: 1px solid {theme['tooltip_border']} !important; color: {theme['font']} !important; }}
+    </style>
+    """
+    html_content = html_content.replace('</head>', custom_css + '</head>')
+
+    # --- NODE HIGHLIGHT & EDGE DESCRIPTION INJECTION (FIXED) ---
+    if enable_node_highlight:
+        highlight_js = """
+    <script>
+    (function() {
+        var checkExist = setInterval(function() {
+            if (typeof network !== 'undefined' && network !== null && network.body && network.body.data) {
+                clearInterval(checkExist);
+
+                var nodesDS = network.body.data.nodes;
+                var edgesDS = network.body.data.edges;
+                var savedNodeColors = {};
+                var activeNodeId = null;
+                var labelMode = 'short'; // 'short' | 'full'
+                var labelMap = {}; // Will be populated from Python-rendered data
+
+                // ── Try to read labelMap from a hidden data element ──
+                (function initLabelMap() {
+                    var hidden = document.getElementById('agnp-label-map-data');
+                    if (hidden && hidden.textContent) {
+                        try { labelMap = JSON.parse(hidden.textContent); } catch(e) {}
+                    }
+                })();
+
+                function resetAll() {
+                    var nodeRestores = [];
+                    for (var nid in savedNodeColors) {
+                        nodeRestores.push({id: nid, color: savedNodeColors[nid]});
+                    }
+                    if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
+                    savedNodeColors = {};
+                    activeNodeId = null;
+                    var panel = document.getElementById('edge-info-panel');
+                    if (panel) panel.style.display = 'none';
+                }
+
+                function resolveFullName(shortOrId) {
+                    // If it's a short label like "N1", look it up
+                    if (labelMap && labelMap[shortOrId]) {
+                        return labelMap[shortOrId];
+                    }
+                    // Otherwise try to get from node data
+                    var n = nodesDS.get(shortOrId);
+                    if (n && n.title) {
+                        var tmp = document.createElement('div');
+                        tmp.innerHTML = n.title;
+                        var txt = (tmp.textContent || tmp.innerText || '').trim();
+                        var firstLine = txt.split('\n')[0];
+                        if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
+                    }
+                    return shortOrId;
+                }
+
+                function formatEdgeRow(e, idx, mode) {
+                    var typeColor = e.inferred ? '#8b5cf6' : '#0ea5e9';
+                    var badge = e.inferred 
+                        ? ' <span style="display:inline-block;background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:white;font-size:8px;padding:2px 6px;border-radius:10px;font-weight:700;letter-spacing:0.3px;text-shadow:0 1px 2px rgba(0,0,0,0.2);">INFERRED</span>' 
+                        : '';
+
+                    var typeDisplay = e.type + (e.inferred ? ' inferred' : '');
+                    var typeBadge = '<span style="display:inline-block;background:' + (e.inferred ? 'rgba(139,92,246,0.12)' : 'rgba(14,165,233,0.12)') + ';color:' + typeColor + ';font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600;border:1px solid ' + (e.inferred ? 'rgba(139,92,246,0.25)' : 'rgba(14,165,233,0.25)') + ';">' + typeDisplay + '</span>';
+
+                    if (mode === 'short') {
+                        return '<div style="padding:8px 10px;margin:4px 0;background:linear-gradient(90deg,rgba(248,250,252,0.9),rgba(241,245,249,0.7));border-left:4px solid ' + typeColor + ';border-radius:8px;font-size:12px;transition:all 0.2s ease;box-shadow:0 1px 3px rgba(0,0,0,0.04);" onmouseover="this.style.transform=\'translateX(3px)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.08)\'" onmouseout="this.style.transform=\'translateX(0)\';this.style.boxShadow=\'0 1px 3px rgba(0,0,0,0.04)\'">'
+                             + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
+                             + '<span style="background:linear-gradient(135deg,#D32F2F,#ef4444);color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">w</span>'
+                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + e.from + '</span>'
+                             + '<span style="color:#94a3b8;font-size:13px;">↔</span>'
+                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + e.to + '</span>'
+                             + '</div>'
+                             + '<div style="display:flex;align-items:center;gap:8px;padding-left:26px;">'
+                             + '<span style="color:#64748b;font-size:10px;font-weight:500;">=</span>'
+                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + e.weight + '</span>'
+                             + typeBadge
+                             + badge
+                             + '</div>'
+                             + '</div>';
+                    } else {
+                        // Full names mode
+                        var fromFull = resolveFullName(e.from);
+                        var toFull = resolveFullName(e.to);
+                        return '<div style="padding:10px 12px;margin:4px 0;background:linear-gradient(90deg,rgba(248,250,252,0.95),rgba(241,245,249,0.8));border-left:4px solid ' + typeColor + ';border-radius:8px;font-size:12px;transition:all 0.2s ease;box-shadow:0 1px 3px rgba(0,0,0,0.04);" onmouseover="this.style.transform=\'translateX(3px)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.08)\'" onmouseout="this.style.transform=\'translateX(0)\';this.style.boxShadow=\'0 1px 3px rgba(0,0,0,0.04)\'">'
+                             + '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:5px;">'
+                             + '<span style="background:linear-gradient(135deg,#D32F2F,#ef4444);color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;flex-shrink:0;margin-top:1px;">w</span>'
+                             + '<div style="display:flex;flex-direction:column;gap:2px;flex:1;">'
+                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + fromFull + '</span>'
+                             + '<span style="color:#94a3b8;font-size:11px;text-align:center;padding:2px 0;">↔</span>'
+                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + toFull + '</span>'
+                             + '</div>'
+                             + '</div>'
+                             + '<div style="display:flex;align-items:center;gap:8px;padding-left:26px;flex-wrap:wrap;">'
+                             + '<span style="color:#64748b;font-size:10px;font-weight:500;">weight:</span>'
+                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + e.weight + '</span>'
+                             + typeBadge
+                             + badge
+                             + '</div>'
+                             + '</div>';
+                    }
+                }
+
+                function showEdgeInfoPanel(nodeId, connectedEdges) {
+                    var panel = document.getElementById('edge-info-panel');
+                    if (!panel) {
+                        panel = document.createElement('div');
+                        panel.id = 'edge-info-panel';
+                        document.body.appendChild(panel);
+                    }
+
+                    // Glassmorphism + modern styling
+                    panel.style.cssText = [
+                        'position:fixed','top:90px','right:20px','width:420px',
+                        'max-height:calc(100vh - 110px)','overflow-y:auto','z-index:9999',
+                        'background:rgba(255,255,255,0.85)','border:1px solid rgba(255,215,0,0.6)',
+                        'border-radius:20px','padding:0',
+                        'font-family:Inter,Segoe UI,Roboto,sans-serif',
+                        'box-shadow:0 20px 60px rgba(0,0,0,0.15), 0 0 0 1px rgba(255,255,255,0.5) inset',
+                        'backdrop-filter:blur(20px) saturate(180%)',
+                        '-webkit-backdrop-filter:blur(20px) saturate(180%)',
+                        'transition:all 0.3s cubic-bezier(0.4,0,0.2,1)'
+                    ].join(';');
+
+                    // ── Get node data including title ──────────────────────
+                    var nodeData = nodesDS.get(nodeId);
+                    var nodeName = nodeId;
+                    if (nodeData) {
+                        if (nodeData.title) {
+                            var tmp = document.createElement('div');
+                            tmp.innerHTML = nodeData.title;
+                            var txt = (tmp.textContent || tmp.innerText || '').trim();
+                            nodeName = txt.split('\n')[0] || nodeData.label || nodeId;
+                        } else {
+                            nodeName = nodeData.label || nodeId;
+                        }
+                    }
+                    nodeName = String(nodeName).replace(/<[^>]*>/g,'').trim();
+
+                    // Extract full tooltip content
+                    var nodeDefinition = "";
+                    var nodeType = "";
+                    var nodeFreq = "";
+                    var nodeDegree = "";
+                    if (nodeData && nodeData.title) {
+                        var tmpDiv = document.createElement("div");
+                        tmpDiv.innerHTML = nodeData.title;
+                        var tooltipText = tmpDiv.textContent || tmpDiv.innerText || "";
+                        var defMatch = tooltipText.match(/Definition:\s*(.+)/i);
+                        if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
+                        var typeMatch = tooltipText.match(/Type:\s*(\w+)/i);
+                        if (typeMatch && typeMatch[1]) { nodeType = typeMatch[1].trim(); }
+                        var freqMatch = tooltipText.match(/Frequency:\s*(\d+)/i);
+                        if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
+                        var degMatch = tooltipText.match(/Degree:\s*(\d+)/i);
+                        if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
+                    }
+
+                    // ── Build panel HTML ──────────────────────────────────
+                    var html = '';
+
+                    // Header with gradient
+                    html += '<div style="padding:18px 20px 14px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:20px 20px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);position:sticky;top:0;z-index:10;">';
+                    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+                    html += '<span style="font-size:22px;background:linear-gradient(135deg,#FFD700,#FFB74D);-webkit-background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 4px rgba(255,183,77,0.3));">🔬</span>';
+                    html += '<span style="font-size:16px;font-weight:800;color:#1e293b;word-break:break-word;flex:1;line-height:1.3;">' + nodeName + '</span>';
+                    html += '<span style="background:rgba(211,47,47,0.1);color:#D32F2F;font-size:11px;padding:3px 10px;border-radius:20px;font-weight:700;border:1px solid rgba(211,47,47,0.2);">' + connectedEdges.length + ' edges</span>';
+                    html += '</div>';
+
+                    // Metadata chips
+                    html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+                    if (nodeType) {
+                        html += '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(14,165,233,0.2);">' + nodeType + '</span>';
+                    }
+                    if (nodeDegree) {
+                        html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(168,85,247,0.2);">deg ' + nodeDegree + '</span>';
+                    }
+                    if (nodeFreq) {
+                        html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(34,197,94,0.2);">freq ' + nodeFreq + '</span>';
+                    }
+                    html += '</div>';
+                    html += '</div>';
+
+                    // Definition section
+                    if (nodeDefinition) {
+                        html += '<div style="padding:12px 20px;background:rgba(251,191,36,0.06);border-bottom:1px solid rgba(0,0,0,0.04);">';
+                        html += '<div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">📖 Definition</div>';
+                        html += '<div style="font-size:12px;color:#475569;font-style:italic;line-height:1.5;">' + nodeDefinition + '</div>';
+                        html += '</div>';
+                    }
+
+                    // Label mode toggle
+                    html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.8);border-bottom:1px solid rgba(0,0,0,0.06);display:flex;align-items:center;gap:10px;">';
+                    html += '<span style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Label Mode</span>';
+                    html += '<div id="label-toggle-group" style="display:flex;background:rgba(226,232,240,0.6);border-radius:10px;padding:3px;gap:2px;">';
+                    html += '<button id="btn-short" onclick="window._agnpSetLabelMode(\'short\')" style="padding:5px 14px;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s;background:linear-gradient(135deg,#D32F2F,#ef4444);color:white;box-shadow:0 2px 8px rgba(211,47,47,0.3);">Short (Nᵢ)</button>';
+                    html += '<button id="btn-full" onclick="window._agnpSetLabelMode(\'full\')" style="padding:5px 14px;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;transition:all 0.2s;background:transparent;color:#64748b;">Full Names</button>';
+                    html += '</div>';
+                    html += '</div>';
+
+                    // Format hint
+                    html += '<div style="padding:8px 20px;background:rgba(248,250,252,0.6);border-bottom:1px solid rgba(0,0,0,0.04);">';
+                    html += '<div id="format-hint" style="font-size:10px;color:#94a3b8;font-style:italic;">';
+                    html += 'Format: <b style="color:#D32F2F;">w</b> N<sub style="color:#64748b;">i</sub> ↔ N<sub style="color:#64748b;">j</sub> = value <span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">type</span>';
+                    html += '</div>';
+                    html += '</div>';
+
+                    // Edges container
+                    html += '<div id="edges-container" style="padding:12px 16px 16px;">';
+
+                    // ── Connected edges list ──────────────────────────────
+                    var edgeList = [];
+                    connectedEdges.forEach(function(eId) {
+                        var e = edgesDS.get(eId);
+                        if (!e) return;
+                        var fromNode = nodesDS.get(e.from);
+                        var toNode   = nodesDS.get(e.to);
+                        var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
+                        var toLabel   = toNode   ? (toNode.label   || e.to)   : e.to;
+                        fromLabel = String(fromLabel).replace(/<[^>]*>/g,'').trim();
+                        toLabel   = String(toLabel).replace(/<[^>]*>/g,'').trim();
+
+                        var w = (typeof e.value === 'number') ? e.value : (e.width || 1);
+                        var edgeType = 'unknown', isInferred = false;
+                        if (e.title) {
+                            var tmpDiv = document.createElement('div');
+                            tmpDiv.innerHTML = e.title;
+                            var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
+                            var desc = _txt.trim();
+                            var m = desc.match(/Type:\s*(\w+)/);
+                            if (m) edgeType = m[1];
+                            if (desc.indexOf('Inferred: true') !== -1) isInferred = true;
+                        }
+                        edgeList.push({
+                            from: fromLabel, to: toLabel,
+                            weight: (typeof w === 'number') ? w.toFixed(2) : String(w),
+                            type: edgeType, inferred: isInferred
+                        });
+                    });
+
+                    // Sort by weight descending
+                    edgeList.sort(function(a,b){ return parseFloat(b.weight)-parseFloat(a.weight); });
+
+                    edgeList.forEach(function(e, idx){
+                        html += formatEdgeRow(e, idx, labelMode);
+                    });
+
+                    html += '</div>';
+
+                    // Footer
+                    html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.6);border-radius:0 0 20px 20px;border-top:1px solid rgba(0,0,0,0.04);text-align:center;">';
+                    html += '<span style="font-size:10px;color:#94a3b8;">' + edgeList.length + ' connections sorted by weight</span>';
+                    html += '</div>';
+
+                    panel.innerHTML = html;
+                    panel.style.display = 'block';
+
+                    // Store edgeList for re-rendering on toggle
+                    panel._edgeList = edgeList;
+                    panel._nodeName = nodeName;
+                    panel._nodeType = nodeType;
+                    panel._nodeDegree = nodeDegree;
+                    panel._nodeFreq = nodeFreq;
+                    panel._nodeDefinition = nodeDefinition;
+
+                    // Expose toggle function
+                    window._agnpSetLabelMode = function(mode) {
+                        labelMode = mode;
+                        var p = document.getElementById('edge-info-panel');
+                        if (!p || !p._edgeList) return;
+
+                        // Update button styles
+                        var btnShort = document.getElementById('btn-short');
+                        var btnFull = document.getElementById('btn-full');
+                        var hint = document.getElementById('format-hint');
+
+                        if (mode === 'short') {
+                            if (btnShort) { btnShort.style.background = 'linear-gradient(135deg,#D32F2F,#ef4444)'; btnShort.style.color = 'white'; btnShort.style.boxShadow = '0 2px 8px rgba(211,47,47,0.3)'; }
+                            if (btnFull) { btnFull.style.background = 'transparent'; btnFull.style.color = '#64748b'; btnFull.style.boxShadow = 'none'; }
+                            if (hint) hint.innerHTML = 'Format: <b style="color:#D32F2F;">w</b> N<sub style="color:#64748b;">i</sub> ↔ N<sub style="color:#64748b;">j</sub> = value <span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">type</span>';
+                        } else {
+                            if (btnShort) { btnShort.style.background = 'transparent'; btnShort.style.color = '#64748b'; btnShort.style.boxShadow = 'none'; }
+                            if (btnFull) { btnFull.style.background = 'linear-gradient(135deg,#D32F2F,#ef4444)'; btnFull.style.color = 'white'; btnFull.style.boxShadow = '0 2px 8px rgba(211,47,47,0.3)'; }
+                            if (hint) hint.innerHTML = 'Format: <b style="color:#D32F2F;">w</b> full_name<sub style="color:#64748b;">i</sub> ↔ full_name<sub style="color:#64748b;">j</sub> weight: value <span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">type</span>';
+                        }
+
+                        // Re-render edges
+                        var container = document.getElementById('edges-container');
+                        if (container) {
+                            var newHtml = '';
+                            p._edgeList.forEach(function(e, idx){
+                                newHtml += formatEdgeRow(e, idx, mode);
+                            });
+                            container.innerHTML = newHtml;
+                        }
+                    };
+                }
+
+                // ── Node selection ──────────────────────────────────────────
+                network.on("selectNode", function(params) {
+                    var nodeId = params.nodes[0];
+                    if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
+                    activeNodeId = nodeId;
+
+                    var connectedEdges = network.getConnectedEdges(nodeId);
+                    var connectedNodes = network.getConnectedNodes(nodeId);
+
+                    // Highlight connected nodes with gold border + glow
+                    var nodeUpdates = [];
+                    connectedNodes.forEach(function(nId) {
+                        var n = nodesDS.get(nId);
+                        if (n && !savedNodeColors[nId]) {
+                            savedNodeColors[nId] = JSON.parse(JSON.stringify(n.color));
+                            var newColor = JSON.parse(JSON.stringify(n.color));
+                            if (typeof newColor === 'string') {
+                                newColor = {background: newColor, border: '#FFD700'};
+                            } else {
+                                newColor.border = '#FFD700';
+                                if (newColor.highlight) newColor.highlight.border = '#FFD700';
+                                if (newColor.hover)    newColor.hover.border    = '#FFD700';
+                            }
+                            nodeUpdates.push({id: nId, color: newColor, 
+                                shadow: {enabled: true, color: 'rgba(255,215,0,0.5)', size: 15, x: 0, y: 0}});
+                        }
+                    });
+                    if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
+
+                    // Show side panel with node info and edges
+                    showEdgeInfoPanel(nodeId, connectedEdges);
+                });
+
+                network.on("deselectNode", function(){ resetAll(); });
+                network.on("click", function(params){
+                    if (params.nodes.length === 0 && activeNodeId !== null) resetAll();
+                });
+            }
+        }, 250);
+    })();
+    </script>
+    """
+        html_content = html_content.replace('</body>', highlight_js + '</body>')
+    st.components.v1.html(html_content, height=790, scrolling=True)
+
+    # ==========================================
+    # NEW: Render Legend if abbreviated labels were used
+    # ==========================================
+    if use_abbreviated_labels and label_map:
+        st.markdown("---")
+        st.markdown("### 🗺️ Node Label Legend")
+        st.caption("Hover over nodes in the interactive graph to see their full names.")
+
+        # Sort legend by the numeric value of N1, N2, etc.
+        sorted_legend = sorted(label_map.items(), key=lambda x: int(x[0][1:]))
+
+        cols = st.columns(4)
+        for i, (short, full) in enumerate(sorted_legend):
+            with cols[i % 4]:
+                st.markdown(
+                    f"""<div style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
+                    border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;'>
+                    <b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:14px;'>{short}</b>:
+                    <span style='font-size:13px; color:{theme.get('font', '#1e293b')};'>{full}</span>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+
+    try:
+        html_bytes = html_content.encode('utf-8')
+        st.download_button("Download Interactive Graph (HTML)", data=html_bytes,
+                          file_name="agnp_concept_graph.html", mime="text/html")
+        del html_content, html_bytes
+        gc.collect()
+    except Exception as e:
+        st.error(f"Download preparation failed: {e}")
+
+def render_graph_plotly_2d(nx_graph, concept_abstract_map, cmap_name="viridis",
+                            custom_labels=None, top_n_nodes=0, node_label_size=10,
+                            theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+    pos = nx.spring_layout(nx_graph, k=1.5, iterations=50, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x, edge_y, edge_hover = [], [], []
+    for u, v in nx_graph.edges():
+        x0, y0 = pos[u]; x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+        w = nx_graph[u][v].get('weight', 1)
+        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
+        is_inferred = nx_graph[u][v].get('inferred', False)
+        edge_hover.extend([f"<b>{u} + {v}</b><br>Weight: {w:.2f}<br>Type: {edge_type}<br>Inferred: {is_inferred}"] * 2 + [None])
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, mode='lines',
+                            line=dict(width=1, color=theme['edge_unknown']),
+                            hoverinfo='text', hovertext=edge_hover, name='Connections')
+    node_x, node_y, node_text, node_size, node_color, node_labels = [], [], [], [], [], []
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y = pos[node]
+        node_x.append(x); node_y.append(y)
+        deg = nx_graph.degree(node)
+        freq = len(concept_abstract_map.get(node, []))
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(f"{node}<br>Type: {concept_type}<br>Degree: {deg}<br>Frequency: {freq}")
+        node_size.append(max(8, min(35, deg * 2.5 + 10)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(custom_labels.get(node, node) if custom_labels else node)
+    node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                            marker=dict(size=node_size, color=node_color,
+                                       line=dict(width=2, color=theme['node_border'])),
+                            text=node_labels, textposition="bottom center",
+                            textfont=dict(size=node_label_size, color=theme['font']),
+                            hovertext=node_text, hoverinfo='text', name='Concepts')
+    fig_data = [edge_trace, node_trace]
+
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]
+            x1, y1 = pos[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x, mid_y = (x0 + x1) / 2, (y0 + y1) / 2
+            fig_data.append(go.Scatter(
+                x=[mid_x], y=[mid_y],
+                mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=8, color=theme['font']),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+    fig = go.Figure(data=fig_data,
+                    layout=go.Layout(showlegend=False, hovermode='closest',
+                                     margin=dict(b=0, l=0, r=0, t=0),
+                                     plot_bgcolor=theme['plotly_bg'], paper_bgcolor=theme['plotly_paper'],
+                                     font=dict(color=theme['font']),
+                                     xaxis=dict(showgrid=True, gridcolor=theme['grid_color'],
+                                                zeroline=False, showticklabels=False, linecolor=theme['axis_color']),
+                                     yaxis=dict(showgrid=True, gridcolor=theme['grid_color'],
+                                                zeroline=False, showticklabels=False, linecolor=theme['axis_color'])))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name="viridis", top_n_nodes=0,
+                            theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(nx_graph.nodes()) < 3:
+        st.info("3D view requires >=3 nodes.")
+        return
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+    pos_3d = nx.spring_layout(nx_graph, dim=3, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x, edge_y, edge_z = [], [], []
+    for u, v in nx_graph.edges():
+        x0, y0, z0 = pos_3d[u]; x1, y1, z1 = pos_3d[v]
+        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None]); edge_z.extend([z0, z1, None])
+    edge_trace = go.Scatter3d(x=edge_x, y=edge_y, z=edge_z, mode='lines',
+                              line=dict(width=2, color=theme['edge_unknown']), hoverinfo='skip')
+    node_x, node_y, node_z, node_text, node_size, node_color, node_labels = [], [], [], [], [], [], []
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y, z = pos_3d[node]
+        node_x.append(x); node_y.append(y); node_z.append(z)
+        deg = nx_graph.degree(node); freq = len(concept_abstract_map.get(node, []))
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(f"{node}<br>Type: {concept_type}<br>Degree: {deg}<br>Frequency: {freq}")
+        node_size.append(max(6, min(25, deg * 2 + 8)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(node)
+    node_trace = go.Scatter3d(x=node_x, y=node_y, z=node_z, mode='markers+text',
+                                marker=dict(size=node_size, color=node_color, opacity=0.9),
+                                text=node_labels, textposition="top center",
+                                textfont=dict(size=8, color=theme['font']),
+                                hovertext=node_text, hoverinfo='text')
+    fig_data = [edge_trace, node_trace]
+
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0, z0 = pos_3d[u]
+            x1, y1, z1 = pos_3d[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x, mid_y, mid_z = (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2
+            fig_data.append(go.Scatter3d(
+                x=[mid_x], y=[mid_y], z=[mid_z],
+                mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=7, color=theme['font']),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+    fig = go.Figure(data=fig_data,
+                    layout=go.Layout(scene=dict(xaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color']),
+                                                 yaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color']),
+                                                 zaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color'])),
+                                     margin=dict(l=0, r=0, b=0, t=0), showlegend=False,
+                                     paper_bgcolor=theme['plotly_paper']))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_graph_fallback(nx_graph, concept_abstract_map, theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    st.markdown(f"### Graph Summary (Text View)")
+    st.markdown(f"- **Nodes**: {len(nx_graph.nodes())}")
+    st.markdown(f"- **Edges**: {len(nx_graph.edges())}")
+    if len(nx_graph.edges()) > 0:
+        edge_list = [(u, v, nx_graph[u][v].get('weight', 1), nx_graph[u][v].get('edge_type', 'unknown'), nx_graph[u][v].get('inferred', False)) 
+                     for u, v in nx_graph.edges()]
+        edge_list.sort(key=lambda x: x[2], reverse=True)
+        st.markdown("**Top 20 Strongest Connections:**")
+        for i, (u, v, w, etype, inferred) in enumerate(edge_list[:20], 1):
+            inferred_badge = "<span style='background:#8b5cf6;color:white;padding:1px 5px;border-radius:4px;font-size:11px;'>INFERRED</span>" if inferred else ""
+            weight_badge = f"<span style='background:{theme.get('edge_cooccurrence','#38bdf8') if etype=='cooccurrence' else theme.get('edge_semantic','#fb923c') if etype=='semantic' else theme.get('edge_unknown','#94a3b8')};color:white;padding:1px 5px;border-radius:4px;font-size:11px;'>W={w:.1f}</span>" if show_edge_weights else ""
+            st.markdown(f"{i}. `{u}` + `{v}` {weight_badge} {inferred_badge} (weight: {w:.2f}, type: {etype})", unsafe_allow_html=True)
+    if len(concept_abstract_map) > 0:
+        freq_data = [(c, len(concept_abstract_map.get(c, []))) for c in nx_graph.nodes()]
+        freq_data.sort(key=lambda x: x[1], reverse=True)
+        st.markdown("**Top Concepts by Frequency:**")
+        st.dataframe(pd.DataFrame(freq_data[:15], columns=["Concept", "Abstract Count"]), use_container_width=True)
+
+# ==========================================
+# SUNBURST & RADAR CHARTS
+# ==========================================
+def build_category_hierarchy(valid_concepts: List[str], concept_abstract_map: Dict,
+                             top_n_per_category: int = 40) -> Tuple[List, List, List]:
+    """
+    Builds a clean 2-level sunburst hierarchy (no duplicates):
+      Ring 0 (center): Root ("All Concepts")
+      Ring 1:          Categories (defect_engineering, sustainability_impact, ...)
+      Ring 2:          Concepts (twins, stacking_faults, ...) — NEVER repeating category names
+    """
+    category_map = abstract_concepts_to_categories(valid_concepts)
+
+    # ── Step 1: Collect all unique category names ──────────────────────
+    all_category_names = set(category_map.values())
+
+    # ── Step 2: Build category → children mapping ─────────────────────
+    hierarchy: Dict[str, Dict] = {}
+    for cat in all_category_names:
+        hierarchy[cat] = {"children": [], "count": 0}
+
+    for concept in valid_concepts:
+        category = category_map.get(concept, 'general')
+        freq = len(concept_abstract_map.get(concept, []))
+
+        # ★ KEY FIX: Skip if the concept IS a category name (prevents duplicates)
+        if concept in all_category_names:
+            hierarchy.setdefault(category, {"children": [], "count": 0})
+            hierarchy[category]["count"] += freq
+            continue
+
+        hierarchy.setdefault(category, {"children": [], "count": 0})
+        hierarchy[category]["children"].append((concept, freq))
+        hierarchy[category]["count"] += freq
+
+    # ── Step 3: Assemble flat lists for Plotly ─────────────────────────
+    labels, parents, values = [], [], []
+
+    # Root node
+    root_label = "All Concepts"
+    total = sum(h["count"] for h in hierarchy.values())
+    labels.append(root_label)
+    parents.append("")
+    values.append(total)
+
+    # Category ring + concept ring
+    for category, data in hierarchy.items():
+        children = data["children"]
+
+        # Sort by frequency descending, apply top-N limit
+        children.sort(key=lambda x: x[1], reverse=True)
+        if top_n_per_category > 0 and len(children) > top_n_per_category:
+            children = children[:top_n_per_category]
+
+        cat_child_sum = sum(freq for _, freq in children)
+
+        # Category node (Ring 1)
+        labels.append(category)
+        parents.append(root_label)
+        values.append(cat_child_sum if cat_child_sum > 0 else data["count"])
+
+        # Concept nodes (Ring 2)
+        for concept, freq in children:
+            # ★ SAFETY: Never add a concept that duplicates any category name
+            if concept in all_category_names:
+                continue
+            labels.append(concept)
+            parents.append(category)
+            values.append(max(freq, 1))
+
+    return labels, parents, values
+
+def render_sunburst_chart(labels, parents, values, cmap_name="viridis",
+                          label_size=20, width=900, height=700,
+                          theme=None, branchvalues="total",
+                          show_labels=True, show_values=False,
+                          hover_info="all", color_continuous_scale=None,
+                          font_family="Arial, sans-serif"):
+    """
+    ENHANCED Sunburst with hierarchical symbols, PER-NODE colormap coloring,
+    and full customization. Root node is visible with theme-matched color.
+
+    Hierarchy:
+    - Level 0: Root (visible center)  → ✦
+    - Level 1: Category (Parent) → ★
+    - Level 2: Concept (Child)   → ★□
+    - Level 3+: Sub-concept      → ★□◆
+    """
+    if not labels or len(labels) < 2:
+        st.info("Not enough categories for sunburst chart.")
+        return
+
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+
+    # ── 1. Build parent map and calculate depth ──
+    parent_map = {labels[i]: parents[i] for i in range(len(labels))}
+
+    def get_depth(label, visited=None):
+        if visited is None:
+            visited = set()
+        if label in visited:
+            return 0
+        visited.add(label)
+        p = parent_map.get(label, "")
+        if p == "":
+            return 0
+        return 1 + get_depth(p, visited)
+
+    depths = [get_depth(l) for l in labels]
+
+    # ── 2. Symbol Library ──
+    SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈',
+                      '◇', '○', '□', '△', '◊']
+
+    # ── 3. Assign symbols (recursive chain) ──
+    node_symbols = {}
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        p = parents[i]
+        if d == 0:
+            node_symbols[lab] = SYMBOL_LIBRARY[0]
+        else:
+            ancestors = []
+            current = lab
+            visited = set()
+            while current != "" and current not in visited:
+                visited.add(current)
+                parent = parent_map.get(current, "")
+                if parent != "" and parent in node_symbols:
+                    ancestors.insert(0, node_symbols[parent])
+                current = parent
+            siblings = [labels[j] for j in range(len(labels))
+                        if parents[j] == p and depths[j] == d]
+            sym_idx = siblings.index(lab) if lab in siblings else 0
+            own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
+            node_symbols[lab] = own_symbol
+
+    # ── 4. Build display labels (symbol chains) ──
+    display_labels = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        if show_labels:
+            if d == 0:
+                display_labels.append(node_symbols[lab])  # Show root symbol
+            else:
+                chain = []
+                current = lab
+                visited = set()
+                while current != "" and current not in visited:
+                    visited.add(current)
+                    if current in node_symbols:
+                        chain.insert(0, node_symbols[current])
+                    current = parent_map.get(current, "")
+                combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
+                display_labels.append(combo)
+        else:
+            display_labels.append(lab)
+
+    # ── 5. Unique IDs for Plotly hierarchy ──
+    unique_ids = []
+    seen = {}
+    for i, lab in enumerate(labels):
+        base = f"{lab}_d{depths[i]}"
+        if base in seen:
+            unique_ids.append(f"{base}_{seen[base]}")
+            seen[base] += 1
+        else:
+            unique_ids.append(base)
+            seen[base] = 1
+
+    parent_ids = []
+    for p in parents:
+        if p == "":
+            parent_ids.append("")
+        else:
+            found = False
+            for i, lab in enumerate(labels):
+                if lab == p:
+                    parent_ids.append(unique_ids[i])
+                    found = True
+                    break
+            if not found:
+                parent_ids.append("")
+
+    # ═══════════════════════════════════════════════════════
+    #  COLORFUL PER-NODE COLORING
+    # ═══════════════════════════════════════════════════════
+    n_nodes = len(labels)
+    cmap_to_use = color_continuous_scale or cmap_name or "Spectral"
+
+    plot_colors = []
+    try:
+        cmap_obj = plt.cm.get_cmap(cmap_to_use)
+        t_vals = np.linspace(0.05, 0.95, n_nodes)
+        rgbas = [cmap_obj(t) for t in t_vals]
+        plot_colors = [matplotlib.colors.to_hex(rgba) for rgba in rgbas]
+    except Exception:
+        try:
+            import plotly.express as px
+            if hasattr(px.colors.sequential, cmap_to_use):
+                px_scale = getattr(px.colors.sequential, cmap_to_use)
+                plot_colors = [px_scale[int(i * len(px_scale) / n_nodes) % len(px_scale)]
+                               for i in range(n_nodes)]
+            else:
+                raise ValueError("Not a plotly sequential scale")
+        except Exception:
+            try:
+                from plotly.express import colors as px_colors
+                qual_palettes = [
+                    px_colors.qualitative.Bold,
+                    px_colors.qualitative.Vivid,
+                    px_colors.qualitative.Safe,
+                    px_colors.qualitative.Pastel,
+                    px_colors.qualitative.Dark24,
+                    px_colors.qualitative.Light24,
+                ]
+                long_palette = []
+                for pal in qual_palettes:
+                    long_palette.extend(pal)
+                plot_colors = [long_palette[i % len(long_palette)] for i in range(n_nodes)]
+            except Exception:
+                cmap_obj = plt.cm.get_cmap("tab20")
+                plot_colors = [matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
+                               for i in range(n_nodes)]
+
+    # ── 6. Legend data ──
+    legend_entries = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        sym = display_labels[i]
+        color = plot_colors[i]
+        legend_entries.append({
+            'symbol': sym,
+            'label': lab,
+            'depth': d,
+            'color': color,
+            'value': values[i]
+        })
+    legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
+
+    # ── 7. Build Plotly Sunburst ──
+    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
+
+    if show_labels and show_values:
+        textinfo = 'label+value'
+    elif show_labels:
+        textinfo = 'label'
+    elif show_values:
+        textinfo = 'value'
+    else:
+        textinfo = 'none'
+
+    # FIX: Subtle borders instead of thick white lines; root gets theme color
+    sunburst_colors = plot_colors.copy()
+    for i in range(len(labels)):
+        if depths[i] == 0:
+            # Root: use a visible theme-matched color, not transparent
+            sunburst_colors[i] = theme.get("plotly_paper", "#f8f9fa")
+
+    fig = go.Figure(go.Sunburst(
+        ids=unique_ids,
+        labels=display_labels,
+        parents=parent_ids,
+        values=values,
+        customdata=labels,
+        branchvalues=bv,
+        marker=dict(
+            colors=sunburst_colors,
+            line=dict(width=0.5, color="rgba(255,255,255,0.25)")  # Subtle gaps
+        ),
+        textinfo=textinfo,
+        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<br>Symbol: %{label}<extra></extra>'
+                      if hover_info == "all" else '<b>%{customdata}</b><extra></extra>',
+        insidetextorientation="radial",
+        textfont=dict(size=int(label_size), family=font_family, color="white")
+    ))
+
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=80, b=0),
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font=dict(color=theme.get("font", "#000000"), family=font_family),
+        width=width,
+        height=height,
+        title=dict(
+            text="<b>Hierarchical Concept Map</b><br><sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>",
+            font=dict(size=16, family=font_family)
+        ),
+        modebar=dict(
+            orientation='h',
+            bgcolor='rgba(255,255,255,0.7)',
+            color='#333333',
+            activecolor='#D32F2F'
+        )
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("💡 **Export:** Click the 📷 Camera icon (top-right of chart) to download high-res PNG/SVG/PDF.")
+
+    # ── 8. Render grouped HTML Legend ──
+    if st.session_state.get('sunburst_show_legend', True):
+        st.markdown("### 📊 Symbol-to-Label Legend")
+        depth_names = {0: "Root", 1: "Category (Parent)", 2: "Concept (Child)",
+                       3: "Sub-Concept", 4: "Detail"}
+        for d in sorted(set([e['depth'] for e in legend_entries])):
+            depth_label = depth_names.get(d, f"Level {d}")
+            st.markdown(f"**{depth_label}**")
+            entries_at_depth = [e for e in legend_entries if e['depth'] == d]
+            n_cols = min(4, max(1, len(entries_at_depth)))
+            cols = st.columns(n_cols)
+            for i, entry in enumerate(entries_at_depth):
+                with cols[i % n_cols]:
+                    st.markdown(
+                        f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22;
+                        border-left:4px solid {entry['color']}; margin-bottom:6px;'>
+                        <span style='font-size:18px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
+                        <span style='font-size:12px; color:#333; font-weight:500;'>{entry['label']}</span>
+                        <span style='font-size:10px; color:#666; float:right;'>({entry['value']})</span>
+                        </div>""",
+                        unsafe_allow_html=True
+                    )
+
+def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
+    """Render a radar chart for top concepts based on distillation metrics."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if distill_df.empty or top_k == 0:
+        st.info("No data available for radar chart.")
+        return
+
+    df = distill_df.head(top_k).copy()
+    if df.empty:
+        return
+
+    metrics = ['frequency', 'tfidf_weight', 'semantic_density', 'coherence_score']
+    available_metrics = [m for m in metrics if m in df.columns]
+
+    if not available_metrics:
+        st.info("No metric columns available for radar chart.")
+        return
+
+    # Normalize metrics to 0-1 range for radar comparison
+    for m in available_metrics:
+        max_val = df[m].max()
+        if max_val > 0:
+            df[f'{m}_norm'] = df[m] / max_val
+        else:
+            df[f'{m}_norm'] = 0
+
+    fig = go.Figure()
+
+    # Limit to top 10 for readability on radar chart
+    plot_df = df.head(min(top_k, 10))
+
+    for i, row in plot_df.iterrows():
+        values = [row[f'{m}_norm'] for m in available_metrics]
+        values.append(values[0]) # close the polygon
+        fig.add_trace(go.Scatterpolar(
+            r=values,
+            theta=available_metrics + [available_metrics[0]],
+            fill='toself',
+            name=row['concept'][:25], # truncate long names
+            opacity=0.6
+        ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 1.1]),
+        ),
+        showlegend=True,
+        title=f"Concept Radar Chart (Top {min(top_k, 10)})",
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_tsne_projection(valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]], 
+                           embed_model, theme: Dict = None, n_components: int = 2, perplexity: int = 30):
+    """Render t-SNE projection of concept embeddings."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+
+    if len(valid_concepts) < 10:
+        st.info("Need at least 10 concepts for t-SNE projection.")
+        return
+
+    try:
+        from sklearn.manifold import TSNE
+        import plotly.express as px
+
+        # Encode concepts
+        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+
+        # Adjust perplexity if too large for the number of samples
+        actual_perplexity = min(perplexity, len(valid_concepts) - 1)
+        tsne = TSNE(n_components=n_components, random_state=42, perplexity=actual_perplexity)
+        coords = tsne.fit_transform(embeddings)
+
+        # Get categories and frequencies for coloring and sizing
+        category_map = abstract_concepts_to_categories(valid_concepts)
+        categories = [category_map.get(c, 'general') for c in valid_concepts]
+        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+
+        if n_components == 2:
+            fig = px.scatter(
+                x=coords[:, 0], y=coords[:, 1], 
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'},
+                color_discrete_sequence=px.colors.qualitative.Set2
+            )
+        else:
+            fig = px.scatter_3d(
+                x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="3D t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'}
+            )
+
+        fig.update_layout(
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font_color=theme.get("font", "#000000"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"t-SNE projection failed: {e}")
+
+def render_community_detection(nx_graph, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(nx_graph.nodes()) < 3:
+        st.info("Need at least 3 nodes for community detection.")
+        return
+    try:
+        from networkx.algorithms import community
+        communities = list(community.greedy_modularity_communities(nx_graph))
+        node_to_comm = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                node_to_comm[node] = i
+        pos = nx.spring_layout(nx_graph, seed=42)
+        cmap_colors = get_colormap_colors("tab20", max(len(communities), 1))
+        edge_x, edge_y = [], []
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]; x1, y1 = pos[v]
+            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+        edge_trace = go.Scatter(x=edge_x, y=edge_y, mode='lines',
+                                line=dict(width=0.8, color=theme['edge_unknown']),
+                                hoverinfo='none')
+        node_traces = []
+        for i, comm in enumerate(communities):
+            comm_nodes = list(comm)
+            node_x, node_y, node_text, node_size = [], [], [], []
+            for node in comm_nodes:
+                x, y = pos[node]
+                node_x.append(x); node_y.append(y)
+                deg = nx_graph.degree(node)
+                freq = len(concept_abstract_map.get(node, []))
+                node_text.append(f"{node}<br>Community {i}<br>Degree: {deg}<br>Freq: {freq}")
+                node_size.append(max(10, min(30, deg * 2 + 8)))
+            node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                                    marker=dict(size=node_size, color=cmap_colors[i % len(cmap_colors)],
+                                               line=dict(width=1.5, color='white')),
+                                    text=comm_nodes, textposition="bottom center",
+                                    textfont=dict(size=8, color=theme['font']),
+                                    hovertext=node_text, hoverinfo='text',
+                                    name=f"Community {i} ({len(comm_nodes)})")
+            node_traces.append(node_trace)
+        fig = go.Figure(data=[edge_trace] + node_traces,
+                        layout=go.Layout(showlegend=True, hovermode='closest',
+                                         title=f"Community Detection ({len(communities)} communities)",
+                                         margin=dict(b=0, l=0, r=0, t=40),
+                                         plot_bgcolor=theme['plotly_bg'], paper_bgcolor=theme['plotly_paper'],
+                                         font=dict(color=theme['font'])))
+        st.plotly_chart(fig, use_container_width=True)
+        comm_data = []
+        for i, comm in enumerate(communities):
+            comm_data.append({
+                "Community": i,
+                "Size": len(comm),
+                "Top Concepts": ", ".join(sorted(comm, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:5])
+            })
+        st.dataframe(pd.DataFrame(comm_data), use_container_width=True)
+    except Exception as e:
+        st.warning(f"Community detection failed: {e}")
+
+def render_concept_growth(df_filtered, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No 'Year' data available for growth analysis.")
+        return
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years) == 0:
+        st.info("No valid year data found.")
+        return
+    mid_year = int(years.median())
+    early_df = df_filtered[df_filtered["Year"] <= mid_year]
+    recent_df = df_filtered[df_filtered["Year"] > mid_year]
+    if len(early_df) == 0 or len(recent_df) == 0:
+        st.info("Need data from both early and recent periods.")
+        return
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:15]
+    growth_data = []
+    for concept in top_concepts:
+        early_count = 0
+        recent_count = 0
+        for idx, row in early_df.iterrows():
+            text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
+            early_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
+        for idx, row in recent_df.iterrows():
+            text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
+            recent_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
+        growth_rate = ((recent_count - early_count) / max(early_count, 1)) * 100 if early_count > 0 else 0
+        growth_data.append({
+            "Concept": concept,
+            "Early Count": early_count,
+            "Recent Count": recent_count,
+            "Growth Rate (%)": growth_rate
+        })
+    growth_df = pd.DataFrame(growth_data).sort_values("Growth Rate (%)", ascending=False)
+    fig = px.bar(growth_df, x="Concept", y="Growth Rate (%)",
+                 color="Growth Rate (%)", color_continuous_scale="RdYlGn",
+                 title=f"Concept Growth Rate (Early <={mid_year} vs Recent >{mid_year})",
+                 labels={"Growth Rate (%)": "Growth Rate (%)"},
+                 template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"),
+                      xaxis_tickangle=-45)
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(growth_df, use_container_width=True)
+
+def render_bubble_chart(nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 3:
+        st.info("Need at least 3 concepts for bubble chart.")
+        return
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    bubble_data = []
+    for concept in valid_concepts:
+        degree = nx_graph.degree(concept) if concept in nx_graph else 0
+        freq = len(concept_abstract_map.get(concept, []))
+        efficiency = distill_df[distill_df['concept'] == concept]['distillation_efficiency'].values
+        efficiency = float(efficiency[0]) if len(efficiency) > 0 else 0.0
+        category = category_map.get(concept, 'general')
+        bubble_data.append({
+            "Concept": concept, "Degree": degree, "Frequency": freq,
+            "Distillation Efficiency": efficiency, "Category": category
+        })
+    bubble_df = pd.DataFrame(bubble_data)
+    fig = px.scatter(bubble_df, x="Degree", y="Frequency", size="Distillation Efficiency",
+                     color="Category", hover_data=["Concept"],
+                     title="Concept Importance Bubble Chart",
+                     size_max=50,
+                     template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# INTERACTIVE GRAPH EDITING (WITH UNDO/REDO)
+# ==========================================
+def apply_graph_edits(nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map,
+                       nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+                       new_edge=None, new_edge_weight=1.0, min_degree=0, min_freq=0):
+    edited = False
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_remove]
+        for node in nodes_to_remove:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        merged_edges = {}
+        merged_freq = 0
+        merged_abstracts = set()
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge:
+                        w = nx_graph[node][neighbor].get('weight', 1)
+                        cooc = nx_graph[node][neighbor].get('cooccurrence', 0)
+                        sem = nx_graph[node][neighbor].get('semantic', 0)
+                        etype = nx_graph[node][neighbor].get('edge_type', 'unknown')
+                        if neighbor in merged_edges:
+                            merged_edges[neighbor]['weight'] += w
+                            merged_edges[neighbor]['cooccurrence'] += cooc
+                            merged_edges[neighbor]['semantic'] += sem
+                        else:
+                            merged_edges[neighbor] = {'weight': w, 'cooccurrence': cooc, 'semantic': sem, 'edge_type': etype}
+                merged_freq += nx_graph.nodes[node].get('frequency', 0)
+                if node in concept_abstract_map:
+                    merged_abstracts.update(concept_abstract_map[node])
+                nx_graph.remove_node(node)
+        nx_graph.add_node(merge_name, frequency=merged_freq)
+        for neighbor, edge_data in merged_edges.items():
+            nx_graph.add_edge(merge_name, neighbor, **edge_data)
+        concept_abstract_map[merge_name] = list(merged_abstracts)
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_merge]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        for node in nodes_to_merge:
+            if node in concept_abstract_map and node != merge_name:
+                del concept_abstract_map[node]
+        edited = True
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if u in nx_graph and v in nx_graph and not nx_graph.has_edge(u, v):
+            nx_graph.add_edge(u, v, weight=new_edge_weight, cooccurrence=0, semantic=0, edge_type='manual')
+            edited = True
+    if min_degree > 0:
+        low_degree = [n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_degree]
+        for node in low_degree:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    if min_freq > 0:
+        low_freq = [n for n in nx_graph.nodes() if nx_graph.nodes[n].get('frequency', 0) < min_freq]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_freq]
+        for node in low_freq:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    valid_concepts = sorted(set(valid_concepts))
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+    return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
 
 # ==========================================
 # SIDEBAR CONFIGURATION (ENHANCED WITH REASONING)
@@ -3316,52 +4766,71 @@ def render_sidebar():
         st.session_state['bootstrap_samples'] = st.slider("Bootstrap samples", 100, 2000, 500, step=100)
         st.session_state['alpha_level'] = st.selectbox("Significance alpha", [0.01, 0.05, 0.10], index=1)
 
+        # ==========================================
+        # VISUALIZATION CUSTOMIZATION (NEW)
+        # ==========================================
         st.markdown("---")
         st.subheader("Visualization Customization")
-        st.session_state['node_label_size'] = st.slider(
-            "Node label font size", 8, 24, 12, step=1,
-            help="Font size for node labels in the graph"
-        )
-        st.session_state['node_label_position'] = st.selectbox(
-            "Node label position",
-            ["center", "top", "bottom", "left", "right"],
-            index=0,
-            help="Where to place node labels relative to nodes"
-        )
-        st.session_state['node_font_face'] = st.selectbox(
-            "Node font family",
-            ["Inter, Segoe UI, Roboto, sans-serif",
-             "Arial, Helvetica, sans-serif",
-             "Georgia, serif",
-             "Courier New, monospace",
-             "Times New Roman, serif"],
-            index=0
-        )
-        st.session_state['use_abbreviated_labels'] = st.checkbox(
-            "Use short labels (N1, N2...) for long names",
-            value=False,
-            help="Replaces long node labels with N1, N2... and generates a legend below the graph."
-        )
-        if st.session_state['use_abbreviated_labels']:
-            st.session_state['max_label_length'] = st.slider(
-                "Max label length before abbreviation",
-                min_value=2, max_value=50, value=15, step=1,
-                help="Labels longer than this threshold will be replaced by N1, N2, etc."
-            )
-        else:
-            st.session_state['max_label_length'] = 15
 
+        # --- NEW: Interactive Highlight Toggle ---
+        st.session_state['enable_node_highlight'] = st.checkbox(
+            "🔍 Enable Node Selection Highlight & Descriptions",
+            value=False,
+            help="When enabled, clicking a node highlights connected nodes with gold borders and overlays edge weights/relationship descriptions."
+        )
+
+        with st.expander("Node & Label Settings"):
+            st.session_state['node_label_size'] = st.slider(
+                "Node label font size", 8, 24, 12, step=1,
+                help="Font size for node labels in the graph"
+            )
+            st.session_state['node_label_position'] = st.selectbox(
+                "Node label position",
+                ["center", "top", "bottom", "left", "right"],
+                index=0,
+                help="Where to place node labels relative to nodes"
+            )
+            st.session_state['node_font_face'] = st.selectbox(
+                "Node font family",
+                ["Inter, Segoe UI, Roboto, sans-serif",
+                 "Arial, Helvetica, sans-serif",
+                 "Georgia, serif",
+                 "Courier New, monospace",
+                 "Times New Roman, serif"],
+                index=0
+            )
+            # ==========================================
+            # NEW: Abbreviated Labels Controls
+            # ==========================================
+            st.session_state['use_abbreviated_labels'] = st.checkbox(
+                "Use short labels (N1, N2...) for long names",
+                value=False,
+                help="Replaces long node labels with N1, N2... and generates a legend below the graph."
+            )
+            if st.session_state['use_abbreviated_labels']:
+                st.session_state['max_label_length'] = st.slider(
+                    "Max label length before abbreviation",
+                    min_value=2, max_value=50, value=15, step=1,
+                    help="Labels longer than this threshold will be replaced by N1, N2, etc."
+                )
+            else:
+                st.session_state['max_label_length'] = 15
+        # ==========================================
+        # NEW: Concept Definition Tooltip Toggle
+        # ==========================================
         st.session_state['show_definitions'] = st.checkbox(
             "📖 Show concept definitions in tooltips",
             value=True,
             help="When enabled, hovering over a node displays its ontology definition in the tooltip."
         )
 
+
         with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
                 "Edge label font size", 6, 18, 10, step=1,
                 help="Font size for edge weight labels"
             )
+
             st.session_state['edge_label_color'] = st.color_picker(
                 "Edge label color", value="#000000",
                 help="Color for edge weight labels (default matches theme)"
@@ -3372,11 +4841,12 @@ def render_sidebar():
                 index=0,
                 help="Where to place edge labels along the edge"
             )
+
+            # Ensure edge label color has valid default
             edge_color_value = st.session_state.get('edge_label_color')
             if not edge_color_value or edge_color_value == '':
                 edge_color_value = '#000000'
             st.session_state['edge_label_color'] = edge_color_value
-
         st.markdown("---")
         st.subheader("Graph Editing")
         with st.expander("Remove Nodes"):
@@ -3427,6 +4897,7 @@ def render_sidebar():
             if st.button("Apply Graph Edits", key="apply_edits_btn"):
                 st.session_state['apply_edits'] = True
 
+        # Undo/Redo
         if st.session_state.get('analysis_data') and st.session_state.get('edit_history'):
             col_undo, col_redo = st.columns(2)
             with col_undo:
@@ -3452,8 +4923,11 @@ def render_sidebar():
                         st.success("Redo applied!")
                         st.rerun()
 
+        # Sunburst Options
         st.markdown("---")
         st.subheader("🎨 Sunburst Chart Customization")
+
+        # Colormap selection (17+ options)
         st.session_state['sunburst_cmap'] = st.selectbox(
             "Colormap:",
             options=["viridis", "plasma", "inferno", "magma", "cividis", 
@@ -3463,7 +4937,10 @@ def render_sidebar():
             index=0,
             help="Choose color scheme for sunburst categories",
             key="sunburst_cmap_select"
+
+
         )
+
         st.session_state['sunburst_font_family'] = st.selectbox(
             "Sunburst font family",
             ["Arial, sans-serif", "Inter, Segoe UI, Roboto, sans-serif",
@@ -3472,6 +4949,9 @@ def render_sidebar():
             help="Font family for sunburst chart labels",
             key="sunburst_font_family_select"
         )
+
+
+        # Label/value visibility toggles
         col_labels, col_values = st.columns(2)
         with col_labels:
             st.session_state['sunburst_show_labels'] = st.checkbox(
@@ -3485,6 +4965,8 @@ def render_sidebar():
                 help="Display numerical values inside chart segments",
                 key="sunburst_show_values_chk"
             )
+
+        # Hover info density
         st.session_state['sunburst_hover_info'] = st.selectbox(
             "Hover information:",
             options=["all", "minimal", "none"],
@@ -3492,11 +4974,15 @@ def render_sidebar():
             help="Amount of information shown on hover tooltip",
             key="sunburst_hover_select"
         )
+
+        # Branch values mode
         st.session_state['sunburst_branchvalues'] = st.selectbox(
             "Branch values mode:", ["total", "remainder"], index=0,
             help="How to calculate branch sizes: total=sum of children, remainder=parent minus children",
             key="sunburst_branch_mode"
         )
+
+        # Dimensions
         col_w, col_h = st.columns(2)
         with col_w:
             st.session_state['sunburst_width'] = st.slider(
@@ -3508,16 +4994,22 @@ def render_sidebar():
                 "Chart height (px)", 500, 1200, 700, step=50,
                 key="sunburst_height_slider"
             )
+
+        # Label font size
         st.session_state['sunburst_label_size'] = st.slider(
             "Symbol font size", 8, 30, 20, step=1,
             help="Size of symbols inside sunburst slices",
             key="sunburst_label_size_slider"
         )
+
+        # Legend toggle
         st.session_state['sunburst_show_legend'] = st.checkbox(
             "Show symbol legend", value=True,
             help="Display symbol-to-label mapping table below chart",
             key="sunburst_show_legend_chk"
         )
+
+        # Category filter
         if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
             all_cats = list(set(abstract_concepts_to_categories(st.session_state['analysis_data']['valid_concepts']).values()))
             st.session_state['sunburst_categories'] = st.multiselect(
@@ -3574,6 +5066,8 @@ def render_reasoning_dashboard(nx_graph, valid_concepts, ontology, extractor):
                               columns=['Relationship Type', 'Count'])
         rel_df = rel_df.sort_values('Count', ascending=False)
         st.dataframe(rel_df, use_container_width=True)
+
+        # Visualize relationship types
         fig = px.bar(rel_df, x='Relationship Type', y='Count', 
                      title="Edge Type Distribution",
                      color='Relationship Type')
@@ -3749,7 +5243,7 @@ def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, 
     st.plotly_chart(fig, use_container_width=True)
 
 # ==========================================
-# MAIN APPLICATION (UPDATED)
+# MAIN APPLICATION (UPDATED WITH PERMANENT GRAPH)
 # ==========================================
 
 def main():
@@ -4017,7 +5511,6 @@ def main():
                 progress_bar.progress(1.00)
                 status.update(label="Analysis complete!", state="complete", expanded=False)
 
-                # Store analysis data
                 analysis_data = {
                     "valid_concepts": valid_concepts,
                     "concept_to_id": concept_to_id,
@@ -4106,7 +5599,6 @@ def main():
         cmap = st.session_state.get('cmap_name', 'viridis')
         top_n_graph = st.session_state.get('top_n_graph', 200)
 
-        # Determine available tabs
         has_reasoning = "ontology" in data
         tab_names = ["Visualization", "Distillation", "Research Directions", "Validation", "Export", "Extra Viz", "Advanced Analytics"]
         if has_reasoning:
@@ -4124,8 +5616,33 @@ def main():
                 nx_graph = nx.complete_graph(len(valid_concepts))
                 nx_graph = nx.relabel_nodes(nx_graph, {i: valid_concepts[i] for i in range(len(valid_concepts))})
 
-            # NEW: Use the permanent graph section
-            render_graph_section(ontology, G=nx_graph, concept_abstract_map=concept_abstract_map)
+            viz_choice = st.session_state.get('viz_backend', 'PyVis (Interactive)')
+            # If PyVis is chosen, use the permanent graph renderer
+            if viz_choice == "PyVis (Interactive)":
+                render_graph_section(ontology, G=nx_graph, concept_abstract_map=concept_abstract_map)
+            else:
+                physics = st.session_state.get('physics_enabled', True)
+                physics_preset = st.session_state.get('effective_physics', PHYSICS_PRESETS["Stable (Default)"])
+                theme = THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)'), THEME_PRESETS["Bright (Default)"])
+                top_n = st.session_state.get('top_n_graph', 0)
+                show_weights = st.session_state.get('show_edge_weights', False)
+                edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
+
+                if viz_choice == "Plotly 2D":
+                    render_graph_plotly_2d(
+                        nx_graph, concept_abstract_map,
+                        cmap_name=cmap,
+                        top_n_nodes=top_n,
+                        theme=theme,
+                        show_edge_weights=show_weights,
+                        node_label_size=st.session_state.get('node_label_size') or 10
+                    )
+                elif viz_choice == "Plotly 3D":
+                    render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=top_n,
+                                            theme=theme, show_edge_weights=show_weights)
+                else:
+                    render_graph_fallback(nx_graph, concept_abstract_map, theme=theme,
+                                          show_edge_weights=show_weights)
 
             with st.expander("Graph Metrics"):
                 metrics = compute_graph_metrics(nx_graph)
@@ -4228,11 +5745,37 @@ def main():
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Export & Post-Processing")
+            # Note: export_graph function is not defined; we'll provide a simple export for edges/nodes
             export_format = st.selectbox("Format:", ["GraphML", "JSON", "CSV (Edges)", "CSV (Nodes)", "PNG", "SVG"])
             if st.button("Generate Export"):
-                result = export_graph(nx_graph, concept_abstract_map, export_format)
-                if result[0]:
-                    data_bytes, mime, filename = result
+                if export_format == "GraphML":
+                    data_bytes = io.BytesIO()
+                    nx.write_graphml(nx_graph, data_bytes)
+                    data_bytes = data_bytes.getvalue()
+                    mime = "application/graphml+xml"
+                    filename = "graph.graphml"
+                elif export_format == "JSON":
+                    data_bytes = json.dumps(nx.node_link_data(nx_graph)).encode('utf-8')
+                    mime = "application/json"
+                    filename = "graph.json"
+                elif export_format == "CSV (Edges)":
+                    edges = [(u, v, d.get('weight', 1)) for u, v, d in nx_graph.edges(data=True)]
+                    df_edges = pd.DataFrame(edges, columns=["source", "target", "weight"])
+                    data_bytes = df_edges.to_csv(index=False).encode('utf-8')
+                    mime = "text/csv"
+                    filename = "edges.csv"
+                elif export_format == "CSV (Nodes)":
+                    nodes = [(n, nx_graph.nodes[n].get('frequency', 0), nx_graph.nodes[n].get('concept_type', 'general')) 
+                             for n in nx_graph.nodes()]
+                    df_nodes = pd.DataFrame(nodes, columns=["node", "frequency", "type"])
+                    data_bytes = df_nodes.to_csv(index=False).encode('utf-8')
+                    mime = "text/csv"
+                    filename = "nodes.csv"
+                else:
+                    data_bytes = b""
+                    mime = "text/plain"
+                    filename = "export.txt"
+                if data_bytes:
                     st.download_button("Save File", data=data_bytes, file_name=filename, mime=mime)
 
             # Publication figure export
