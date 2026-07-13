@@ -3006,11 +3006,32 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
         function extractOriginalName(titleHtml) {
             if (!titleHtml) return '';
+            // Handle case where title is already a DOM Element (after htmlTitle() transform)
+            if (typeof titleHtml === 'object' && titleHtml !== null) {
+                // It's a DOM element - extract text directly
+                var bTag = titleHtml.querySelector('b');
+                if (bTag) return bTag.textContent.trim();
+                return titleHtml.textContent.split('
+')[0].trim();
+            }
+            // Handle string HTML
             var tmp = document.createElement('div');
             tmp.innerHTML = titleHtml;
             var bTag = tmp.querySelector('b');
             if (bTag) return bTag.textContent.trim();
-            return tmp.textContent.split('\\n')[0].trim();
+            return tmp.textContent.split('
+')[0].trim();
+        }
+
+        function getNodeDisplayName(nodeData, useShortNames) {
+            // Get the best display name for a node
+            if (!nodeData) return '';
+            // If using short names, try to get original name from title
+            if (useShortNames && nodeData.title) {
+                var orig = extractOriginalName(nodeData.title);
+                if (orig) return orig;
+            }
+            return nodeData.label || nodeData.id || '';
         }
 
         var checkExist = setInterval(function() {
@@ -3052,13 +3073,10 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
                     var nodeData = nodesDS.get(nodeId);
                     var nodeTitle = '';
-                    var nodeLabel = nodeId;
+                    var nodeLabel = getNodeDisplayName(nodeData, useShortNames);
                     if (nodeData) {
-                        nodeLabel = nodeData.label || nodeId;
                         if (nodeData.title) {
-                            var tmp = document.createElement('div');
-                            tmp.innerHTML = nodeData.title;
-                            nodeTitle = tmp.textContent || tmp.innerText || '';
+                            nodeTitle = extractOriginalName(nodeData.title);
                         }
                     }
                     nodeTitle = nodeTitle.replace(/\\n/g, '<br>').trim();
@@ -3080,8 +3098,8 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         var fromNode = nodesDS.get(e.from);
                         var toNode   = nodesDS.get(e.to);
 
-                        var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
-                        var toLabel   = toNode   ? (toNode.label   || e.to)   : e.to;
+                        var fromLabel = getNodeDisplayName(fromNode, useShortNames);
+                        var toLabel   = getNodeDisplayName(toNode, useShortNames);
                         fromLabel = String(fromLabel).replace(/<[^>]*>/g,'').trim();
                         toLabel   = String(toLabel).replace(/<[^>]*>/g,'').trim();
 
