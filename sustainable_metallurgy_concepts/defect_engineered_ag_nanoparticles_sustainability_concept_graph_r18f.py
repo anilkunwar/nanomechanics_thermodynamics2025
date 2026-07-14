@@ -14,6 +14,7 @@ Enhancements over original:
 - Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy)
 - Relationship extraction (identifying cause-effect between laser parameters and microstructure)
 - Reasoning-based edge inference
+- **FIXED**: Frontend data pipeline now uses structured JSON injection (no regex scraping)
 
 DEPLOYMENT:
 pip install streamlit torch transformers sentence-transformers networkx scikit-learn
@@ -326,8 +327,6 @@ class DomainOntology:
         self.concepts: Dict[str, ConceptNode] = {}
         self.relationships: List[Relationship] = []
         self._build_ontology()
-        # Auto-persist definitions to permanent storage
-        _ensure_definitions_persisted(self)
 
     def _build_ontology(self):
         """Build the complete domain ontology."""
@@ -738,102 +737,6 @@ class DomainOntology:
             return self.concepts[canonical_name].definition
         return ""
 
-
-# ==========================================
-# PERMANENT CONCEPT DEFINITION PERSISTENCE
-# ==========================================
-
-PERMANENT_DEFS_PATH = os.path.join(SCRIPT_DIR, "permanent_concept_definitions.json")
-
-def _load_permanent_definitions() -> Dict[str, Dict[str, Any]]:
-    """Load definitions from permanent JSON file."""
-    if os.path.exists(PERMANENT_DEFS_PATH):
-        try:
-            with open(PERMANENT_DEFS_PATH, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def _save_permanent_definitions(defs: Dict[str, Dict[str, Any]]):
-    """Save definitions to permanent JSON file."""
-    try:
-        with open(PERMANENT_DEFS_PATH, 'w', encoding='utf-8') as f:
-            json.dump(defs, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        st.warning(f"Could not save permanent definitions: {e}")
-
-def _extract_all_ontology_definitions(ontology: DomainOntology) -> Dict[str, Dict[str, Any]]:
-    """Extract all definitions from an ontology instance."""
-    defs = {}
-    for name, node in ontology.concepts.items():
-        defs[name] = {
-            "canonical_name": node.canonical_name,
-            "concept_type": node.concept_type.value,
-            "definition": node.definition,
-            "synonyms": list(node.synonyms),
-            "hypernyms": list(node.hypernyms),
-            "hyponyms": list(node.hyponyms),
-            "related_processes": list(node.related_processes),
-            "related_properties": list(node.related_properties),
-        }
-    return defs
-
-def _ensure_definitions_persisted(ontology: DomainOntology):
-    """Ensure all ontology definitions are saved to permanent storage."""
-    defs = _extract_all_ontology_definitions(ontology)
-    _save_permanent_definitions(defs)
-    return defs
-
-def _load_definitions_into_ontology(ontology: DomainOntology) -> DomainOntology:
-    """Load any missing definitions from permanent storage into ontology."""
-    stored = _load_permanent_definitions()
-    for name, data in stored.items():
-        if name not in ontology.concepts:
-            node = ConceptNode(
-                canonical_name=data["canonical_name"],
-                concept_type=ConceptType(data["concept_type"]),
-                synonyms=set(data.get("synonyms", [])),
-                hypernyms=set(data.get("hypernyms", [])),
-                hyponyms=set(data.get("hyponyms", [])),
-                related_processes=set(data.get("related_processes", [])),
-                related_properties=set(data.get("related_properties", [])),
-                definition=data.get("definition", ""),
-            )
-            ontology.concepts[name] = node
-    ontology._build_synonym_index()
-    ontology._build_causal_chains()
-    return ontology
-
-def get_definition_always_available(ontology: DomainOntology, concept_name: str) -> str:
-    """
-    Get definition with guaranteed availability.
-    Tries ontology first, then permanent storage, then returns empty string.
-    """
-    definition = ontology.get_definition(concept_name)
-    if definition:
-        return definition
-    stored = _load_permanent_definitions()
-    if concept_name in stored:
-        return stored[concept_name].get("definition", "")
-    canonical = ontology.resolve_concept(concept_name)
-    if canonical:
-        definition = ontology.get_definition(canonical)
-        if definition:
-            return definition
-        if canonical in stored:
-            return stored[canonical].get("definition", "")
-    return ""
-
-def ensure_node_has_definition(nx_graph: nx.Graph, node: str, ontology: DomainOntology):
-    """Ensure a node in the graph has a definition attribute."""
-    if node not in nx_graph.nodes():
-        return
-    current_def = nx_graph.nodes[node].get('definition', '')
-    if not current_def:
-        definition = get_definition_always_available(ontology, node)
-        if definition:
-            nx_graph.nodes[node]['definition'] = definition
 
 class AdvancedConceptResolver:
     """
@@ -2907,6 +2810,25 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     label_map = {}
     n_counter = 1
 
+    # --- NEW: Build structured metadata dictionary for JSON injection ---
+    metadata_dict = {}
+    for node in nx_graph.nodes():
+        freq = len(concept_abstract_map.get(node, []))
+        degree = int(nx_graph.degree(node))
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        definition = nx_graph.nodes[node].get('definition', '')
+        original_label = custom_labels.get(node, node) if custom_labels else node
+        metadata_dict[node] = {
+            "label": original_label,
+            "type": concept_type,
+            "degree": degree,
+            "frequency": freq,
+            "definition": definition
+        }
+
+    # --- NEW: Inject metadata as JSON into the HTML ---
+    metadata_json = json.dumps(metadata_dict)
+
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
         size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
@@ -2923,15 +2845,12 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
             label = short_label
 
             # Force label inside node for abbreviated labels
-            # Use circle shape (label inside) instead of dot (label outside)
             node_shape = 'circle'
-            # Scale font to fit inside the node
             inside_font_size = max(8, min(int(size * 0.55), 14))
-            # White text for contrast against colored node background
             font_color = '#ffffff'
             font_stroke_width = 1
             font_stroke_color = 'rgba(0,0,0,0.3)'
-            font_vadjust = 0  # Center vertically in circle
+            font_vadjust = 0
             font_align = 'center'
             font_bold = {'color': '#ffffff', 'size': inside_font_size, 'face': node_font_face, 'vadjust': 0, 'mod': 'bold'}
         else:
@@ -2947,15 +2866,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         # ------------------------------------------------------------------
 
         concept_type = nx_graph.nodes[node].get('concept_type', 'general')
-        # PERMANENT DEFINITION: Try graph node, then ontology, then permanent storage
         definition = nx_graph.nodes[node].get('definition', '')
-        if not definition and 'ontology' in globals():
-            definition = get_definition_always_available(ontology, node)
-        if not definition:
-            # Last resort: try to get from session state ontology
-            session_ontology = st.session_state.get('ontology')
-            if session_ontology:
-                definition = get_definition_always_available(session_ontology, node)
 
         x, y = (pos.get(node, (0, 0))[0] * 1200, pos.get(node, (0, 0))[1] * 1200)
 
@@ -2989,7 +2900,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
 
-                   + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if definition else f"<br><span style='color:{theme['tooltip_text']};opacity:0.5;'><i>No definition available</i></span>")
+                   + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if (show_definitions and definition) else "")
 
                    + "</div>"),
 
@@ -3057,6 +2968,24 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     """
     html_content = html_content.replace('</head>', custom_css + '</head>')
 
+    # --- NEW: Inject metadata and label map as hidden elements ---
+    # 1. Metadata JSON
+    metadata_script = f"""
+    <script>
+        window.AGNP_METADATA = {metadata_json};
+    </script>
+    """
+    html_content = html_content.replace('</head>', metadata_script + '</head>')
+
+    # 2. Label map (for abbreviated labels) - if any
+    if label_map:
+        label_map_script = f"""
+        <script>
+            window.AGNP_LABEL_MAP = {json.dumps(label_map)};
+        </script>
+        """
+        html_content = html_content.replace('</head>', label_map_script + '</head>')
+
     # --- NODE HIGHLIGHT & EDGE DESCRIPTION INJECTION (FIXED) ---
     if enable_node_highlight:
         highlight_js = """
@@ -3071,40 +3000,23 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                 var savedNodeColors = {};
                 var activeNodeId = null;
                 var labelMode = 'short'; // 'short' | 'full'
-                var labelMap = {}; // Will be populated from Python-rendered data
 
-                // ── Try to read labelMap from a hidden data element ──
-                (function initLabelMap() {
-                    var hidden = document.getElementById('agnp-label-map-data');
-                    if (hidden && hidden.textContent) {
-                        try { labelMap = JSON.parse(hidden.textContent); } catch(e) {}
-                    }
-                })();
-
-                function resetAll() {
-                    var nodeRestores = [];
-                    for (var nid in savedNodeColors) {
-                        nodeRestores.push({id: nid, color: savedNodeColors[nid]});
-                    }
-                    if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
-                    savedNodeColors = {};
-                    activeNodeId = null;
-                    var panel = document.getElementById('edge-info-panel');
-                    if (panel) panel.style.display = 'none';
-                }
+                // ── Get metadata from the global variable ──────────────────
+                var metadata = window.AGNP_METADATA || {};
+                var labelMap = window.AGNP_LABEL_MAP || {};
 
                 function resolveFullName(shortOrId) {
                     // If it's a short label like "N1", look it up
                     if (labelMap && labelMap[shortOrId]) {
                         return labelMap[shortOrId];
                     }
-                    // Otherwise try to get from node data
+                    // Otherwise try to get from node data (fallback)
                     var n = nodesDS.get(shortOrId);
                     if (n && n.title) {
                         var tmp = document.createElement('div');
                         tmp.innerHTML = n.title;
                         var txt = (tmp.textContent || tmp.innerText || '').trim();
-                        var firstLine = txt.split('\n')[0];
+                        var firstLine = txt.split('\\n')[0];
                         if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
                     }
                     return shortOrId;
@@ -3178,39 +3090,13 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         'transition:all 0.3s cubic-bezier(0.4,0,0.2,1)'
                     ].join(';');
 
-                    // ── Get node data including title ──────────────────────
-                    var nodeData = nodesDS.get(nodeId);
-                    var nodeName = nodeId;
-                    if (nodeData) {
-                        if (nodeData.title) {
-                            var tmp = document.createElement('div');
-                            tmp.innerHTML = nodeData.title;
-                            var txt = (tmp.textContent || tmp.innerText || '').trim();
-                            nodeName = txt.split('\n')[0] || nodeData.label || nodeId;
-                        } else {
-                            nodeName = nodeData.label || nodeId;
-                        }
-                    }
-                    nodeName = String(nodeName).replace(/<[^>]*>/g,'').trim();
-
-                    // Extract full tooltip content
-                    var nodeDefinition = "";
-                    var nodeType = "";
-                    var nodeFreq = "";
-                    var nodeDegree = "";
-                    if (nodeData && nodeData.title) {
-                        var tmpDiv = document.createElement("div");
-                        tmpDiv.innerHTML = nodeData.title;
-                        var tooltipText = tmpDiv.textContent || tmpDiv.innerText || "";
-                        var defMatch = tooltipText.match(/Definition:\s*(.+)/i);
-                        if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
-                        var typeMatch = tooltipText.match(/Type:\s*(\w+)/i);
-                        if (typeMatch && typeMatch[1]) { nodeType = typeMatch[1].trim(); }
-                        var freqMatch = tooltipText.match(/Frequency:\s*(\d+)/i);
-                        if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
-                        var degMatch = tooltipText.match(/Degree:\s*(\d+)/i);
-                        if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
-                    }
+                    // ── Get node data from metadata ──────────────────────
+                    var meta = metadata[nodeId] || {};
+                    var nodeName = meta.label || nodeId;
+                    var nodeDefinition = meta.definition || "";
+                    var nodeType = meta.type || "";
+                    var nodeFreq = meta.frequency || "";
+                    var nodeDegree = meta.degree || "";
 
                     // ── Build panel HTML ──────────────────────────────────
                     var html = '';
@@ -3283,7 +3169,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                             tmpDiv.innerHTML = e.title;
                             var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
                             var desc = _txt.trim();
-                            var m = desc.match(/Type:\s*(\w+)/);
+                            var m = desc.match(/Type:\\s*(\\w+)/);
                             if (m) edgeType = m[1];
                             if (desc.indexOf('Inferred: true') !== -1) isInferred = true;
                         }
