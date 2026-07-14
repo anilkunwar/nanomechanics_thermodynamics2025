@@ -2809,45 +2809,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     label_map = {}
     n_counter = 1
 
-    # ==========================================
-    # STRUCTURED METADATA FOR FRONTEND (ANTI-VANITY FIX)
-    # Build a clean JSON dictionary of all node metadata to pass to JS
-    # instead of scraping HTML tooltips with regex.
-    # ==========================================
-    metadata_dict = {}
-    for node in nx_graph.nodes():
-        freq = len(concept_abstract_map.get(node, []))
-        degree = int(nx_graph.degree(node))
-        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
-        definition = nx_graph.nodes[node].get('definition', '')
-        original_label = custom_labels.get(node, node) if custom_labels else node
-        metadata_dict[node] = {
-            "original_label": original_label,
-            "concept_type": concept_type,
-            "degree": degree,
-            "frequency": freq,
-            "definition": definition
-        }
-    # --- EDGE METADATA (100% architectural purity) ---
-    edge_metadata_dict = {}
-    for u, v, data in nx_graph.edges(data=True):
-        edge_key = u + "|" + v
-        edge_metadata_dict[edge_key] = {
-            "weight": float(data.get('weight', 1)),
-            "edge_type": data.get('edge_type', 'unknown'),
-            "inferred": bool(data.get('inferred', False)),
-            "cooccurrence": int(data.get('cooccurrence', 0)),
-            "semantic": float(data.get('semantic', 0))
-        }
-
-    # Combine into single payload
-    agnp_payload = {
-        "nodes": metadata_dict,
-        "edges": edge_metadata_dict
-    }
-    metadata_json = json.dumps(agnp_payload, ensure_ascii=False)
-
-
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
         size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
@@ -2913,19 +2874,12 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                    'hover': {'background': theme['hover_bg'], 'border': '#ffffff'}},
             font=font_dict,
             title=(f"<div style='font-family:{node_font_face};'>"
-
                    f"<b style='font-size:14px;color:{theme['highlight_bg']};'>{original_label}</b><br>"
-
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Type:</span> {concept_type}<br>"
-
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Degree:</span> {degree}<br>"
-
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
-
                    + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if (show_definitions and definition) else "")
-
                    + "</div>"),
-
             borderWidth=2, borderWidthSelected=3,
             shadow={'enabled': True, 'color': theme['shadow_color'], 'size': 12, 'x': 4, 'y': 4},
             shape=node_shape, mass=max(1, 1 + freq * 0.05)
@@ -2973,7 +2927,60 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
         net.add_edge(u, v, **edge_kwargs)
 
+    # ==========================================
+    # ANTI-VANITY FIX: Build structured metadata for JavaScript
+    # ==========================================
+    # 1. NODE METADATA
+    node_metadata = {}
+    for node in nx_graph.nodes():
+        node_data = nx_graph.nodes[node]
+        node_metadata[node] = {
+            "canonical_name": node,
+            "definition": node_data.get('definition', ''),
+            "concept_type": node_data.get('concept_type', 'general'),
+            "frequency": len(concept_abstract_map.get(node, [])),
+            "degree": int(nx_graph.degree(node)),
+            "hypernyms": list(node_data.get('hypernyms', set())),
+            "hyponyms": list(node_data.get('hyponyms', set()))
+        }
+
+    # 2. EDGE METADATA
+    edge_metadata = {}
+    for u, v, data in nx_graph.edges(data=True):
+        key_forward = f"{u}||{v}"
+        key_reverse = f"{v}||{u}"
+        edge_info = {
+            "source": u,
+            "target": v,
+            "weight": float(data.get('weight', 1.0)),
+            "cooccurrence": int(data.get('cooccurrence', 0)),
+            "semantic": float(data.get('semantic', 0)),
+            "edge_type": data.get('edge_type', 'unknown'),
+            "inferred": bool(data.get('inferred', False)),
+            "confidence": float(data.get('confidence', 0.5))
+        }
+        edge_metadata[key_forward] = edge_info
+        edge_metadata[key_reverse] = edge_info
+
+    # 3. LABEL MAP (for abbreviated labels)
+    label_map_json = {short: full for short, full in label_map.items()}
+
+    # Serialize to JSON
+    node_meta_json = json.dumps(node_metadata, ensure_ascii=False)
+    edge_meta_json = json.dumps(edge_metadata, ensure_ascii=False)
+    label_map_json_str = json.dumps(label_map_json, ensure_ascii=False)
+
+    # Inject into HTML head
+    metadata_script = f'''
+    <script>
+        window.AGNP_NODE_METADATA = {node_meta_json};
+        window.AGNP_EDGE_METADATA = {edge_meta_json};
+        window.AGNP_LABEL_MAP = {label_map_json_str};
+    </script>
+    '''
     html_content = net.generate_html()
+    html_content = html_content.replace('</head>', metadata_script + '</head>')
+
     custom_css = f"""
     <style>
         body {{ background: {theme['bg']}; margin: 0; padding: 0; font-family: '{node_font_face}', sans-serif; }}
@@ -2990,13 +2997,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     """
     html_content = html_content.replace('</head>', custom_css + '</head>')
 
-    # --- STRUCTURED METADATA INJECTION (ANTI-VANITY FIX) ---
-    # Inject clean JSON metadata as a global JS variable.
-    # The frontend reads window.AGNP_METADATA[nodeId] directly
-    # instead of scraping HTML tooltips with regex.
-    metadata_script = '<script>window.AGNP_PAYLOAD = ' + metadata_json + ';</script>'
-    html_content = html_content.replace('</head>', metadata_script + '</head>')
-
     # --- NODE HIGHLIGHT & EDGE DESCRIPTION INJECTION (FIXED) ---
     if enable_node_highlight:
         highlight_js = """
@@ -3010,16 +3010,38 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                 var edgesDS = network.body.data.edges;
                 var savedNodeColors = {};
                 var activeNodeId = null;
-                var labelMode = 'short'; // 'short' | 'full'
-                var labelMap = {}; // Will be populated from Python-rendered data
+                var labelMode = 'short';
 
-                // ── Try to read labelMap from a hidden data element ──
-                (function initLabelMap() {
-                    var hidden = document.getElementById('agnp-label-map-data');
-                    if (hidden && hidden.textContent) {
-                        try { labelMap = JSON.parse(hidden.textContent); } catch(e) {}
+                // ── Helper: resolve full name from label map or node metadata ──
+                function resolveFullName(nodeId) {
+                    var node = nodesDS.get(nodeId);
+                    var label = node ? (node.label || nodeId) : nodeId;
+                    // Check label map first
+                    if (window.AGNP_LABEL_MAP && window.AGNP_LABEL_MAP[label]) {
+                        return window.AGNP_LABEL_MAP[label];
                     }
-                })();
+                    // Fall back to node metadata
+                    if (window.AGNP_NODE_METADATA && window.AGNP_NODE_METADATA[nodeId]) {
+                        return window.AGNP_NODE_METADATA[nodeId].canonical_name || nodeId;
+                    }
+                    return label;
+                }
+
+                // ── Helper: get node metadata ──
+                function getNodeMeta(nodeId) {
+                    if (window.AGNP_NODE_METADATA && window.AGNP_NODE_METADATA[nodeId]) {
+                        return window.AGNP_NODE_METADATA[nodeId];
+                    }
+                    return null;
+                }
+
+                // ── Helper: get edge metadata ──
+                function getEdgeMeta(fromId, toId) {
+                    if (!window.AGNP_EDGE_METADATA) return null;
+                    var key1 = fromId + "||" + toId;
+                    var key2 = toId + "||" + fromId;
+                    return window.AGNP_EDGE_METADATA[key1] || window.AGNP_EDGE_METADATA[key2] || null;
+                }
 
                 function resetAll() {
                     var nodeRestores = [];
@@ -3033,63 +3055,51 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     if (panel) panel.style.display = 'none';
                 }
 
-                function resolveFullName(shortOrId) {
-                    // If it's a short label like "N1", look it up
-                    if (labelMap && labelMap[shortOrId]) {
-                        return labelMap[shortOrId];
-                    }
-                    // Otherwise try to get from node data
-                    var n = nodesDS.get(shortOrId);
-                    if (n && n.title) {
-                        var tmp = document.createElement('div');
-                        tmp.innerHTML = n.title;
-                        var txt = (tmp.textContent || tmp.innerText || '').trim();
-                        var firstLine = txt.split('\n')[0];
-                        if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
-                    }
-                    return shortOrId;
-                }
-
                 function formatEdgeRow(e, idx, mode) {
-                    var typeColor = e.inferred ? '#8b5cf6' : '#0ea5e9';
-                    var badge = e.inferred 
-                        ? ' <span style="display:inline-block;background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:white;font-size:8px;padding:2px 6px;border-radius:10px;font-weight:700;letter-spacing:0.3px;text-shadow:0 1px 2px rgba(0,0,0,0.2);">INFERRED</span>' 
+                    // ANTI-VANITY: Read from structured metadata, not Vis.js object
+                    var meta = getEdgeMeta(e.from, e.to) || {};
+                    var edgeType = meta.edge_type || 'unknown';
+                    var isInferred = meta.inferred || false;
+                    var weight = meta.weight || (typeof e.value === 'number' ? e.value : 1.0);
+
+                    var typeColor = isInferred ? '#8b5cf6' : '#0ea5e9';
+                    var badge = isInferred 
+                        ? ' <span style="display:inline-block;background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:white;font-size:8px;padding:2px 6px;border-radius:10px;font-weight:700;">INFERRED</span>' 
                         : '';
 
-                    var typeDisplay = e.type + (e.inferred ? ' inferred' : '');
-                    var typeBadge = '<span style="display:inline-block;background:' + (e.inferred ? 'rgba(139,92,246,0.12)' : 'rgba(14,165,233,0.12)') + ';color:' + typeColor + ';font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600;border:1px solid ' + (e.inferred ? 'rgba(139,92,246,0.25)' : 'rgba(14,165,233,0.25)') + ';">' + typeDisplay + '</span>';
+                    var typeBadge = '<span style="display:inline-block;background:' + (isInferred ? 'rgba(139,92,246,0.12)' : 'rgba(14,165,233,0.12)') + ';color:' + typeColor + ';font-size:9px;padding:2px 8px;border-radius:10px;font-weight:600;border:1px solid ' + (isInferred ? 'rgba(139,92,246,0.25)' : 'rgba(14,165,233,0.25)') + ';">' + edgeType + (isInferred ? ' inferred' : '') + '</span>';
+
+                    var fromLabel = mode === 'short' ? (e.fromLabel || e.from) : resolveFullName(e.from);
+                    var toLabel = mode === 'short' ? (e.toLabel || e.to) : resolveFullName(e.to);
 
                     if (mode === 'short') {
                         return '<div style="padding:8px 10px;margin:4px 0;background:linear-gradient(90deg,rgba(248,250,252,0.9),rgba(241,245,249,0.7));border-left:4px solid ' + typeColor + ';border-radius:8px;font-size:12px;transition:all 0.2s ease;box-shadow:0 1px 3px rgba(0,0,0,0.04);" onmouseover="this.style.transform=\'translateX(3px)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.08)\'" onmouseout="this.style.transform=\'translateX(0)\';this.style.boxShadow=\'0 1px 3px rgba(0,0,0,0.04)\'">'
                              + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">'
                              + '<span style="background:linear-gradient(135deg,#D32F2F,#ef4444);color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">w</span>'
-                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + e.from + '</span>'
+                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + fromLabel + '</span>'
                              + '<span style="color:#94a3b8;font-size:13px;">↔</span>'
-                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + e.to + '</span>'
+                             + '<span style="font-family:\'JetBrains Mono\',\'Fira Code\',monospace;font-size:11px;color:#1e293b;font-weight:600;">' + toLabel + '</span>'
                              + '</div>'
                              + '<div style="display:flex;align-items:center;gap:8px;padding-left:26px;">'
                              + '<span style="color:#64748b;font-size:10px;font-weight:500;">=</span>'
-                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + e.weight + '</span>'
+                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + weight.toFixed(2) + '</span>'
                              + typeBadge
                              + badge
                              + '</div>'
                              + '</div>';
                     } else {
-                        // Full names mode
-                        var fromFull = resolveFullName(e.from);
-                        var toFull = resolveFullName(e.to);
                         return '<div style="padding:10px 12px;margin:4px 0;background:linear-gradient(90deg,rgba(248,250,252,0.95),rgba(241,245,249,0.8));border-left:4px solid ' + typeColor + ';border-radius:8px;font-size:12px;transition:all 0.2s ease;box-shadow:0 1px 3px rgba(0,0,0,0.04);" onmouseover="this.style.transform=\'translateX(3px)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,0.08)\'" onmouseout="this.style.transform=\'translateX(0)\';this.style.boxShadow=\'0 1px 3px rgba(0,0,0,0.04)\'">'
                              + '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:5px;">'
                              + '<span style="background:linear-gradient(135deg,#D32F2F,#ef4444);color:white;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;flex-shrink:0;margin-top:1px;">w</span>'
                              + '<div style="display:flex;flex-direction:column;gap:2px;flex:1;">'
-                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + fromFull + '</span>'
+                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + fromLabel + '</span>'
                              + '<span style="color:#94a3b8;font-size:11px;text-align:center;padding:2px 0;">↔</span>'
-                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + toFull + '</span>'
+                             + '<span style="font-size:11px;color:#334155;font-weight:600;word-break:break-word;line-height:1.4;">' + toLabel + '</span>'
                              + '</div>'
                              + '</div>'
                              + '<div style="display:flex;align-items:center;gap:8px;padding-left:26px;flex-wrap:wrap;">'
                              + '<span style="color:#64748b;font-size:10px;font-weight:500;">weight:</span>'
-                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + e.weight + '</span>'
+                             + '<span style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:700;box-shadow:0 2px 4px rgba(14,165,233,0.25);">' + weight.toFixed(2) + '</span>'
                              + typeBadge
                              + badge
                              + '</div>'
@@ -3105,7 +3115,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         document.body.appendChild(panel);
                     }
 
-                    // Glassmorphism + modern styling
                     panel.style.cssText = [
                         'position:fixed','top:90px','right:20px','width:420px',
                         'max-height:calc(100vh - 110px)','overflow-y:auto','z-index:9999',
@@ -3118,32 +3127,17 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         'transition:all 0.3s cubic-bezier(0.4,0,0.2,1)'
                     ].join(';');
 
-                    // ── Get node metadata from structured JSON (ANTI-VANITY FIX) ──
-                    var meta = window.AGNP_PAYLOAD ? window.AGNP_PAYLOAD.nodes[nodeId] : null;
-                    var nodeName = nodeId;
-                    var nodeType = '';
-                    var nodeDegree = '';
-                    var nodeFreq = '';
-                    var nodeDefinition = '';
+                    // ── ANTI-VANITY: Read node metadata from structured JSON ──
+                    var nodeMeta = getNodeMeta(nodeId);
+                    var nodeName = nodeMeta ? (nodeMeta.canonical_name || nodeId) : resolveFullName(nodeId);
+                    var nodeType = nodeMeta ? (nodeMeta.concept_type || 'general') : 'general';
+                    var nodeFreq = nodeMeta ? (nodeMeta.frequency || 0) : 0;
+                    var nodeDegree = nodeMeta ? (nodeMeta.degree || 0) : 0;
+                    var nodeDefinition = nodeMeta ? (nodeMeta.definition || '') : '';
 
-                    if (meta) {
-                        nodeName = meta.original_label || nodeId;
-                        nodeType = meta.concept_type || '';
-                        nodeDegree = String(meta.degree || '');
-                        nodeFreq = String(meta.frequency || '');
-                        nodeDefinition = meta.definition || '';
-                    } else {
-                        // Graceful fallback: try node label
-                        var nodeData = nodesDS.get(nodeId);
-                        if (nodeData) {
-                            nodeName = nodeData.label || nodeId;
-                        }
-                    }
-
-                    // ── Build panel HTML ──────────────────────────────────
                     var html = '';
 
-                    // Header with gradient
+                    // Header
                     html += '<div style="padding:18px 20px 14px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:20px 20px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);position:sticky;top:0;z-index:10;">';
                     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
                     html += '<span style="font-size:22px;background:linear-gradient(135deg,#FFD700,#FFB74D);-webkit-background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 4px rgba(255,183,77,0.3));">🔬</span>';
@@ -3153,15 +3147,11 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
                     // Metadata chips
                     html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
-                    if (nodeType) {
+                    if (nodeType && nodeType !== 'general') {
                         html += '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(14,165,233,0.2);">' + nodeType + '</span>';
                     }
-                    if (nodeDegree) {
-                        html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(168,85,247,0.2);">deg ' + nodeDegree + '</span>';
-                    }
-                    if (nodeFreq) {
-                        html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(34,197,94,0.2);">freq ' + nodeFreq + '</span>';
-                    }
+                    html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(168,85,247,0.2);">deg ' + nodeDegree + '</span>';
+                    html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 10px;border-radius:12px;font-weight:600;border:1px solid rgba(34,197,94,0.2);">freq ' + nodeFreq + '</span>';
                     html += '</div>';
                     html += '</div>';
 
@@ -3192,42 +3182,30 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     // Edges container
                     html += '<div id="edges-container" style="padding:12px 16px 16px;">';
 
-                    // ── Connected edges list (100% architectural purity) ──
-                    var edgeMeta = window.AGNP_PAYLOAD ? window.AGNP_PAYLOAD.edges : {};
+                    // Build edge list with metadata
                     var edgeList = [];
                     connectedEdges.forEach(function(eId) {
                         var e = edgesDS.get(eId);
                         if (!e) return;
+                        
+                        // ANTI-VANITY: Get metadata from structured JSON
+                        var meta = getEdgeMeta(e.from, e.to) || {};
                         var fromNode = nodesDS.get(e.from);
-                        var toNode   = nodesDS.get(e.to);
-                        var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
-                        var toLabel   = toNode   ? (toNode.label   || e.to)   : e.to;
-                        fromLabel = String(fromLabel).replace(/<[^>]*>/g,'').trim();
-                        toLabel   = String(toLabel).replace(/<[^>]*>/g,'').trim();
-
-                        // Read structured edge metadata from JSON payload
-                        var edgeKey = e.from + "|" + e.to;
-                        var meta = edgeMeta[edgeKey];
-                        var w, edgeType, isInferred;
-                        if (meta) {
-                            w = meta.weight;
-                            edgeType = meta.edge_type;
-                            isInferred = meta.inferred;
-                        } else {
-                            // Graceful fallback to edge object properties
-                            w = (typeof e.value === 'number') ? e.value : (e.width || 1);
-                            edgeType = 'unknown';
-                            isInferred = false;
-                        }
+                        var toNode = nodesDS.get(e.to);
+                        
                         edgeList.push({
-                            from: fromLabel, to: toLabel,
-                            weight: (typeof w === 'number') ? w.toFixed(2) : String(w),
-                            type: edgeType, inferred: isInferred
+                            from: e.from,
+                            to: e.to,
+                            fromLabel: fromNode ? (fromNode.label || e.from) : e.from,
+                            toLabel: toNode ? (toNode.label || e.to) : e.to,
+                            weight: meta.weight || (typeof e.value === 'number' ? e.value : 1.0),
+                            edge_type: meta.edge_type || 'unknown',
+                            inferred: meta.inferred || false
                         });
                     });
 
                     // Sort by weight descending
-                    edgeList.sort(function(a,b){ return parseFloat(b.weight)-parseFloat(a.weight); });
+                    edgeList.sort(function(a,b){ return b.weight - a.weight; });
 
                     edgeList.forEach(function(e, idx){
                         html += formatEdgeRow(e, idx, labelMode);
@@ -3243,7 +3221,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     panel.innerHTML = html;
                     panel.style.display = 'block';
 
-                    // Store edgeList for re-rendering on toggle
+                    // Store for re-rendering
                     panel._edgeList = edgeList;
                     panel._nodeName = nodeName;
                     panel._nodeType = nodeType;
@@ -3257,7 +3235,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         var p = document.getElementById('edge-info-panel');
                         if (!p || !p._edgeList) return;
 
-                        // Update button styles
                         var btnShort = document.getElementById('btn-short');
                         var btnFull = document.getElementById('btn-full');
                         var hint = document.getElementById('format-hint');
@@ -3272,7 +3249,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                             if (hint) hint.innerHTML = 'Format: <b style="color:#D32F2F;">w</b> full_name<sub style="color:#64748b;">i</sub> ↔ full_name<sub style="color:#64748b;">j</sub> weight: value <span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">type</span>';
                         }
 
-                        // Re-render edges
                         var container = document.getElementById('edges-container');
                         if (container) {
                             var newHtml = '';
@@ -3284,7 +3260,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     };
                 }
 
-                // ── Node selection ──────────────────────────────────────────
+                // ── Node selection with gold border highlight ──
                 network.on("selectNode", function(params) {
                     var nodeId = params.nodes[0];
                     if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
@@ -3293,7 +3269,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     var connectedEdges = network.getConnectedEdges(nodeId);
                     var connectedNodes = network.getConnectedNodes(nodeId);
 
-                    // Highlight connected nodes with gold border + glow
+                    // Highlight connected nodes with gold border
                     var nodeUpdates = [];
                     connectedNodes.forEach(function(nId) {
                         var n = nodesDS.get(nId);
@@ -3305,7 +3281,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                             } else {
                                 newColor.border = '#FFD700';
                                 if (newColor.highlight) newColor.highlight.border = '#FFD700';
-                                if (newColor.hover)    newColor.hover.border    = '#FFD700';
+                                if (newColor.hover) newColor.hover.border = '#FFD700';
                             }
                             nodeUpdates.push({id: nId, color: newColor, 
                                 shadow: {enabled: true, color: 'rgba(255,215,0,0.5)', size: 15, x: 0, y: 0}});
@@ -3313,149 +3289,12 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                     });
                     if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
 
-                    // Show side panel with node info and edges
                     showEdgeInfoPanel(nodeId, connectedEdges);
                 });
 
                 network.on("deselectNode", function(){ resetAll(); });
-                // ── EDGE SELECTION (ANTI-VANITY: structured JSON panel) ──
-                network.on("selectEdge", function(params) {
-                    if (params.edges.length === 0) return;
-                    var edgeId = params.edges[0];
-                    var e = edgesDS.get(edgeId);
-                    if (!e) return;
-
-                    var edgePanel = document.getElementById('edge-info-panel');
-                    if (!edgePanel) {
-                        edgePanel = document.createElement('div');
-                        edgePanel.id = 'edge-info-panel';
-                        document.body.appendChild(edgePanel);
-                    }
-
-                    // Read structured edge metadata from AGNP_PAYLOAD
-                    var edgeMeta = window.AGNP_PAYLOAD ? window.AGNP_PAYLOAD.edges : {};
-                    var edgeKey = e.from + "|" + e.to;
-                    var altKey = e.to + "|" + e.from;
-                    var meta = edgeMeta[edgeKey] || edgeMeta[altKey] || {};
-
-                    var edgeType = meta.edge_type || 'unknown';
-                    var isInferred = meta.inferred || false;
-                    var weight = meta.weight || e.value || 1;
-                    var cooccurrence = meta.cooccurrence || 0;
-                    var semantic = meta.semantic || 0;
-
-                    // Resolve node names
-                    var fromNode = nodesDS.get(e.from);
-                    var toNode = nodesDS.get(e.to);
-                    var fromName = fromNode ? (fromNode.label || e.from) : e.from;
-                    var toName = toNode ? (toNode.label || e.to) : e.to;
-                    fromName = String(fromName).replace(/<[^>]*>/g,'').trim();
-                    toName = String(toName).replace(/<[^>]*>/g,'').trim();
-
-                    // Type color mapping
-                    var typeColors = {
-                        'cooccurrence': '#0ea5e9',
-                        'semantic': '#f59e0b',
-                        'bridge': '#8b5cf6',
-                        'inferred': '#a855f7',
-                        'causes': '#ef4444',
-                        'hypernym': '#22c55e',
-                        'hyponym': '#22c55e',
-                        'unknown': '#94a3b8'
-                    };
-                    var typeColor = typeColors[edgeType] || '#94a3b8';
-
-                    // Build edge panel HTML
-                    var html = '';
-
-                    // Header
-                    html += '<div style="padding:18px 20px 14px;background:linear-gradient(135deg,rgba(14,165,233,0.15),rgba(56,189,248,0.1));border-radius:20px 20px 0 0;border-bottom:2px solid rgba(14,165,233,0.4);position:sticky;top:0;z-index:10;">';
-                    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
-                    html += '<span style="font-size:22px;">🔗</span>';
-                    html += '<span style="font-size:16px;font-weight:800;color:#1e293b;word-break:break-word;flex:1;line-height:1.3;">Edge Connection</span>';
-                    html += '</div>';
-                    html += '</div>';
-
-                    // Connection info
-                    html += '<div style="padding:16px 20px;background:rgba(248,250,252,0.9);border-bottom:1px solid rgba(0,0,0,0.06);">';
-                    html += '<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:12px;">';
-                    html += '<div style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);color:white;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(14,165,233,0.25);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + fromName + '</div>';
-                    html += '<span style="font-size:20px;color:#94a3b8;">→</span>';
-                    html += '<div style="background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:white;padding:8px 14px;border-radius:12px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(139,92,246,0.25);max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + toName + '</div>';
-                    html += '</div>';
-                    html += '</div>';
-
-                    // Metrics
-                    html += '<div style="padding:14px 20px;">';
-                    html += '<div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">📊 Edge Metrics</div>';
-
-                    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">';
-                    html += '<div style="background:rgba(14,165,233,0.08);padding:10px;border-radius:10px;text-align:center;">';
-                    html += '<div style="font-size:10px;color:#64748b;font-weight:600;">Weight</div>';
-                    html += '<div style="font-size:18px;font-weight:800;color:#0ea5e9;">' + (typeof weight === 'number' ? weight.toFixed(2) : weight) + '</div>';
-                    html += '</div>';
-                    html += '<div style="background:rgba(168,85,247,0.08);padding:10px;border-radius:10px;text-align:center;">';
-                    html += '<div style="font-size:10px;color:#64748b;font-weight:600;">Co-occurrence</div>';
-                    html += '<div style="font-size:18px;font-weight:800;color:#a855f7;">' + cooccurrence + '</div>';
-                    html += '</div>';
-                    html += '</div>';
-
-                    // Type badge
-                    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
-                    html += '<span style="font-size:10px;color:#64748b;font-weight:600;">Type:</span>';
-                    html += '<span style="background:' + typeColor + '22;color:' + typeColor + ';font-size:11px;padding:4px 12px;border-radius:20px;font-weight:700;border:1px solid ' + typeColor + '44;">' + edgeType + '</span>';
-                    if (isInferred) {
-                        html += '<span style="background:linear-gradient(135deg,#8b5cf6,#a78bfa);color:white;font-size:10px;padding:4px 10px;border-radius:20px;font-weight:700;box-shadow:0 2px 6px rgba(139,92,246,0.3);">INFERRED</span>';
-                    }
-                    html += '</div>';
-
-                    // Semantic similarity bar
-                    if (semantic > 0) {
-                        html += '<div style="margin-top:10px;">';
-                        html += '<div style="font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px;">Semantic Similarity</div>';
-                        html += '<div style="background:rgba(226,232,240,0.6);border-radius:8px;height:8px;overflow:hidden;">';
-                        html += '<div style="background:linear-gradient(90deg,#22c55e,#4ade80);height:100%;width:' + Math.round(semantic * 100) + '%;border-radius:8px;transition:width 0.5s ease;"></div>';
-                        html += '</div>';
-                        html += '<div style="font-size:10px;color:#94a3b8;text-align:right;margin-top:2px;">' + (semantic * 100).toFixed(1) + '%</div>';
-                        html += '</div>';
-                    }
-
-                    html += '</div>';
-
-                    // Footer
-                    html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.6);border-radius:0 0 20px 20px;border-top:1px solid rgba(0,0,0,0.04);text-align:center;">';
-                    html += '<span style="font-size:10px;color:#94a3b8;">Click elsewhere to close</span>';
-                    html += '</div>';
-
-                    // Style the panel
-                    edgePanel.style.cssText = [
-                        'position:fixed','top:90px','right:20px','width:380px',
-                        'max-height:calc(100vh - 110px)','overflow-y:auto','z-index:9999',
-                        'background:rgba(255,255,255,0.9)','border:1px solid rgba(14,165,233,0.4)',
-                        'border-radius:20px','padding:0',
-                        'font-family:Inter,Segoe UI,Roboto,sans-serif',
-                        'box-shadow:0 20px 60px rgba(0,0,0,0.12), 0 0 0 1px rgba(255,255,255,0.5) inset',
-                        'backdrop-filter:blur(20px) saturate(180%)',
-                        '-webkit-backdrop-filter:blur(20px) saturate(180%)',
-                        'transition:all 0.3s cubic-bezier(0.4,0,0.2,1)'
-                    ].join(';');
-
-                    edgePanel.innerHTML = html;
-                    edgePanel.style.display = 'block';
-                });
-
-                network.on("deselectEdge", function() {
-                    var edgePanel = document.getElementById('edge-info-panel');
-                    if (edgePanel) edgePanel.style.display = 'none';
-                });
-
                 network.on("click", function(params){
                     if (params.nodes.length === 0 && activeNodeId !== null) resetAll();
-                    // Also hide edge panel when clicking empty space
-                    if (params.nodes.length === 0 && params.edges.length === 0) {
-                        var edgePanel = document.getElementById('edge-info-panel');
-                        if (edgePanel) edgePanel.style.display = 'none';
-                    }
                 });
             }
         }, 250);
