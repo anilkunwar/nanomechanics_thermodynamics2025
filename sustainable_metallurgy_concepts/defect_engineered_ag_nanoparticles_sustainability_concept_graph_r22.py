@@ -2974,6 +2974,13 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         with open(tmp_path, 'r', encoding='utf-8') as f:
             html_content = f.read()
 
+        # ✅ FIX 3: Inject labelMap as hidden JSON div for JS to read
+        if use_abbreviated_labels and label_map:
+            import json
+            label_map_json = json.dumps(label_map)
+            hidden_div = f'<div id="agnp-label-map-data" style="display:none;">{label_map_json}</div>'
+            html_content = html_content.replace('</body>', hidden_div + '</body>')
+
         # Cleanup temp file
         os.unlink(tmp_path)
     except Exception as e:
@@ -4779,6 +4786,82 @@ def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, 
     st.plotly_chart(fig, use_container_width=True)
 
 
+
+
+# ==========================================
+# EXPORT FUNCTIONS
+# ==========================================
+def export_graph(nx_graph, concept_abstract_map, export_format: str):
+    """Export graph in various formats."""
+    if export_format == "GraphML":
+        try:
+            buf = io.BytesIO()
+            nx.write_graphml(nx_graph, buf)
+            return buf.getvalue(), "application/xml", "agnp_concept_graph.graphml"
+        except Exception as e:
+            st.error(f"GraphML export failed: {e}")
+            return None, None, None
+    elif export_format == "JSON":
+        try:
+            data = nx.node_link_data(nx_graph)
+            json_str = json.dumps(data, indent=2, default=str)
+            return json_str.encode('utf-8'), "application/json", "agnp_concept_graph.json"
+        except Exception as e:
+            st.error(f"JSON export failed: {e}")
+            return None, None, None
+    elif export_format == "CSV (Edges)":
+        try:
+            edges = []
+            for u, v, d in nx_graph.edges(data=True):
+                edges.append({
+                    'source': u, 'target': v,
+                    'weight': d.get('weight', 1),
+                    'cooccurrence': d.get('cooccurrence', 0),
+                    'semantic': d.get('semantic', 0),
+                    'edge_type': d.get('edge_type', 'unknown'),
+                    'inferred': d.get('inferred', False)
+                })
+            df = pd.DataFrame(edges)
+            csv = df.to_csv(index=False).encode('utf-8')
+            return csv, "text/csv", "agnp_edges.csv"
+        except Exception as e:
+            st.error(f"CSV edges export failed: {e}")
+            return None, None, None
+    elif export_format == "CSV (Nodes)":
+        try:
+            nodes = []
+            for n, d in nx_graph.nodes(data=True):
+                nodes.append({
+                    'concept': n,
+                    'frequency': d.get('frequency', 0),
+                    'concept_type': d.get('concept_type', 'general'),
+                    'degree': nx_graph.degree(n)
+                })
+            df = pd.DataFrame(nodes)
+            csv = df.to_csv(index=False).encode('utf-8')
+            return csv, "text/csv", "agnp_nodes.csv"
+        except Exception as e:
+            st.error(f"CSV nodes export failed: {e}")
+            return None, None, None
+    elif export_format in ["PNG", "SVG"]:
+        try:
+            import matplotlib.pyplot as plt
+            pos = nx.spring_layout(nx_graph, seed=42)
+            plt.figure(figsize=(12, 10))
+            nx.draw(nx_graph, pos, with_labels=True, node_size=300, font_size=8)
+            buf = io.BytesIO()
+            fmt = 'png' if export_format == "PNG" else 'svg'
+            plt.savefig(buf, format=fmt, bbox_inches='tight')
+            plt.close()
+            mime = "image/png" if export_format == "PNG" else "image/svg+xml"
+            ext = "agnp_graph.png" if export_format == "PNG" else "agnp_graph.svg"
+            return buf.getvalue(), mime, ext
+        except Exception as e:
+            st.error(f"Image export failed: {e}")
+            return None, None, None
+    else:
+        st.error(f"Unknown export format: {export_format}")
+        return None, None, None
 
 def main():
     st.title("AgNP-Sustainability-ConceptGraph: Advanced NLP-Enhanced Explorer")
