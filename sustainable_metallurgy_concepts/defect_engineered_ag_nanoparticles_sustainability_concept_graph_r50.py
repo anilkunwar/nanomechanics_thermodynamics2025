@@ -2767,7 +2767,7 @@ def render_sidebar():
             st.session_state['node_label_size'] = st.slider("Node label font size", 8, 24, 12, step=1)
             st.session_state['node_font_face'] = st.selectbox("Node font family", ["Inter, Segoe UI, Roboto, sans-serif", "Arial, Helvetica, sans-serif", "Georgia, serif", "Courier New, monospace"], index=0)
             st.session_state['use_abbreviated_labels'] = st.checkbox("Use abbreviated labels (N1, N2...)", value=False, help="Replaces long labels with N-codes to prevent visual clutter")
-            if st.session_state['use_abbreviated_labels']: st.session_state['max_label_length'] = st.slider("Max label length before abbreviation", 5, 30, 15)
+            if st.session_state['use_abbreviated_labels']: st.session_state['max_label_length'] = st.slider("Max label length before abbreviation", 2, 30, 15)
             st.session_state['show_definitions'] = st.checkbox("Show concept definitions in tooltips", value=True)
         with st.expander("🔗 Edge Label Settings"):
             st.session_state['show_edge_weights'] = st.toggle("Show edge weights", value=False)
