@@ -163,6 +163,14 @@ Relationship extraction (identifying cause-effect between laser parameters and m
 taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
 Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
 
+[![meaningtowords](https://img.shields.io/badge/agnpsustconceptgraph-v22.0-brightgreen)](https://defect-engineered-ag-np-sustainability-concept-graph22.streamlit.app/) (Resolving the frontend display issue and model loading/ontology definition based memory usage observed in v18-v21, v18e+concept definitions with edge panel shown in tooltips of the graph (complete)+efficient ontology definitions,Two display options in the Javascript frontend,  Enhanced and robust visualization, Concise annotations for labels and mapping in legends, the hierarchy visualization issue in v8 is resolved,  v1 with accelerated speed, Knowledge domain : Generic keyterms on laser and hea interaction, focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept
+taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy),
+Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
+
+
+
+
+
 
 
 
