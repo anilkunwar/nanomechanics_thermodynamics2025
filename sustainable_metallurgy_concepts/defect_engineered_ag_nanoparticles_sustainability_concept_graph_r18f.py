@@ -15,12 +15,6 @@ Enhancements over original:
 - Relationship extraction (identifying cause-effect between laser parameters and microstructure)
 - Reasoning-based edge inference
 
-PERMANENT GRAPH UPDATE:
-- Graphs are now saved to disk (exported_graphs/) with definitions embedded in HTML.
-- Streamlit component loads from the permanent file, not a temporary one.
-- Users can download, reload, and open graphs in their browser.
-- A legend and search panel are injected automatically.
-
 DEPLOYMENT:
 pip install streamlit torch transformers sentence-transformers networkx scikit-learn
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
@@ -49,8 +43,6 @@ import gc
 import hashlib
 import io
 import base64
-import webbrowser          # for permanent graph
-import shutil              # for permanent graph
 from collections import defaultdict, Counter, deque
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Union, Any, Set
@@ -103,10 +95,6 @@ st.set_page_config(
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 JSON_METADATA_DIR = os.path.join(SCRIPT_DIR, "json_metadatabase")
 os.makedirs(JSON_METADATA_DIR, exist_ok=True)
-
-# Permanent graph output directory
-PERMANENT_GRAPH_DIR = os.path.join(SCRIPT_DIR, "exported_graphs")
-os.makedirs(PERMANENT_GRAPH_DIR, exist_ok=True)
 
 # ==========================================
 # COLORMAP REGISTRY (50+)
@@ -338,6 +326,8 @@ class DomainOntology:
         self.concepts: Dict[str, ConceptNode] = {}
         self.relationships: List[Relationship] = []
         self._build_ontology()
+        # Auto-persist definitions to permanent storage
+        _ensure_definitions_persisted(self)
 
     def _build_ontology(self):
         """Build the complete domain ontology."""
@@ -543,6 +533,10 @@ class DomainOntology:
 
         # Build process-property causal chains
         self._build_causal_chains()
+        self._build_synonym_index()
+
+        # Build process-property causal chains
+        self._build_causal_chains()
 
     def _add_concept(self, canonical_name: str, concept_type: ConceptType,
                      synonyms: Set[str] = None, hypernyms: Set[str] = None,
@@ -688,24 +682,6 @@ class DomainOntology:
             return self.concepts[canonical_name].hyponyms
         return set()
 
-    def get_definition(self, canonical_name: str) -> str:
-        """Get the definition of a concept."""
-        if canonical_name in self.concepts:
-            return self.concepts[canonical_name].definition
-        return ""
-
-    def get_related_concepts(self, canonical_name: str, rel_type: RelationshipType = None) -> List[Tuple[str, RelationshipType, float]]:
-        """Get concepts related to a given concept."""
-        related = []
-        for rel in self.relationships:
-            if rel.source == canonical_name:
-                if rel_type is None or rel.rel_type == rel_type:
-                    related.append((rel.target, rel.rel_type, rel.confidence))
-            elif rel.target == canonical_name:
-                if rel_type is None or rel.rel_type == rel_type:
-                    related.append((rel.source, rel.rel_type, rel.confidence))
-        return related
-
     def infer_path(self, source: str, target: str, max_depth: int = 3) -> List[List[str]]:
         """Infer reasoning paths between two concepts."""
         paths = []
@@ -740,9 +716,124 @@ class DomainOntology:
         dfs(source, target, [source], 0)
         return paths
 
+    def get_related_concepts(self, canonical_name: str, rel_type: RelationshipType = None) -> List[Tuple[str, RelationshipType, float]]:
+        """Get concepts related to a given concept."""
+        related = []
+        for rel in self.relationships:
+            if rel.source == canonical_name:
+                if rel_type is None or rel.rel_type == rel_type:
+                    related.append((rel.target, rel.rel_type, rel.confidence))
+            elif rel.target == canonical_name:
+                if rel_type is None or rel.rel_type == rel_type:
+                    related.append((rel.source, rel.rel_type, rel.confidence))
+        return related
+
 # ==========================================
 # ADVANCED CONCEPT RESOLVER
 # ==========================================
+
+    def get_definition(self, canonical_name: str) -> str:
+        """Get the definition of a concept."""
+        if canonical_name in self.concepts:
+            return self.concepts[canonical_name].definition
+        return ""
+
+
+# ==========================================
+# PERMANENT CONCEPT DEFINITION PERSISTENCE
+# ==========================================
+
+PERMANENT_DEFS_PATH = os.path.join(SCRIPT_DIR, "permanent_concept_definitions.json")
+
+def _load_permanent_definitions() -> Dict[str, Dict[str, Any]]:
+    """Load definitions from permanent JSON file."""
+    if os.path.exists(PERMANENT_DEFS_PATH):
+        try:
+            with open(PERMANENT_DEFS_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def _save_permanent_definitions(defs: Dict[str, Dict[str, Any]]):
+    """Save definitions to permanent JSON file."""
+    try:
+        with open(PERMANENT_DEFS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(defs, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        st.warning(f"Could not save permanent definitions: {e}")
+
+def _extract_all_ontology_definitions(ontology: DomainOntology) -> Dict[str, Dict[str, Any]]:
+    """Extract all definitions from an ontology instance."""
+    defs = {}
+    for name, node in ontology.concepts.items():
+        defs[name] = {
+            "canonical_name": node.canonical_name,
+            "concept_type": node.concept_type.value,
+            "definition": node.definition,
+            "synonyms": list(node.synonyms),
+            "hypernyms": list(node.hypernyms),
+            "hyponyms": list(node.hyponyms),
+            "related_processes": list(node.related_processes),
+            "related_properties": list(node.related_properties),
+        }
+    return defs
+
+def _ensure_definitions_persisted(ontology: DomainOntology):
+    """Ensure all ontology definitions are saved to permanent storage."""
+    defs = _extract_all_ontology_definitions(ontology)
+    _save_permanent_definitions(defs)
+    return defs
+
+def _load_definitions_into_ontology(ontology: DomainOntology) -> DomainOntology:
+    """Load any missing definitions from permanent storage into ontology."""
+    stored = _load_permanent_definitions()
+    for name, data in stored.items():
+        if name not in ontology.concepts:
+            node = ConceptNode(
+                canonical_name=data["canonical_name"],
+                concept_type=ConceptType(data["concept_type"]),
+                synonyms=set(data.get("synonyms", [])),
+                hypernyms=set(data.get("hypernyms", [])),
+                hyponyms=set(data.get("hyponyms", [])),
+                related_processes=set(data.get("related_processes", [])),
+                related_properties=set(data.get("related_properties", [])),
+                definition=data.get("definition", ""),
+            )
+            ontology.concepts[name] = node
+    ontology._build_synonym_index()
+    ontology._build_causal_chains()
+    return ontology
+
+def get_definition_always_available(ontology: DomainOntology, concept_name: str) -> str:
+    """
+    Get definition with guaranteed availability.
+    Tries ontology first, then permanent storage, then returns empty string.
+    """
+    definition = ontology.get_definition(concept_name)
+    if definition:
+        return definition
+    stored = _load_permanent_definitions()
+    if concept_name in stored:
+        return stored[concept_name].get("definition", "")
+    canonical = ontology.resolve_concept(concept_name)
+    if canonical:
+        definition = ontology.get_definition(canonical)
+        if definition:
+            return definition
+        if canonical in stored:
+            return stored[canonical].get("definition", "")
+    return ""
+
+def ensure_node_has_definition(nx_graph: nx.Graph, node: str, ontology: DomainOntology):
+    """Ensure a node in the graph has a definition attribute."""
+    if node not in nx_graph.nodes():
+        return
+    current_def = nx_graph.nodes[node].get('definition', '')
+    if not current_def:
+        definition = get_definition_always_available(ontology, node)
+        if definition:
+            nx_graph.nodes[node]['definition'] = definition
 
 class AdvancedConceptResolver:
     """
@@ -936,6 +1027,8 @@ class EnhancedConceptExtractor:
             self._keyword_regex = re.compile(pattern, re.IGNORECASE)
         else:
             self._keyword_regex = None
+
+
 
     def _build_extraction_patterns(self):
         """Build comprehensive extraction patterns."""
@@ -1197,6 +1290,29 @@ class EnhancedConceptExtractor:
             return set(v for v in resolved.values() if v is not None)
         return set()
 
+    def _extract_from_context_windows(self, text: str, window_size: int = 100) -> Set[str]:
+        """Extract concepts by analyzing context around known keywords."""
+        concepts = set()
+        text_lower = text.lower()
+
+        # Find all domain keywords and extract their context
+        for keyword in self._get_all_keywords():
+            for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', text_lower):
+                start = max(0, match.start() - window_size)
+                end = min(len(text), match.end() + window_size)
+                context = text_lower[start:end]
+
+                # Extract phrases in this context
+                phrases = re.findall(r'\b([a-z]+(?:[-\s][a-z]+){1,3})\b', context)
+                for phrase in phrases:
+                    if len(phrase) > 5:
+                        # Check if phrase is domain-relevant
+                        canonical = self.resolver.resolve(phrase, context=context)
+                        if canonical:
+                            concepts.add(canonical)
+
+        return concepts
+
     def _get_all_keywords(self) -> Set[str]:
         """Get all keywords from ontology."""
         keywords = set()
@@ -1436,6 +1552,7 @@ class ReasoningEnhancedGraphBuilder:
             data['weight'] = (cooc_weight * cooc + 
                              sem_weight * sem + 
                              inf_weight * inf * conf)
+
 
 # ==========================================
 # ORIGINAL UTILITY FUNCTIONS (Preserved)
@@ -2658,552 +2775,6 @@ PHYSICS_PRESETS = {
 }
 
 # ==========================================
-# PERMANENT GRAPH RENDERER (NEW)
-# ==========================================
-
-def get_node_color_by_type(concept_type: ConceptType) -> str:
-    """Map concept types to colors."""
-    color_map = {
-        ConceptType.MATERIAL:       "#FF6B6B",  # Red
-        ConceptType.PROCESS:        "#4ECDC4",  # Teal
-        ConceptType.PROPERTY:       "#45B7D1",  # Blue
-        ConceptType.PHENOMENON:     "#F9CA24",  # Yellow
-        ConceptType.METHOD:         "#A29BFE",  # Purple
-        ConceptType.PARAMETER:      "#FD79A8",  # Pink
-        ConceptType.MICROSTRUCTURE: "#00B894",  # Green
-        ConceptType.MODEL:          "#E17055",  # Orange
-        ConceptType.GENERAL:        "#636E72",  # Gray
-    }
-    return color_map.get(concept_type, "#636E72")
-
-def get_edge_color_by_rel(rel_type: RelationshipType) -> str:
-    """Map relationship types to edge colors."""
-    color_map = {
-        RelationshipType.CAUSES:      "#FF4444",
-        RelationshipType.RESULTS_IN:  "#44AA44",
-        RelationshipType.INFLUENCES:  "#4488FF",
-        RelationshipType.DEPENDS_ON:  "#FF8800",
-        RelationshipType.REDUCES:     "#CC44CC",
-        RelationshipType.DEGRADES:    "#FF6666",
-        RelationshipType.HYPONYM:     "#888888",
-        RelationshipType.SYNONYM:     "#AAAAAA",
-        RelationshipType.CO_OCCURS:   "#666666",
-        RelationshipType.SEMANTIC:    "#44AAAA",
-        RelationshipType.INFERRED:    "#AAAAFF",
-        RelationshipType.BRIDGE:      "#FFAA44",
-    }
-    return color_map.get(rel_type, "#555555")
-
-def get_rel_label(rel_type: RelationshipType) -> str:
-    """Get human-readable label for relationship."""
-    label_map = {
-        RelationshipType.CAUSES:      "causes",
-        RelationshipType.RESULTS_IN:  "results in",
-        RelationshipType.INFLUENCES:  "influences",
-        RelationshipType.DEPENDS_ON:  "depends on",
-        RelationshipType.REDUCES:     "reduces",
-        RelationshipType.DEGRADES:    "degrades",
-        RelationshipType.HYPONYM:     "is a type of",
-        RelationshipType.SYNONYM:     "synonym",
-        RelationshipType.CO_OCCURS:   "co-occurs",
-        RelationshipType.SEMANTIC:    "related",
-        RelationshipType.INFERRED:    "inferred",
-        RelationshipType.BRIDGE:      "bridges",
-        RelationshipType.PART_OF:     "part of",
-        RelationshipType.HAS_PART:    "has part",
-        RelationshipType.HYPERNYM:    "generalizes",
-    }
-    return label_map.get(rel_type, "")
-
-def build_permanent_graph(
-    ontology: DomainOntology,
-    extra_nodes: Dict[str, ConceptType] = None,
-    extra_edges: List[Tuple[str, str, str, float]] = None,
-    graph_name: str = "concept_graph",
-    include_ontology_edges: bool = True,
-    include_definitions: bool = True,
-    physics_enabled: bool = True,
-) -> Network:
-    """
-    Build a pyvis Network with full definitions embedded.
-    This is the CORE function — all rendering goes through here.
-    """
-    net = Network(
-        height="800px",
-        width="100%",
-        directed=True,
-        notebook=False,
-        bgcolor="#0f0f1a",
-        font_color="#ffffff",
-        select_menu=True,
-        filter_menu=True,
-    )
-    
-    # Physics configuration
-    if physics_enabled:
-        net.set_options("""
-        {
-            "physics": {
-                "enabled": true,
-                "barnesHut": {
-                    "gravitationalConstant": -8000,
-                    "centralGravity": 0.3,
-                    "springLength": 200,
-                    "springConstant": 0.04,
-                    "damping": 0.09
-                },
-                "solver": "barnesHut",
-                "timestep": 0.35
-            },
-            "interaction": {
-                "hover": true,
-                "tooltipDelay": 100,
-                "zoomView": true,
-                "dragView": true,
-                "navigationButtons": true
-            },
-            "nodes": {
-                "font": {
-                    "size": 14,
-                    "face": "Inter, Arial, sans-serif",
-                    "strokeWidth": 3,
-                    "strokeColor": "#000000"
-                },
-                "borderWidth": 2,
-                "borderWidthSelected": 4
-            },
-            "edges": {
-                "font": {
-                    "size": 10,
-                    "face": "Inter, Arial, sans-serif",
-                    "color": "#aaaaaa",
-                    "strokeWidth": 0
-                },
-                "smooth": {
-                    "type": "curvedCW",
-                    "roundness": 0.15
-                },
-                "arrows": {
-                    "to": {
-                        "enabled": true,
-                        "scaleFactor": 0.6,
-                        "type": "arrow"
-                    }
-                }
-            }
-        }
-        """)
-    else:
-        net.set_options("""
-        {
-            "physics": { "enabled": false },
-            "interaction": {
-                "hover": true,
-                "tooltipDelay": 100,
-                "navigationButtons": true
-            }
-        }
-        """)
-    
-    # === ADD NODES ===
-    added_nodes = set()
-    
-    # 1. Ontology concepts
-    for canonical_name, concept_node in ontology.concepts.items():
-        if canonical_name in added_nodes:
-            continue
-        
-        definition = concept_node.definition if include_definitions else ""
-        color = get_node_color_by_type(concept_node.concept_type)
-        
-        # Build rich HTML tooltip
-        tooltip_parts = [
-            f"<div style='max-width:350px; padding:8px;'>",
-            f"<b style='font-size:14px; color:{color};'>",
-            f"{canonical_name.replace('_', ' ').title()}</b><br>",
-        ]
-        if definition:
-            tooltip_parts.append(
-                f"<span style='color:#cccccc; font-size:12px;'>{definition}</span><br>"
-            )
-        tooltip_parts.append(
-            f"<span style='color:#888888; font-size:11px;'>"
-            f"Type: {concept_node.concept_type.value}</span>"
-        )
-        if concept_node.synonyms:
-            syn_list = ", ".join(sorted(concept_node.synonyms)[:5])
-            tooltip_parts.append(
-                f"<br><span style='color:#666666; font-size:10px;'>"
-                f"Also: {syn_list}</span>"
-            )
-        tooltip_parts.append("</div>")
-        tooltip_html = "".join(tooltip_parts)
-        
-        # Node size based on connectivity
-        related_count = len(ontology.get_related_concepts(canonical_name))
-        node_size = max(15, min(40, 15 + related_count * 3))
-        
-        net.add_node(
-            canonical_name,
-            label=canonical_name.replace("_", " ").title(),
-            title=tooltip_html,          # ← DEFINITION IS HERE (permanent in HTML)
-            color=color,
-            size=node_size,
-            shape="dot",
-            borderWidth=2,
-            borderColor="#ffffff",
-            borderWidthSelected=4,
-        )
-        added_nodes.add(canonical_name)
-    
-    # 2. Extra nodes (from extracted concepts not in ontology)
-    if extra_nodes:
-        for node_name, concept_type in extra_nodes.items():
-            if node_name in added_nodes:
-                continue
-            color = get_node_color_by_type(concept_type)
-            definition = ontology.get_definition(node_name)
-            
-            tooltip_html = (
-                f"<div style='max-width:300px; padding:8px;'>"
-                f"<b style='color:{color};'>"
-                f"{node_name.replace('_', ' ').title()}</b><br>"
-                f"<span style='color:#888888; font-size:11px;'>"
-                f"Type: {concept_type.value}</span>"
-            )
-            if definition:
-                tooltip_html += (
-                    f"<br><span style='color:#cccccc; font-size:12px;'>"
-                    f"{definition}</span>"
-                )
-            tooltip_html += "</div>"
-            
-            net.add_node(
-                node_name,
-                label=node_name.replace("_", " ").title(),
-                title=tooltip_html,
-                color=color,
-                size=18,
-                shape="diamond",
-                borderWidth=1,
-                borderColor="#aaaaaa",
-            )
-            added_nodes.add(node_name)
-    
-    # === ADD EDGES ===
-    added_edges = set()
-    
-    # 1. Ontology relationships
-    if include_ontology_edges:
-        for rel in ontology.relationships:
-            edge_key = (rel.source, rel.target, rel.rel_type.value)
-            if edge_key in added_edges:
-                continue
-            if rel.source not in added_nodes or rel.target not in added_nodes:
-                continue
-            
-            edge_color = get_edge_color_by_rel(rel.rel_type)
-            label = get_rel_label(rel.rel_type)
-            width = max(1, int(rel.confidence * 4))
-            dashes = rel.inferred
-            
-            net.add_edge(
-                rel.source,
-                rel.target,
-                title=f"{label} (conf: {rel.confidence:.2f})",
-                label=label if label else None,
-                color=edge_color,
-                width=width,
-                dashes=dashes,
-                smooth={"type": "curvedCW", "roundness": 0.15},
-                arrowStrikethrough=False,
-            )
-            added_edges.add(edge_key)
-    
-    # 2. Extra edges
-    if extra_edges:
-        for src, tgt, rel_label, confidence in extra_edges:
-            edge_key = (src, tgt, rel_label)
-            if edge_key in added_edges:
-                continue
-            net.add_edge(
-                src, tgt,
-                title=f"{rel_label} (conf: {confidence:.2f})",
-                label=rel_label,
-                color="#44AAAA",
-                width=max(1, int(confidence * 3)),
-                smooth={"type": "curvedCW", "roundness": 0.2},
-            )
-            added_edges.add(edge_key)
-    
-    return net
-
-def save_graph_permanent(
-    net: Network,
-    graph_name: str = "concept_graph",
-    overwrite: bool = True,
-    also_open_browser: bool = False,
-) -> str:
-    """
-    Save graph to a PERMANENT HTML file on disk.
-    Returns the file path.
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{graph_name}_{timestamp}.html"
-    filepath = os.path.join(PERMANENT_GRAPH_DIR, filename)
-    
-    # pyvis save_graph writes standalone HTML (all JS embedded)
-    net.save_graph(filepath)
-    
-    # Inject a custom header with legend
-    _inject_legend_and_header(filepath, net)
-    
-    if also_open_browser:
-        webbrowser.open(f"file://{os.path.abspath(filepath)}")
-    
-    return filepath
-
-def _inject_legend_and_header(html_path: str, net: Network):
-    """
-    Inject a persistent legend + search panel into the saved HTML.
-    This makes the file self-contained and professional.
-    """
-    with open(html_path, "r", encoding="utf-8") as f:
-        html_content = f.read()
-    
-    legend_html = """
-    <div id="custom-legend" style="
-        position: fixed;
-        top: 10px;
-        right: 10px;
-        background: rgba(15, 15, 26, 0.95);
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 15px;
-        color: #fff;
-        font-family: Inter, Arial, sans-serif;
-        font-size: 12px;
-        z-index: 10000;
-        max-height: 90vh;
-        overflow-y: auto;
-        min-width: 200px;
-    ">
-        <h3 style="margin:0 0 10px 0; color:#4ECDC4; font-size:14px;">
-            📋 Concept Legend
-        </h3>
-        <div style="display:flex; flex-direction:column; gap:4px;">
-            <div><span style="color:#FF6B6B;">●</span> Material</div>
-            <div><span style="color:#4ECDC4;">●</span> Process</div>
-            <div><span style="color:#45B7D1;">●</span> Property</div>
-            <div><span style="color:#F9CA24;">●</span> Phenomenon</div>
-            <div><span style="color:#A29BFE;">●</span> Method</div>
-            <div><span style="color:#FD79A8;">●</span> Parameter</div>
-            <div><span style="color:#00B894;">●</span> Microstructure</div>
-            <div><span style="color:#E17055;">●</span> Model</div>
-            <div><span style="color:#636E72;">●</span> General</div>
-        </div>
-        <hr style="border-color:#333; margin:10px 0;">
-        <h3 style="margin:0 0 8px 0; color:#4ECDC4; font-size:13px;">
-            🔗 Edge Types
-        </h3>
-        <div style="display:flex; flex-direction:column; gap:3px; font-size:11px;">
-            <div><span style="color:#FF4444;">→</span> causes</div>
-            <div><span style="color:#44AA44;">→</span> results in</div>
-            <div><span style="color:#4488FF;">→</span> influences</div>
-            <div><span style="color:#FF8800;">→</span> depends on</div>
-            <div><span style="color:#CC44CC;">→</span> reduces</div>
-            <div><span style="color:#FF6666;">→</span> degrades</div>
-            <div><span style="color:#888888;">→</span> is a type of</div>
-            <div><span style="color:#AAAAFF;">→</span> inferred</div>
-        </div>
-        <hr style="border-color:#333; margin:10px 0;">
-        <p style="margin:0; color:#666; font-size:10px;">
-            Hover nodes for definitions<br>
-            Generated: """ + datetime.now().strftime("%Y-%m-%d %H:%M") + """<br>
-            AgNP-Sustainability-ConceptGraph
-        </p>
-    </div>
-    <script>
-        // Toggle legend visibility with 'L' key
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'l' || e.key === 'L') {
-                var legend = document.getElementById('custom-legend');
-                legend.style.display = legend.style.display === 'none' ? 'block' : 'none';
-            }
-        });
-    </script>
-    """
-    
-    # Insert legend right after <body> tag
-    html_content = html_content.replace(
-        "<body>",
-        "<body>\n" + legend_html
-    )
-    
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-def get_latest_graph_path(graph_name: str = "concept_graph") -> Optional[str]:
-    """Find the most recently saved graph file."""
-    pattern = f"{graph_name}_*.html"
-    files = sorted(
-        Path(PERMANENT_GRAPH_DIR).glob(pattern),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
-    )
-    return str(files[0]) if files else None
-
-def list_all_saved_graphs() -> List[Dict]:
-    """List all permanently saved graph files."""
-    graphs = []
-    for fp in sorted(Path(PERMANENT_GRAPH_DIR).glob("*.html")):
-        stat = fp.stat()
-        graphs.append({
-            "filename": fp.name,
-            "path": str(fp),
-            "size_kb": round(stat.st_size / 1024, 1),
-            "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-        })
-    return graphs
-
-# ==========================================
-# STREAMLIT UI FOR PERMANENT GRAPHS (NEW)
-# ==========================================
-
-def render_graph_section(ontology: DomainOntology, G=None, concept_abstract_map=None):
-    """
-    Complete Streamlit section for building, viewing, and permanently saving graphs.
-    Call this from your main app.
-    """
-    st.markdown("## 🕸️ Concept Graph Explorer")
-    
-    # --- Controls ---
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        graph_name = st.text_input(
-            "Graph name (for file save)",
-            value="agnp_concept_graph",
-            key="graph_name_input"
-        )
-    
-    with col2:
-        show_ontology_edges = st.checkbox(
-            "Show ontology relationships",
-            value=True,
-            key="show_onto_edges"
-        )
-    
-    with col3:
-        show_definitions = st.checkbox(
-            "Include definitions in tooltips",
-            value=True,
-            key="show_defs"
-        )
-    
-    physics = st.checkbox("Enable physics simulation", value=True, key="physics_cb")
-    
-    # --- Build button ---
-    if st.button("🔬 Build & Render Graph", type="primary", key="build_graph_btn"):
-        with st.spinner("Building concept graph with definitions..."):
-            # Prepare extra nodes and edges from the NetworkX graph (if provided)
-            extra_nodes = {}
-            extra_edges = []
-            if G is not None and concept_abstract_map is not None:
-                # Add nodes that are not in ontology
-                for node in G.nodes():
-                    if node not in ontology.concepts:
-                        # Determine concept type from graph node attributes
-                        concept_type_str = G.nodes[node].get('concept_type', 'general')
-                        # Map string to ConceptType
-                        try:
-                            ct = ConceptType(concept_type_str)
-                        except ValueError:
-                            ct = ConceptType.GENERAL
-                        extra_nodes[node] = ct
-                # Add edges that are not ontology relationships
-                for u, v, data in G.edges(data=True):
-                    edge_type_str = data.get('edge_type', 'cooccurrence')
-                    # Try to map to RelationshipType
-                    try:
-                        rel_type = RelationshipType(edge_type_str)
-                    except ValueError:
-                        rel_type = RelationshipType.CO_OCCURS
-                    label = get_rel_label(rel_type)
-                    confidence = data.get('weight', 1.0)
-                    extra_edges.append((u, v, label, confidence))
-            
-            net = build_permanent_graph(
-                ontology=ontology,
-                extra_nodes=extra_nodes,
-                extra_edges=extra_edges,
-                graph_name=graph_name,
-                include_ontology_edges=show_ontology_edges,
-                include_definitions=show_definitions,
-                physics_enabled=physics,
-            )
-            
-            # Save permanently
-            saved_path = save_graph_permanent(net, graph_name=graph_name)
-            st.session_state["current_graph_path"] = saved_path
-            with open(saved_path, "r", encoding="utf-8") as f:
-                st.session_state["current_graph_html"] = f.read()
-            st.success(f"✅ Graph saved permanently to:\n`{saved_path}`")
-    
-    # --- Display current graph ---
-    if "current_graph_html" in st.session_state:
-        st.markdown("### Interactive Graph (hover nodes for definitions)")
-        st.components.v1.html(
-            st.session_state["current_graph_html"],
-            height=850,
-            scrolling=True
-        )
-    
-    # --- Download button ---
-    if "current_graph_path" in st.session_state:
-        saved_path = st.session_state["current_graph_path"]
-        with open(saved_path, "rb") as f:
-            st.download_button(
-                label="💾 Download Permanent HTML File",
-                data=f.read(),
-                file_name=os.path.basename(saved_path),
-                mime="text/html",
-                key="download_graph_btn"
-            )
-    
-    # --- List all saved graphs ---
-    st.markdown("### 📁 All Permanently Saved Graphs")
-    saved_graphs = list_all_saved_graphs()
-    
-    if saved_graphs:
-        # Show as table
-        df_graphs = pd.DataFrame(saved_graphs)
-        st.dataframe(df_graphs, use_container_width=True, hide_index=True)
-        
-        # Allow loading any saved graph
-        if len(saved_graphs) > 0:
-            selected = st.selectbox(
-                "Load a previously saved graph:",
-                options=range(len(saved_graphs)),
-                format_func=lambda i: f"{saved_graphs[i]['filename']} ({saved_graphs[i]['size_kb']} KB)",
-                key="load_graph_select"
-            )
-            if st.button("📂 Load Selected Graph", key="load_graph_btn"):
-                path = saved_graphs[selected]["path"]
-                with open(path, "r", encoding="utf-8") as f:
-                    st.session_state["current_graph_html"] = f.read()
-                    st.session_state["current_graph_path"] = path
-                st.success(f"Loaded: `{saved_graphs[selected]['filename']}`")
-                st.rerun()
-    else:
-        st.info("No graphs saved yet. Click 'Build & Render Graph' to create one.")
-    
-    # --- Open in browser button ---
-    if "current_graph_path" in st.session_state:
-        if st.button("🌐 Open in System Browser", key="open_browser_btn"):
-            webbrowser.open(f"file://{os.path.abspath(st.session_state['current_graph_path'])}")
-
-# ==========================================
 # VISUALIZATION FUNCTIONS (ENHANCED WITH REASONING)
 # ==========================================
 def get_ag_sintering_category_color(concept: str, cmap_colors: Optional[List[str]] = None) -> str:
@@ -3376,7 +2947,15 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
         # ------------------------------------------------------------------
 
         concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        # PERMANENT DEFINITION: Try graph node, then ontology, then permanent storage
         definition = nx_graph.nodes[node].get('definition', '')
+        if not definition and 'ontology' in globals():
+            definition = get_definition_always_available(ontology, node)
+        if not definition:
+            # Last resort: try to get from session state ontology
+            session_ontology = st.session_state.get('ontology')
+            if session_ontology:
+                definition = get_definition_always_available(session_ontology, node)
 
         x, y = (pos.get(node, (0, 0))[0] * 1200, pos.get(node, (0, 0))[1] * 1200)
 
@@ -3410,7 +2989,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
 
                    f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>Frequency:</span> {freq}"
 
-                   + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if (show_definitions and definition) else "")
+                   + (f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>Definition:</span> <i>{definition}</i>" if definition else f"<br><span style='color:{theme['tooltip_text']};opacity:0.5;'><i>No definition available</i></span>")
 
                    + "</div>"),
 
@@ -4374,6 +3953,8 @@ def render_radar_chart(distill_df, top_k=15, cmap_name="viridis", theme=None):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
+
 def render_tsne_projection(valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]], 
                            embed_model, theme: Dict = None, n_components: int = 2, perplexity: int = 30):
     """Render t-SNE projection of concept embeddings."""
@@ -5136,6 +4717,10 @@ def render_reasoning_dashboard(nx_graph, valid_concepts, ontology, extractor):
         st.info("No hierarchical relationships found in current concept set.")
 
 # ==========================================
+# MAIN APPLICATION (ENHANCED WITH REASONING)
+# ==========================================
+
+# ==========================================
 # GRAPH METRICS DASHBOARD
 # ==========================================
 def compute_graph_metrics(G: nx.Graph) -> dict:
@@ -5159,6 +4744,8 @@ def compute_graph_metrics(G: nx.Graph) -> dict:
         metrics["top_bridges"] = []
     return metrics
 
+
+
 def display_metric_dashboard(metrics: dict, theme=None):
     if not metrics:
         st.warning("No graph metrics available.")
@@ -5179,6 +4766,10 @@ def display_metric_dashboard(metrics: dict, theme=None):
 # EXTRA VISUALIZATIONS
 # ==========================================
 
+
+# ==========================================
+# CONCEPT TIMELINE VISUALIZATION
+# ==========================================
 def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, theme=None):
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
@@ -5219,6 +4810,11 @@ def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, t
                       font_color=theme.get("font", "#000000"))
     st.plotly_chart(fig, use_container_width=True)
 
+
+
+# ==========================================
+# CO-OCCURRENCE HEATMAP
+# ==========================================
 def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, top_n=30, theme=None):
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
@@ -5242,9 +4838,7 @@ def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, 
                       font_color=theme.get("font", "#000000"))
     st.plotly_chart(fig, use_container_width=True)
 
-# ==========================================
-# MAIN APPLICATION (UPDATED WITH PERMANENT GRAPH)
-# ==========================================
+
 
 def main():
     st.title("AgNP-Sustainability-ConceptGraph: Advanced NLP-Enhanced Explorer")
@@ -5346,6 +4940,7 @@ def main():
                 st.write(f"Adaptive config: {config}")
                 progress_bar.progress(0.15)
 
+                # Initialize enhanced extractor with ontology
                 use_ontology = st.session_state.get('use_ontology', True)
                 use_embedding = st.session_state.get('use_embedding_resolution', True)
                 use_inference = st.session_state.get('use_inference', True)
@@ -5367,6 +4962,7 @@ def main():
                 all_metrics = [None] * len(df_filtered)
 
                 def _process_single_row(idx, row):
+                    """Process a single row - called by worker threads."""
                     text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
                     concepts = extractor.extract_from_text(text, idx)
                     metrics = {}
@@ -5378,6 +4974,7 @@ def main():
                     if temp_matches: metrics['temperature'] = [float(m) for m in temp_matches]
                     return idx, concepts, metrics
 
+                # OPTIMIZATION: Use ThreadPoolExecutor for parallel document processing
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     futures = {executor.submit(_process_single_row, idx, row): idx 
                                for idx, row in df_filtered.iterrows()}
@@ -5392,9 +4989,15 @@ def main():
                             progress_bar.progress(0.20 + (completed / total) * 0.15)
                             status.write(f"Extracted {completed}/{total} documents...")
 
+                # ==========================================
+                # POST-EXTRACTION PROCESSING (FIXED)
+                # ==========================================
+                # Safety: Replace any None values from thread exceptions with empty lists
                 all_concepts = [c if c is not None else [] for c in all_concepts]
 
+                # Build concept frequencies and abstract map from extracted concepts
                 if use_ontology and extractor is not None:
+                    # Path 1: Use Ontology and Resolver
                     concept_freq = extractor.get_concept_frequencies()
                     valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
                     concept_abstract_map = defaultdict(list)
@@ -5402,6 +5005,7 @@ def main():
                         for c in set(concepts):
                             concept_abstract_map[c].append(doc_idx)
                 else:
+                    # Path 2: Non-Ontology mode — manually compute frequencies from parallel results
                     concept_freq = defaultdict(int)
                     for concepts in all_concepts:
                         for c in concepts:
@@ -5415,6 +5019,7 @@ def main():
                 st.write(f"✅ Extraction complete. Found {len(valid_concepts)} valid concepts.")
                 progress_bar.progress(0.35)
 
+                # Build concept_to_id mapping (unified for both paths)
                 valid_concepts = sorted(valid_concepts, key=lambda c: concept_abstract_map.get(c, []).__len__(), reverse=True)
                 top_n = config.get("TOP_N_CONCEPTS", 1000)
                 if len(valid_concepts) > top_n:
@@ -5431,6 +5036,7 @@ def main():
 
                 st.write("Building concept graph...")
                 if use_ontology and use_inference:
+                    # Use reasoning-enhanced graph builder
                     graph_builder = ReasoningEnhancedGraphBuilder(ontology, extractor)
                     nx_graph = graph_builder.build_graph(
                         all_concepts, valid_concepts, 
@@ -5438,6 +5044,7 @@ def main():
                         embed_model, config
                     )
                 else:
+                    # Use legacy graph builder
                     nx_graph = build_hybrid_graph(all_concepts, valid_concepts, concept_to_id, embed_model, config, ontology)
 
                 pos_pairs, neg_pairs = sample_edges_for_training(nx_graph, valid_concepts, concept_to_id, config)
@@ -5494,6 +5101,7 @@ def main():
                 st.write("Computing distillation metrics...")
                 distill_df = compute_concept_distillation(valid_concepts, concept_abstract_map, all_texts)
 
+                # Advanced analytics
                 st.write("Running advanced analytics...")
                 burst_df = detect_keyword_bursts(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
                 drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, embed_model, selected_text_cols)
@@ -5511,6 +5119,7 @@ def main():
                 progress_bar.progress(1.00)
                 status.update(label="Analysis complete!", state="complete", expanded=False)
 
+                # Store analysis data
                 analysis_data = {
                     "valid_concepts": valid_concepts,
                     "concept_to_id": concept_to_id,
@@ -5531,6 +5140,7 @@ def main():
                     "selected_text_cols": selected_text_cols
                 }
 
+                # Store reasoning artifacts if using ontology
                 if use_ontology:
                     analysis_data.update({
                         "ontology": ontology,
@@ -5559,6 +5169,7 @@ def main():
     # --- APPLY GRAPH EDITS IF REQUESTED ---
     if st.session_state.get('apply_edits') and st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
+        # Save snapshot before edit
         st.session_state.edit_history.save_snapshot(
             data["nx_graph"], data["valid_concepts"], data["concept_to_id"],
             data["id_to_concept"], data["concept_abstract_map"]
@@ -5599,6 +5210,7 @@ def main():
         cmap = st.session_state.get('cmap_name', 'viridis')
         top_n_graph = st.session_state.get('top_n_graph', 200)
 
+        # Determine available tabs
         has_reasoning = "ontology" in data
         tab_names = ["Visualization", "Distillation", "Research Directions", "Validation", "Export", "Extra Viz", "Advanced Analytics"]
         if has_reasoning:
@@ -5617,36 +5229,57 @@ def main():
                 nx_graph = nx.relabel_nodes(nx_graph, {i: valid_concepts[i] for i in range(len(valid_concepts))})
 
             viz_choice = st.session_state.get('viz_backend', 'PyVis (Interactive)')
-            # If PyVis is chosen, use the permanent graph renderer
-            if viz_choice == "PyVis (Interactive)":
-                render_graph_section(ontology, G=nx_graph, concept_abstract_map=concept_abstract_map)
-            else:
-                physics = st.session_state.get('physics_enabled', True)
-                physics_preset = st.session_state.get('effective_physics', PHYSICS_PRESETS["Stable (Default)"])
-                theme = THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)'), THEME_PRESETS["Bright (Default)"])
-                top_n = st.session_state.get('top_n_graph', 0)
-                show_weights = st.session_state.get('show_edge_weights', False)
-                edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
+            physics = st.session_state.get('physics_enabled', True)
+            physics_preset = st.session_state.get('effective_physics', PHYSICS_PRESETS["Stable (Default)"])
+            theme = THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)'), THEME_PRESETS["Bright (Default)"])
+            top_n = st.session_state.get('top_n_graph', 0)
+            show_weights = st.session_state.get('show_edge_weights', False)
+            edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
 
-                if viz_choice == "Plotly 2D":
-                    render_graph_plotly_2d(
-                        nx_graph, concept_abstract_map,
-                        cmap_name=cmap,
-                        top_n_nodes=top_n,
-                        theme=theme,
-                        show_edge_weights=show_weights,
-                        node_label_size=st.session_state.get('node_label_size') or 10
-                    )
-                elif viz_choice == "Plotly 3D":
-                    render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=top_n,
-                                            theme=theme, show_edge_weights=show_weights)
-                else:
-                    render_graph_fallback(nx_graph, concept_abstract_map, theme=theme,
-                                          show_edge_weights=show_weights)
+            if viz_choice == "PyVis (Interactive)":
+                render_graph_pyvis(
+                    nx_graph, concept_abstract_map,
+                    physics_enabled=physics,
+                    cmap_name=cmap,
+                    top_n_nodes=top_n,
+                    theme=theme,
+                    physics_preset=physics_preset,
+                    show_edge_weights=show_weights,
+                    edge_label_mode=edge_label_mode,
+                    node_label_size=st.session_state.get('node_label_size') or 12,
+                    node_label_position=st.session_state.get('node_label_position') or 'center',
+                    node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
+                    edge_label_size=st.session_state.get('edge_label_size') or 10,
+                    edge_label_color=st.session_state.get('edge_label_color') or None,
+                    edge_label_position=st.session_state.get('edge_label_position') or 'middle',
+                    # --- NEW PARAMETERS ---
+                    use_abbreviated_labels=st.session_state.get('use_abbreviated_labels', False),
+                    max_label_length=st.session_state.get('max_label_length', 15),
+                    enable_node_highlight=st.session_state.get('enable_node_highlight', False),
+
+                    show_definitions=st.session_state.get('show_definitions', True)
+
+                )
+
+            elif viz_choice == "Plotly 2D":
+                render_graph_plotly_2d(
+                    nx_graph, concept_abstract_map,
+                    cmap_name=cmap,
+                    top_n_nodes=top_n,
+                    theme=theme,
+                    show_edge_weights=show_weights,
+                    node_label_size=st.session_state.get('node_label_size') or 10
+                )
+            elif viz_choice == "Plotly 3D":
+                render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=top_n,
+                                        theme=theme, show_edge_weights=show_weights)
+            else:
+                render_graph_fallback(nx_graph, concept_abstract_map, theme=theme,
+                                      show_edge_weights=show_weights)
 
             with st.expander("Graph Metrics"):
                 metrics = compute_graph_metrics(nx_graph)
-                display_metric_dashboard(metrics, theme=THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)')))
+                display_metric_dashboard(metrics, theme=theme)
 
             with st.expander("Domain Hierarchy (Sunburst)"):
                 cat_filter = st.session_state.get('sunburst_categories', [])
@@ -5663,7 +5296,7 @@ def main():
                 render_sunburst_chart(
                     labels, parents, values,
                     cmap_name=st.session_state.get('sunburst_cmap', cmap),
-                    theme=THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)')),
+                    theme=theme,
                     branchvalues=bv_mode,
                     label_size=st.session_state.get('sunburst_label_size') or 20,
                     width=st.session_state.get('sunburst_width') or 900,
@@ -5675,11 +5308,12 @@ def main():
                         st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'))
                 )
 
+
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
                 if radar_k == 0:
                     radar_k = min(15, len(distill_df))
-                render_radar_chart(distill_df, top_k=radar_k, cmap_name=cmap, theme=THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)')))
+                render_radar_chart(distill_df, top_k=radar_k, cmap_name=cmap, theme=theme)
 
         tab_idx += 1
         with tabs[tab_idx]:
@@ -5745,37 +5379,11 @@ def main():
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Export & Post-Processing")
-            # Note: export_graph function is not defined; we'll provide a simple export for edges/nodes
             export_format = st.selectbox("Format:", ["GraphML", "JSON", "CSV (Edges)", "CSV (Nodes)", "PNG", "SVG"])
             if st.button("Generate Export"):
-                if export_format == "GraphML":
-                    data_bytes = io.BytesIO()
-                    nx.write_graphml(nx_graph, data_bytes)
-                    data_bytes = data_bytes.getvalue()
-                    mime = "application/graphml+xml"
-                    filename = "graph.graphml"
-                elif export_format == "JSON":
-                    data_bytes = json.dumps(nx.node_link_data(nx_graph)).encode('utf-8')
-                    mime = "application/json"
-                    filename = "graph.json"
-                elif export_format == "CSV (Edges)":
-                    edges = [(u, v, d.get('weight', 1)) for u, v, d in nx_graph.edges(data=True)]
-                    df_edges = pd.DataFrame(edges, columns=["source", "target", "weight"])
-                    data_bytes = df_edges.to_csv(index=False).encode('utf-8')
-                    mime = "text/csv"
-                    filename = "edges.csv"
-                elif export_format == "CSV (Nodes)":
-                    nodes = [(n, nx_graph.nodes[n].get('frequency', 0), nx_graph.nodes[n].get('concept_type', 'general')) 
-                             for n in nx_graph.nodes()]
-                    df_nodes = pd.DataFrame(nodes, columns=["node", "frequency", "type"])
-                    data_bytes = df_nodes.to_csv(index=False).encode('utf-8')
-                    mime = "text/csv"
-                    filename = "nodes.csv"
-                else:
-                    data_bytes = b""
-                    mime = "text/plain"
-                    filename = "export.txt"
-                if data_bytes:
+                result = export_graph(nx_graph, concept_abstract_map, export_format)
+                if result[0]:
+                    data_bytes, mime, filename = result
                     st.download_button("Save File", data=data_bytes, file_name=filename, mime=mime)
 
             # Publication figure export
@@ -5847,6 +5455,7 @@ def main():
 
             with st.expander("Bubble Chart (Importance)"):
                 render_bubble_chart(nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=theme)
+
 
         tab_idx += 1
         with tabs[tab_idx]:
@@ -5920,6 +5529,7 @@ def main():
                 if not centrality_df.empty:
                     st.dataframe(centrality_df.head(20), use_container_width=True)
 
+                    # Correlation heatmap of centralities
                     corr_cols = ['degree', 'betweenness', 'closeness', 'eigenvector', 'pagerank']
                     available = [c for c in corr_cols if c in centrality_df.columns]
                     if len(available) >= 2:
@@ -5929,12 +5539,13 @@ def main():
                                         color_continuous_scale='RdBu_r')
                         st.plotly_chart(fig, use_container_width=True)
 
+                    # Degree distribution
                     fig = plot_degree_distribution(nx_graph, theme=theme)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.info("No centrality data available.")
 
-        # Reasoning Dashboard Tab (if ontology used)
+        # Reasoning Dashboard Tab (only if ontology was used)
         if has_reasoning:
             tab_idx += 1
             with tabs[tab_idx]:
