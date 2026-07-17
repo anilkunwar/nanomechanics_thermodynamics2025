@@ -3890,7 +3890,7 @@ def render_sidebar():
             all_graph = st.checkbox("All", value=True, key="all_graph_chk")
         with col_slider1:
             st.session_state['top_n_graph'] = st.slider(
-                "Max nodes", 10, 15, 11, step=1, disabled=all_graph,
+                "Max nodes", 10, 500, 200, step=10, disabled=all_graph,
                 key="top_n_graph_slider"
             )
         if all_graph:
