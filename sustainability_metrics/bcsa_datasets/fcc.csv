@@ -1,0 +1,6 @@
+﻿Metric,Before,After,Δ (After − Before)
+Modularity Q,0.0126,0.0028,-0.0098
+Avg. shortest path ⟨d⟩,1.5994,1.6047,+0.0053
+# Connected components,1,1,+0
+Avg. clustering,0.6829,0.6833,+0.0004
+Density,0.4006,0.3953,-0.0053
