@@ -149,6 +149,8 @@ The resulting Dataframe yields:
 
 # Bridge-Criticality Sensitivity Analysis
 
+[![meaningtowords](https://img.shields.io/badge/bcsavis-v2.0-turquoise)](https://bcsa-metrics1.streamlit.app/) ( can construct chart  with the datasets available within the app file or by locating the csv file)
+
 ## 1. What is Bridge-Criticality Sensitivity Analysis?
 
 The **Bridge-Criticality Sensitivity Analysis** is a graph-topological diagnostic that quantifies **how structurally important a single node (concept) is to the overall integrity of the concept graph** by measuring what happens to the graph when that node is *removed*.
