@@ -149,7 +149,9 @@ The resulting Dataframe yields:
 
 # Bridge-Criticality Sensitivity Analysis
 
-[![meaningtowords](https://img.shields.io/badge/bcsavis-v2.0-turquoise)](https://bcsa-metrics1.streamlit.app/) ( can construct chart  with the datasets available within the app file or by locating the csv file)
+[![meaningtowords](https://img.shields.io/badge/bcsavis-v1.0-turquoise)](https://bcsa-metrics1.streamlit.app/) ( can construct chart  with the datasets available within the app file or by locating the csv file)
+
+[![meaningtowords](https://img.shields.io/badge/bcsavis-v2.0-turquoise)](https://bcsa-metrics2.streamlit.app/) ( can construct chart  with the datasets available within the app file or by locating the csv file, enhancement of the customization of the figure)
 
 ## 1. What is Bridge-Criticality Sensitivity Analysis?
 
