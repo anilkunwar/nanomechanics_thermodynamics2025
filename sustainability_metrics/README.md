@@ -1,7 +1,7 @@
 
-# Metrics SIS and BCSA values are obtained from compute sustainability scores code
+# Metrics SIS and BCSA values are obtained from compute sustainability scores code in the knowledge graph of Efficiently Synthesized Ag Nanoparticles
 
-# Sustainability Impact Score
+# Sustainability Impact Score in GNN
  
 [![meaningtowords](https://img.shields.io/badge/sisvis-v1.0-orange)](https://sustainability-impact-score-visualization1.streamlit.app/) ( Concepts with higher score are nearer to sustainability anchors, can construct charts only with the datasets available within the app file)
 
@@ -150,7 +150,7 @@ The resulting Dataframe yields:
 3. **Cross-Validation**: Provides topological verification of experimental and physical property hierarchies purely through graph path metrics.
 
 
-# Bridge-Criticality Sensitivity Analysis
+# Bridge-Criticality Sensitivity Analysis in a Graph
 
 [![meaningtowords](https://img.shields.io/badge/bcsavis-v1.0-turquoise)](https://bcsa-metrics1.streamlit.app/) ( can construct chart  with the datasets available within the app file or by locating the csv file)
 
