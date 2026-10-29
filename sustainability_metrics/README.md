@@ -94,14 +94,14 @@ Applying the SIS metric to microstructural defect nodes yields relative rankings
 
 | Concept Node | Score ($\mathrm{SIS}$) | Dominant Graph Route |
 | :--- | :--- | :--- |
-| **`twins`** | **$\approx 0.62$** | Direct path via `diffusion_highways` intermediate node |
-| **`stacking_faults`** | **$\approx 0.55$** | Secondary path via `diffusion_highways` |
-| **`lattice_distortion`** | **$\approx 0.48$** | Indirect connectivity with longer weighted paths |
+| **`stacking_faults`** | **$\approx 0.65$** | Secondary path via `diffusion_highways` |
+| **`twins`** | **$\approx 0.58$** | Direct path via `diffusion_highways` intermediate node |
+| **`lattice_distortion`** | **$\approx 0.49$** | Indirect connectivity with longer weighted paths |
 
 ### Physical Interpretation 
-The graph-topological ranking ($\mathrm{twins} > \mathrm{stacking\_faults} > \mathrm{lattice\_distortion}$) directly mirrors experimental characterization data: 
-* **Twin boundaries** correlate with peak von Mises stress ($\approx 111.6\text{ GPa}$) and maximal sintering temperature reduction (down to $94^\circ\text{C}$).
+The graph-topological ranking (\mathrm{stacking\_faults} > $\mathrm{twins} >  \mathrm{lattice\_distortion}$) directly mirrors experimental characterization data: 
 * **Stacking faults** exhibit intermediate local stresses ($\approx 64\text{ GPa}$) and moderate sintering onset reductions.
+* * **Twin boundaries** correlate with peak von Mises stress ($\approx 111.6\text{ GPa}$) and maximal sintering temperature reduction (down to $94^\circ\text{C}$).
 * **Lattice distortions** yield lower stress concentration ($\approx 30.3\text{ GPa}$) and smaller operational impact.
 
 ---
