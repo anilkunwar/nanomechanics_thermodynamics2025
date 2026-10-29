@@ -667,7 +667,7 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
             except NameError:
                 # Fallback if __file__ isn't defined (e.g., interactive REPL)
                 _SCRIPT_DIR = os.getcwd()
-            _default_dataset_dir = os.path.join(_SCRIPT_DIR, "datasets")
+            _default_dataset_dir = os.path.join(_SCRIPT_DIR, "sis_datasets")
 
             dir_path = st.text_input(
                 "Directory path (local):",
