@@ -321,7 +321,9 @@ def render_3d_bar_chart(df: pd.DataFrame, cmap_name: str, width: int, height: in
     colors = get_cmap_colors(cmap_name, n)
     if grid_size is None or grid_size <= 0:
         grid_size = int(np.ceil(np.sqrt(n)))
-    cols, rows = grid_size, int(np.ceil(n / cols))
+    # ★ FIX: assign cols first, then compute rows using cols (avoid UnboundLocalError)
+    cols = grid_size
+    rows = int(np.ceil(n / cols))
 
     fig = go.Figure()
     for i in range(n):
@@ -615,11 +617,15 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
                     st.success(f"Loaded {len(df_all)} unique concepts from {len(uploaded)} file(s).")
 
         elif data_mode == "Load from local directory":
-            dir_path = st.text_input("Directory path (local):", value="./datasets")
-            if os.path.isdir(dir_path):
-                csv_files = [f for f in os.listdir(dir_path) if f.lower().endswith('.csv')]
+            dir_path = st.text_input(
+                "Directory path (local):",
+                value=".",
+                help="Use '.' for current directory, or enter an absolute path like /home/user/data. The directory must contain .csv files with 'concept' and 'SIS' columns.",
+            )
+            if dir_path and os.path.isdir(dir_path):
+                csv_files = sorted([f for f in os.listdir(dir_path) if f.lower().endswith('.csv')])
                 if csv_files:
-                    selected_file = st.selectbox("Select CSV file:", csv_files)
+                    selected_file = st.selectbox(f"Select CSV file ({len(csv_files)} found):", csv_files)
                     if selected_file:
                         try:
                             full_path = os.path.join(dir_path, selected_file)
@@ -635,9 +641,9 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
                         except Exception as e:
                             st.error(f"Failed to load: {e}")
                 else:
-                    st.warning(f"No CSV files found in {dir_path}")
-            else:
-                st.warning(f"Directory does not exist: {dir_path}")
+                    st.warning(f"No .csv files found in `{dir_path}`. Please place a CSV file with columns 'concept' and 'SIS' in that directory.")
+            elif dir_path:
+                st.warning(f"Directory does not exist: `{dir_path}`. Please enter a valid path. (Tip: use '.' for the current directory.)")
 
         # ---- 2. Concept selection ----
         st.subheader("2. Select Concepts")
