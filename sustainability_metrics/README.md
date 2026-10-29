@@ -99,7 +99,7 @@ Applying the SIS metric to microstructural defect nodes yields relative rankings
 | **`lattice_distortion`** | **$\approx 0.48$** | Indirect connectivity with longer weighted paths |
 
 ### Physical Interpretation 
-The graph-topological ranking ($\text{twins} > \text{stacking\_faults} > \text{lattice\_distortion}$) directly mirrors experimental characterization data: 
+The graph-topological ranking ($\mathrm{twins} > \mathrm{stacking\_faults} > \mathrm{lattice\_distortion}$) directly mirrors experimental characterization data: 
 * **Twin boundaries** correlate with peak von Mises stress ($\approx 111.6\text{ GPa}$) and maximal sintering temperature reduction (down to $94^\circ\text{C}$).
 * **Stacking faults** exhibit intermediate local stresses ($\approx 64\text{ GPa}$) and moderate sintering onset reductions.
 * **Lattice distortions** yield lower stress concentration ($\approx 30.3\text{ GPa}$) and smaller operational impact.
