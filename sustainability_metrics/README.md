@@ -1,8 +1,8 @@
 # Sustainability Impact Score
 
-[![meaningtowords](https://img.shields.io/badge/vis-v1.0-orange)](https://sustainability-impact-score-visualization1.streamlit.app/) ( Concepts with higher score are nearer to sustainability anchors, can construct charts only with the datasets available within the app file)
+[![meaningtowords](https://img.shields.io/badge/sisvis-v1.0-orange)](https://sustainability-impact-score-visualization1.streamlit.app/) ( Concepts with higher score are nearer to sustainability anchors, can construct charts only with the datasets available within the app file)
 
-[![meaningtowords](https://img.shields.io/badge/vis-v2.0-turquoise)](https://sustainability-impact-score-visualization2.streamlit.app/) ( Concepts with higher score are nearer to sustainability anchors, can construct chart  with the datasets available within the app file or by locating the csv file)
+[![meaningtowords](https://img.shields.io/badge/sisvis-v2.0-turquoise)](https://sustainability-impact-score-visualization2.streamlit.app/) ( Concepts with higher score are nearer to sustainability anchors, can construct chart  with the datasets available within the app file or by locating the csv file)
 
 # Sustainability Impact Score (SIS) Computation
 
