@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
@@ -268,6 +267,11 @@ def render_diverging_bar_chart(
     sort_order: str,
     positive_color: str = "#2ca02c",  # green
     negative_color: str = "#d62728",  # red
+    # ---- NEW: axis & bar edge line customization ----
+    axis_line_width: float = 1.0,
+    axis_line_color: str = "#333333",
+    bar_edge_width: float = 0.6,
+    bar_edge_color: str = "#333333",
 ) -> bytes:
     """Render a 2D diverging bar chart and return PNG bytes."""
     if not concepts:
@@ -318,8 +322,8 @@ def render_diverging_bar_chart(
         x_positions, deltas_sorted,
         width=bar_width,
         color=colors,
-        edgecolor=text_color if bg_color != "white" else "#333333",
-        linewidth=0.6,
+        edgecolor=bar_edge_color,
+        linewidth=bar_edge_width,
         alpha=0.92,
     )
 
@@ -368,11 +372,12 @@ def render_diverging_bar_chart(
         ax.grid(axis="y", linestyle="--", alpha=0.4, color="#888888")
     ax.set_axisbelow(True)
 
-    # Hide top/right spines
+    # Hide top/right spines; style left/bottom (axis lines)
     for spine_name in ["top", "right"]:
         ax.spines[spine_name].set_visible(False)
     for spine_name in ["left", "bottom"]:
-        ax.spines[spine_name].set_color(text_color)
+        ax.spines[spine_name].set_color(axis_line_color)
+        ax.spines[spine_name].set_linewidth(axis_line_width)
 
     # Adjust y-limits with padding for labels
     if deltas_sorted:
@@ -405,6 +410,11 @@ def render_grouped_bar_chart(
     bg_color: str,
     text_color: str,
     cmap_name: str = "Set2",
+    # ---- NEW: axis & bar edge line customization ----
+    axis_line_width: float = 1.0,
+    axis_line_color: str = "#333333",
+    bar_edge_width: float = 0.5,
+    bar_edge_color: str = "#ffffff",
 ) -> bytes:
     """Render a grouped bar chart: one cluster per concept, one bar per metric."""
     if not selected_concepts:
@@ -452,7 +462,7 @@ def render_grouped_bar_chart(
         ax.bar(
             x_positions + offset, values, bar_width,
             label=short_name, color=metric_colors[i],
-            edgecolor="white", linewidth=0.5, alpha=0.92,
+            edgecolor=bar_edge_color, linewidth=bar_edge_width, alpha=0.92,
         )
 
     # Zero line
@@ -481,7 +491,8 @@ def render_grouped_bar_chart(
     for spine_name in ["top", "right"]:
         ax.spines[spine_name].set_visible(False)
     for spine_name in ["left", "bottom"]:
-        ax.spines[spine_name].set_color(text_color)
+        ax.spines[spine_name].set_color(axis_line_color)
+        ax.spines[spine_name].set_linewidth(axis_line_width)
 
     ax.legend(
         loc="upper left", bbox_to_anchor=(1.02, 1.0),
@@ -512,6 +523,11 @@ def render_before_after_chart(
     text_color: str,
     before_color: str = "#1f77b4",
     after_color: str = "#ff7f0e",
+    # ---- NEW: axis & bar edge line customization ----
+    axis_line_width: float = 1.0,
+    axis_line_color: str = "#333333",
+    bar_edge_width: float = 0.5,
+    bar_edge_color: str = "#ffffff",
 ) -> bytes:
     """Render a Before-vs-After grouped bar chart for a single concept."""
     # Filter to standard metrics (skip components which is integer)
@@ -532,9 +548,9 @@ def render_before_after_chart(
     after_vals = df_filtered["After"].values
 
     ax.bar(x_positions - bar_width/2, before_vals, bar_width,
-           label="Before", color=before_color, edgecolor="white", linewidth=0.5, alpha=0.92)
+           label="Before", color=before_color, edgecolor=bar_edge_color, linewidth=bar_edge_width, alpha=0.92)
     ax.bar(x_positions + bar_width/2, after_vals, bar_width,
-           label="After", color=after_color, edgecolor="white", linewidth=0.5, alpha=0.92)
+           label="After", color=after_color, edgecolor=bar_edge_color, linewidth=bar_edge_width, alpha=0.92)
 
     # Value labels
     for i, (bv, av) in enumerate(zip(before_vals, after_vals)):
@@ -564,7 +580,8 @@ def render_before_after_chart(
     for spine_name in ["top", "right"]:
         ax.spines[spine_name].set_visible(False)
     for spine_name in ["left", "bottom"]:
-        ax.spines[spine_name].set_color(text_color)
+        ax.spines[spine_name].set_color(axis_line_color)
+        ax.spines[spine_name].set_linewidth(axis_line_width)
 
     ax.legend(loc="upper right", fontsize=label_fontsize, frameon=True, edgecolor="#cccccc")
 
@@ -808,14 +825,29 @@ def render_sidebar(concepts_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, Dict[s
         figsize_h = st.slider("Figure height (inches)", 4, 16, 8)
         dpi = st.slider("DPI", 80, 400, 150)
         bar_width = st.slider("Bar width", 0.2, 1.0, 0.7)
-        label_fontsize = st.slider("Value label font size", 6, 50, 10)
-        x_label_fontsize = st.slider("X-axis label font size", 6, 58, 10)
+        label_fontsize = st.slider("Value label font size", 6, 20, 10)
+        x_label_fontsize = st.slider("X-axis label font size", 6, 18, 10)
         x_label_rotation = st.slider("X-axis label rotation (°)", 0, 90, 45)
         show_value_labels = st.checkbox("Show Δ value labels", value=True)
         show_zero_line = st.checkbox("Show zero line (diverging charts)", value=True)
         show_grid = st.checkbox("Show grid", value=True)
         bg_color = st.color_picker("Background color", value="#ffffff")
         text_color = st.color_picker("Text color", value="#1a1a1a")
+
+        # ---- NEW: Axis & bar edge line customization ----
+        with st.expander("Axis & bar edge line customization", expanded=False):
+            st.markdown("**Axis lines (left & bottom spines):**")
+            axis_line_width = st.slider("Axis line width", 0.5, 5.0, 1.0, step=0.1,
+                                          help="Thickness of the left and bottom axis lines (spines)")
+            axis_line_color = st.color_picker("Axis line color", value="#333333",
+                                                help="Color of the left and bottom axis lines")
+
+            st.markdown("**Bar edges:**")
+            bar_edge_width = st.slider("Bar edge line width", 0.0, 3.0, 0.6, step=0.1,
+                                         help="Thickness of the outline around each bar. 0 = no edge.")
+            bar_edge_color = st.color_picker("Bar edge color", value="#333333",
+                                               help="Color of the outline around each bar. "
+                                                    "Try white (#ffffff) for grouped charts.")
 
         # ---- 5. Legend ----
         st.subheader("5. Legend")
@@ -834,6 +866,9 @@ def render_sidebar(concepts_data: Dict[str, pd.DataFrame]) -> Tuple[Dict, Dict[s
         "bg_color": bg_color, "text_color": text_color,
         "show_legend": show_legend, "legend_cols": legend_cols,
         "selected_concepts": selected,
+        # ★ NEW: axis & bar edge line customization
+        "axis_line_width": axis_line_width, "axis_line_color": axis_line_color,
+        "bar_edge_width": bar_edge_width, "bar_edge_color": bar_edge_color,
     }
     return settings, concepts_data
 
@@ -919,6 +954,11 @@ def main():
             sort_order=settings["sort_order"],
             positive_color=settings["positive_color"],
             negative_color=settings["negative_color"],
+            # ★ NEW: axis & bar edge line customization
+            axis_line_width=settings["axis_line_width"],
+            axis_line_color=settings["axis_line_color"],
+            bar_edge_width=settings["bar_edge_width"],
+            bar_edge_color=settings["bar_edge_color"],
         )
         st.image(png_bytes, use_container_width=True)
         st.download_button(
@@ -951,6 +991,11 @@ def main():
             bg_color=settings["bg_color"],
             text_color=settings["text_color"],
             cmap_name=settings["cmap_name"],
+            # ★ NEW: axis & bar edge line customization
+            axis_line_width=settings["axis_line_width"],
+            axis_line_color=settings["axis_line_color"],
+            bar_edge_width=settings["bar_edge_width"],
+            bar_edge_color=settings["bar_edge_color"],
         )
         st.image(png_bytes, use_container_width=True)
         st.download_button("⬇️ Download PNG", data=png_bytes,
@@ -975,6 +1020,11 @@ def main():
             show_grid=settings["show_grid"],
             title=settings["title"],
             bg_color=settings["bg_color"], text_color=settings["text_color"],
+            # ★ NEW: axis & bar edge line customization
+            axis_line_width=settings["axis_line_width"],
+            axis_line_color=settings["axis_line_color"],
+            bar_edge_width=settings["bar_edge_width"],
+            bar_edge_color=settings["bar_edge_color"],
         )
         st.image(png_bytes, use_container_width=True)
         st.download_button("⬇️ Download PNG", data=png_bytes,
