@@ -1,0 +1,45 @@
+concept,SIS,n_anchors_reachable
+metal,0.7718,3
+circular_economy,0.7707,3
+attention,0.7633,3
+grain_boundary,0.7513,3
+oxidation,0.7497,3
+micro_voids,0.7485,3
+electrical_conductivity,0.7457,3
+thermal_budget,0.744,3
+cleaner_production,0.7424,3
+mechanical_yield,0.7421,3
+pressureless_sintering,0.7289,3
+net_zero,0.7253,3
+fcc,0.7241,3
+additive manufacturing,0.7213,3
+machine learning,0.7107,3
+agnps,0.6942,3
+defect_engineering,0.6942,3
+vocs,0.6919,3
+energy_efficiency,0.6717,3
+atomic_diffusion,0.6703,3
+silver,0.6656,3
+nucleation,0.6656,3
+stacking_faults,0.6507,3
+thermal_conductivity,0.6462,3
+lifecycle_assessment,0.6309,3
+high entropy alloys,0.6309,3
+sintering_process,0.6035,3
+waste_minimization,0.6035,3
+dendrite,0.6035,3
+heas,0.5853,3
+twins,0.5853,3
+data-driven,0.5656,3
+phase transformation,0.5627,3
+polymer_substrate,0.5627,3
+diffusion_highways,0.5488,3
+residual_stress,0.5356,3
+high-entropy alloys,0.5297,3
+lattice_distortion,0.4958,3
+e_waste,0.4958,3
+mass_transport,0.4958,3
+greenhouse_gas,0.4925,3
+grain size,0.4874,3
+sic,0.485,3
+power_module_assembly,0.4701,3
