@@ -321,9 +321,7 @@ def render_3d_bar_chart(df: pd.DataFrame, cmap_name: str, width: int, height: in
     colors = get_cmap_colors(cmap_name, n)
     if grid_size is None or grid_size <= 0:
         grid_size = int(np.ceil(np.sqrt(n)))
-    # ★ FIX: assign cols first, then compute rows using cols (avoid UnboundLocalError)
-    cols = grid_size
-    rows = int(np.ceil(n / cols))
+    cols, rows = grid_size, int(np.ceil(n / cols))
 
     fig = go.Figure()
     for i in range(n):
@@ -387,6 +385,25 @@ def render_polar_bar_chart(
     label_fontsize: int = 12,
     radial_range_padding: float = 1.20,
     inner_radius_offset: float = 0.0,
+    # ---- NEW: Radial axis (0-to-1) customization ----
+    radial_axis_show: bool = True,
+    radial_axis_show_ticks: bool = True,
+    radial_axis_n_ticks: int = 6,
+    radial_axis_fontsize: int = 10,
+    radial_axis_decimals: int = 2,
+    radial_axis_color: str = "#666666",
+    radial_axis_show_grid: bool = True,
+    radial_axis_grid_color: str = "rgba(150,150,150,0.3)",
+    # ---- NEW: Concept label (angular axis) customization ----
+    concept_label_show: bool = True,
+    concept_label_fontsize: int = 10,
+    concept_label_color: str = "#1a1a1a",
+    concept_label_angle: int = 0,        # 0 = auto-rotated to read outward, else fixed degrees
+    concept_label_show_grid: bool = True,
+    concept_label_grid_color: str = "rgba(150,150,150,0.3)",
+    # ---- NEW: N_i node ID label customization ----
+    node_id_fontsize: int = 10,
+    node_id_color: str = "#666666",
 ) -> go.Figure:
     """
     Render a TRULY CIRCULAR polar bar chart.
@@ -489,7 +506,7 @@ def render_polar_bar_chart(
             theta=theta_numeric,
             text=node_ids,
             mode="text",
-            textfont=dict(size=label_fontsize - 2, color="#666666", family="Arial Bold"),
+            textfont=dict(size=node_id_fontsize, color=node_id_color, family="Arial Bold"),
             textposition="middle center",
             showlegend=False,
             hoverinfo="skip",
@@ -502,6 +519,15 @@ def render_polar_bar_chart(
     # ---- Layout: force TRULY CIRCULAR rendering ----
     max_sis = max(sis_values) if sis_values else 1.0
     radial_max = max_sis * radial_range_padding
+
+    # ---- Build radial axis tick values ----
+    # User controls the number of ticks (e.g., 6 → 0, 0.2, 0.4, 0.6, 0.8, 1.0)
+    # We divide [0, radial_max] into n_ticks evenly spaced values.
+    if radial_axis_n_ticks < 2:
+        radial_axis_n_ticks = 2
+    radial_tick_vals = np.linspace(0, radial_max, radial_axis_n_ticks).tolist()
+    # Tick labels: format with the user's chosen decimal places
+    radial_tick_text = [f"{v:.{radial_axis_decimals}f}" for v in radial_tick_vals]
 
     fig.update_layout(
         title=dict(text=title, font=dict(size=18, color=text_color)),
@@ -517,12 +543,20 @@ def render_polar_bar_chart(
             domain=dict(x=[0.05, 0.95], y=[0.05, 0.95]),
             bgcolor=bg_color,
             radialaxis=dict(
-                visible=True,
+                visible=radial_axis_show,
                 range=[0, radial_max],
-                showticklabels=True,
+                showticklabels=radial_axis_show and radial_axis_show_ticks,
                 ticks="",
-                gridcolor="rgba(150,150,150,0.3)",
-                tickfont=dict(color=text_color, size=10),
+                # ★ NEW: user-controlled grid (0-to-1 lines)
+                showgrid=radial_axis_show_grid,
+                gridcolor=radial_axis_grid_color,
+                gridwidth=1,
+                # ★ NEW: tick font + color
+                tickfont=dict(color=radial_axis_color, size=radial_axis_fontsize),
+                # ★ NEW: user-controlled tick count + format
+                tickmode="array",
+                tickvals=radial_tick_vals,
+                ticktext=radial_tick_text,
                 # Force the radial axis to occupy equal angular space
                 angle=90 + (0 if angular_direction == "clockwise" else 180),
                 tickangle=90,
@@ -534,9 +568,17 @@ def render_polar_bar_chart(
                 # ★ period=1 (default) — do NOT set period=n, that compresses axis
                 period=1,
                 visible=True,
-                showticklabels=True,
-                gridcolor="rgba(150,150,150,0.3)",
-                tickfont=dict(color=text_color, size=10),
+                # ★ NEW: user-controlled concept labels (angular axis ticks)
+                showticklabels=concept_label_show,
+                # ★ NEW: user-controlled grid for angular axis
+                showgrid=concept_label_show_grid,
+                gridcolor=concept_label_grid_color,
+                gridwidth=1,
+                # ★ NEW: user-controlled concept label font + color
+                tickfont=dict(color=concept_label_color, size=concept_label_fontsize),
+                # ★ NEW: user-controlled label rotation
+                # Plotly's tickangle only accepts numbers; omit it when user wants auto (0)
+                **({"tickangle": concept_label_angle} if concept_label_angle != 0 else {}),
                 # Map numeric thetas to concept names via tickvals/ticktext
                 tickmode="array",
                 tickvals=theta_numeric,
@@ -617,15 +659,11 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
                     st.success(f"Loaded {len(df_all)} unique concepts from {len(uploaded)} file(s).")
 
         elif data_mode == "Load from local directory":
-            dir_path = st.text_input(
-                "Directory path (local):",
-                value=".",
-                help="Use '.' for current directory, or enter an absolute path like /home/user/data. The directory must contain .csv files with 'concept' and 'SIS' columns.",
-            )
-            if dir_path and os.path.isdir(dir_path):
-                csv_files = sorted([f for f in os.listdir(dir_path) if f.lower().endswith('.csv')])
+            dir_path = st.text_input("Directory path (local):", value="./datasets")
+            if os.path.isdir(dir_path):
+                csv_files = [f for f in os.listdir(dir_path) if f.lower().endswith('.csv')]
                 if csv_files:
-                    selected_file = st.selectbox(f"Select CSV file ({len(csv_files)} found):", csv_files)
+                    selected_file = st.selectbox("Select CSV file:", csv_files)
                     if selected_file:
                         try:
                             full_path = os.path.join(dir_path, selected_file)
@@ -641,9 +679,9 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
                         except Exception as e:
                             st.error(f"Failed to load: {e}")
                 else:
-                    st.warning(f"No .csv files found in `{dir_path}`. Please place a CSV file with columns 'concept' and 'SIS' in that directory.")
-            elif dir_path:
-                st.warning(f"Directory does not exist: `{dir_path}`. Please enter a valid path. (Tip: use '.' for the current directory.)")
+                    st.warning(f"No CSV files found in {dir_path}")
+            else:
+                st.warning(f"Directory does not exist: {dir_path}")
 
         # ---- 2. Concept selection ----
         st.subheader("2. Select Concepts")
@@ -724,13 +762,44 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
             angular_direction = st.selectbox("Direction:", ["clockwise", "counterclockwise"], index=0)
             radial_padding = st.slider("Radial range padding", 1.05, 1.50, 1.20,
                                           help="Multiplier on max SIS to give tip labels room")
+
+            # ---- NEW: Radial axis (0-to-1) customization ----
+            with st.expander("Radial axis (0-to-1 ring) customization", expanded=False):
+                radial_axis_show = st.checkbox("Show radial axis", value=True, key="ra_show")
+                radial_axis_show_ticks = st.checkbox("Show tick labels (0, 0.2, 0.4...)", value=True, key="ra_ticks")
+                radial_axis_n_ticks = st.slider("Number of radial ticks", 2, 20, 6,
+                                                  help="6 → 0.00, 0.20, 0.40, 0.60, 0.80, 1.00 (if max=1)",
+                                                  key="ra_n_ticks")
+                radial_axis_decimals = st.slider("Tick label decimals", 0, 4, 2,
+                                                   help="2 → 0.00, 1 → 0.0, 0 → 0",
+                                                   key="ra_decimals")
+                radial_axis_fontsize = st.slider("Radial tick font size", 6, 24, 10, key="ra_fs")
+                radial_axis_color = st.color_picker("Radial tick color", value="#666666", key="ra_color")
+                radial_axis_show_grid = st.checkbox("Show radial grid lines (concentric circles)", value=True, key="ra_grid")
+                radial_axis_grid_color = st.color_picker("Radial grid color", value="#9c9c9c", key="ra_grid_color")
+
+            # ---- NEW: Concept label (angular axis) customization ----
+            with st.expander("Concept label (angular ring) customization", expanded=False):
+                concept_label_show = st.checkbox("Show concept names around the outer ring", value=True, key="cl_show")
+                concept_label_fontsize = st.slider("Concept label font size", 6, 24, 10, key="cl_fs")
+                concept_label_color = st.color_picker("Concept label color", value="#1a1a1a", key="cl_color")
+                concept_label_angle = st.slider("Concept label rotation (°, 0=auto)", 0, 360, 0,
+                                                  help="0 = auto-rotate to read outward; 90 = vertical; 180 = upside down",
+                                                  key="cl_angle")
+                concept_label_show_grid = st.checkbox("Show angular grid lines (radial spokes)", value=True, key="cl_grid")
+                concept_label_grid_color = st.color_picker("Angular grid color", value="#9c9c9c", key="cl_grid_color")
+
+            # ---- NEW: N_i node ID label customization ----
+            with st.expander("N_i node ID label customization", expanded=False):
+                node_id_fontsize = st.slider("N_i label font size", 6, 24, 10, key="nid_fs")
+                node_id_color = st.color_picker("N_i label color", value="#666666", key="nid_color")
         else:
             width_3d = st.slider("Chart width (px)", 600, 1600, 1000)
             height_3d = st.slider("Chart height (px)", 500, 1400, 800)
             grid_size_3d = st.slider("3D grid columns (0=auto)", 0, 12, 0)
 
-        label_fontsize = st.slider("Value label font size", 6, 20, 12)
-        x_label_fontsize = st.slider("X-axis label font size", 6, 18, 9)
+        label_fontsize = st.slider("Value label font size (SIS score on bar tip)", 6, 20, 12)
+        x_label_fontsize = st.slider("X-axis label font size (2D only)", 6, 18, 9)
         show_value_labels = st.checkbox("Show SIS score on bar", value=True)
         show_node_ids = st.checkbox("Show N_i node IDs", value=True)
         highlight_anchors = st.checkbox("Highlight anchor nodes (gold outline)", value=True)
@@ -769,6 +838,25 @@ def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
             "angular_rotation": angular_rotation,
             "angular_direction": angular_direction,
             "radial_padding": radial_padding,
+            # ★ NEW: radial axis customization
+            "radial_axis_show": radial_axis_show,
+            "radial_axis_show_ticks": radial_axis_show_ticks,
+            "radial_axis_n_ticks": radial_axis_n_ticks,
+            "radial_axis_fontsize": radial_axis_fontsize,
+            "radial_axis_decimals": radial_axis_decimals,
+            "radial_axis_color": radial_axis_color,
+            "radial_axis_show_grid": radial_axis_show_grid,
+            "radial_axis_grid_color": radial_axis_grid_color,
+            # ★ NEW: concept label customization
+            "concept_label_show": concept_label_show,
+            "concept_label_fontsize": concept_label_fontsize,
+            "concept_label_color": concept_label_color,
+            "concept_label_angle": concept_label_angle,
+            "concept_label_show_grid": concept_label_show_grid,
+            "concept_label_grid_color": concept_label_grid_color,
+            # ★ NEW: N_i node ID label customization
+            "node_id_fontsize": node_id_fontsize,
+            "node_id_color": node_id_color,
         })
     else:
         settings.update({"width": width_3d, "height": height_3d, "grid_size": grid_size_3d})
@@ -821,6 +909,25 @@ def main():
             show_node_ids=settings["show_node_ids"],
             label_fontsize=settings["label_fontsize"],
             radial_range_padding=settings["radial_padding"],
+            # ★ NEW: radial axis customization
+            radial_axis_show=settings["radial_axis_show"],
+            radial_axis_show_ticks=settings["radial_axis_show_ticks"],
+            radial_axis_n_ticks=settings["radial_axis_n_ticks"],
+            radial_axis_fontsize=settings["radial_axis_fontsize"],
+            radial_axis_decimals=settings["radial_axis_decimals"],
+            radial_axis_color=settings["radial_axis_color"],
+            radial_axis_show_grid=settings["radial_axis_show_grid"],
+            radial_axis_grid_color=settings["radial_axis_grid_color"],
+            # ★ NEW: concept label customization
+            concept_label_show=settings["concept_label_show"],
+            concept_label_fontsize=settings["concept_label_fontsize"],
+            concept_label_color=settings["concept_label_color"],
+            concept_label_angle=settings["concept_label_angle"],
+            concept_label_show_grid=settings["concept_label_show_grid"],
+            concept_label_grid_color=settings["concept_label_grid_color"],
+            # ★ NEW: N_i node ID label customization
+            node_id_fontsize=settings["node_id_fontsize"],
+            node_id_color=settings["node_id_color"],
         )
         st.plotly_chart(fig_polar, use_container_width=True)
         st.caption("💡 *The polar chart is now a TRUE CIRCLE: width and height are forced equal, with tight margins and proper angular axis.*")
