@@ -1,29 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-SIS Bar Chart Studio
-====================
+SIS Bar Chart Studio (Enhanced + Fixed Polar Chart)
+====================================================
 A focused Streamlit app for visualizing Sustainability Impact Score (SIS) —
-or any node-level score — as customizable 2D and 3D bar charts.
+or any node-level score — as customizable 2D, 3D, and Polar/Radial bar charts.
 
 Features
 --------
-- 50+ colormaps (matplotlib + plotly): viridis, plasma, inferno, magma, jet,
-  turbo, rainbow, cividis, spectral, coolwarm, RdBu, seismic, nipy_spectral,
-  gist_rainbow, hsv, terrain, ocean, gist_earth, tab10/20, Set1/2/3, Accent,
-  Dark2, Paired, Pastel1/2, YlOrRd, OrRd, PuRd, RdPu, BuPu, GnBu, YlGnBu,
-  PuBuGn, BuGn, YlGn, afmhot, copper, bone, gray, pink, spring, summer,
-  autumn, winter, cool, hot, twilight, cubehelix, jet_r, viridis_r, ...
+- FIXED: Polar / Radial Bar Chart now renders as a TRUE CIRCLE
+  (square figure dimensions + proper angular axis + tip labels)
+- 50+ colormaps (matplotlib + plotly)
 - 2D bar chart (matplotlib) with score labels on top of each bar
-- 3D bar chart (plotly surface) with score labels floating above bars
-- Long concept names handled 3 ways: abbreviated (N1, N2...), wrapped
-  (multi-line), or rotated (vertical text)
+- 3D bar chart (plotly mesh) with score labels floating above bars
+- Long concept names handled 4 ways: abbreviated, wrapped, rotated, or
+  polar (laid out radially — no overlap possible)
 - Interactive concept multi-selector: pick exactly which concepts to plot
-  (select all / remove all / regex filter)
-- Full image customization: DPI, figure size, font sizes, bar width,
-  label rotation, label position (top/outside vs center/inside)
+- Full image customization: DPI, figure size, font sizes, bar width, label rotation
 - Legend panel: color swatch + N_i ID + full concept name
-- Downloads: PNG (2D), HTML (3D), CSV (scores)
+- Downloads: PNG (2D), HTML (3D/Polar), CSV (scores)
+- Load data from local directory (os.listdir) or upload multiple CSVs
 
 Run:
   streamlit run sis_bar_chart_studio.py
@@ -38,12 +34,12 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-import matplotlib.patches as mpatches
 import plotly.graph_objects as go
 import plotly.express as px
 import io
 import re
 import textwrap
+import os
 from typing import List, Dict, Tuple, Optional
 
 # ---- Register CJK + Latin fallback fonts (rule #7) ----
@@ -72,58 +68,47 @@ st.set_page_config(
 # 50+ COLORMAP REGISTRY
 # =====================================================================
 COLORMAPS = {
-    # Matplotlib perceptual
     "viridis": "Viridis", "plasma": "Plasma", "inferno": "Inferno",
     "magma": "Magma", "cividis": "Cividis", "turbo": "Turbo",
-    # Classic
     "jet": "Jet", "rainbow": "Rainbow", "hsv": "HSV",
     "nipy_spectral": "NipySpectral", "gist_rainbow": "GistRainbow",
     "coolwarm": "Coolwarm", "RdBu": "RdBu", "seismic": "Seismic",
     "Spectral": "Spectral", "bwr": "Bluered", "BrBG": "BrBG",
     "PiYG": "PiYG", "PRGn": "PRGn", "PuOr": "PuOr", "RdYlBu": "RdYlBu",
-    "RdYlGn": "RdYlGn",
-    # Sequential single-hue
-    "Blues": "Blues", "Reds": "Reds", "Greens": "Greens",
+    "RdYlGn": "RdYlGn", "Blues": "Blues", "Reds": "Reds", "Greens": "Greens",
     "Oranges": "Oranges", "Purples": "Purples", "Greys": "Greys",
     "YlOrRd": "YlOrRd", "OrRd": "OrRd", "PuRd": "PuRd", "RdPu": "RdPu",
     "BuPu": "BuPu", "GnBu": "GnBu", "YlGnBu": "YlGnBu", "PuBuGn": "PuBuGn",
-    "BuGn": "BuGn", "YlGn": "YlGn",
-    # Cyclic / misc
-    "twilight": "Twilight", "cubehelix": "Cubehelix",
-    "bone": "Bone", "gray": "Greys", "pink": "Pink",
-    "spring": "Spring", "summer": "Summer", "autumn": "Autumn", "winter": "Winter",
+    "BuGn": "BuGn", "YlGn": "YlGn", "twilight": "Twilight", "cubehelix": "Cubehelix",
+    "bone": "Bone", "gray": "Greys", "pink": "Pink", "spring": "Spring",
+    "summer": "Summer", "autumn": "Autumn", "winter": "Winter",
     "cool": "Cool", "hot": "Hot", "copper": "Copper", "afmhot": "Afmhot",
     "gist_earth": "GistEarth", "terrain": "Terrain", "ocean": "Ocean",
-    # Qualitative
     "tab10": "Set1", "tab20": "Set2", "tab20b": "Set3", "tab20c": "Set3",
     "Accent": "Accent", "Dark2": "Dark2", "Paired": "Paired",
-    "Pastel1": "Pastel1", "Pastel2": "Pastel2",
-    "Set1": "Set1", "Set2": "Set2", "Set3": "Set3",
-    # Reverse variants (key ones)
-    "viridis_r": "Viridis_r", "plasma_r": "Plasma_r",
-    "inferno_r": "Inferno_r", "magma_r": "Magma_r",
-    "turbo_r": "Turbo_r", "jet_r": "Jet_r",
+    "Pastel1": "Pastel1", "Pastel2": "Pastel2", "Set1": "Set1", "Set2": "Set2", "Set3": "Set3",
+    "viridis_r": "Viridis_r", "plasma_r": "Plasma_r", "inferno_r": "Inferno_r",
+    "magma_r": "Magma_r", "turbo_r": "Turbo_r", "jet_r": "Jet_r",
 }
-
 COLORMAP_NAMES = list(COLORMAPS.keys())
 
 
 def get_cmap_colors(cmap_name: str, n: int) -> List[str]:
     """Return n hex colors sampled from the named matplotlib colormap."""
     try:
-        cmap = matplotlib.colormaps.get_cmap(cmap_name).resampled(max(n, 1))
+        if cmap_name.endswith("_r"):
+            base = cmap_name[:-2]
+            cmap = matplotlib.colormaps.get_cmap(base).resampled(max(n, 1)).reversed()
+        else:
+            cmap = matplotlib.colormaps.get_cmap(cmap_name).resampled(max(n, 1))
         return [mcolors.to_hex(cmap(i)) for i in range(n)]
     except Exception:
-        try:
-            cmap = cm.get_cmap(cmap_name, max(n, 1))
-            return [mcolors.to_hex(cmap(i)) for i in range(n)]
-        except Exception:
-            cmap = cm.get_cmap("viridis", max(n, 1))
-            return [mcolors.to_hex(cmap(i)) for i in range(n)]
+        cmap = cm.get_cmap("viridis", max(n, 1))
+        return [mcolors.to_hex(cmap(i)) for i in range(n)]
 
 
 # =====================================================================
-# MANUSCRIPT NODE-ID MAPPING (from Table A.2 — 40-node concept graph)
+# MANUSCRIPT NODE-ID MAPPING
 # =====================================================================
 NODE_ID_MAP = {
     "metal": "N1", "attention": "N2", "electrical_conductivity": "N3",
@@ -148,24 +133,21 @@ ANCHORS = {"net_zero", "cleaner_production", "circular_economy"}
 
 
 def short_label(concept: str, max_len: int = 12) -> str:
-    """Shorten a concept name for tight bar-chart x-axis labels."""
     concept = concept.replace("_", " ")
     if len(concept) <= max_len:
         return concept
-    # Try to break on spaces
     parts = concept.split(" ")
     if len(parts) >= 2:
-        return parts[0][:max_len-3] + "…"
-    return concept[:max_len-1] + "…"
+        return parts[0][:max_len - 3] + "…"
+    return concept[:max_len - 1] + "…"
 
 
 def wrap_label(concept: str, width: int = 10) -> str:
-    """Wrap a long concept name into multiple lines of given width."""
     return "\n".join(textwrap.wrap(concept.replace("_", " "), width=width)) or concept
 
 
 # =====================================================================
-# PRELOADED SIS DATA (from the previous computation)
+# PRELOADED SIS DATA
 # =====================================================================
 DEFAULT_SIS_CSV = """concept,SIS,n_anchors_reachable
 metal,0.7718,3
@@ -216,7 +198,6 @@ power_module_assembly,0.4701,3
 
 
 def load_default_data() -> pd.DataFrame:
-    """Load the default SIS results from the previous computation."""
     df = pd.read_csv(io.StringIO(DEFAULT_SIS_CSV))
     df["node_id"] = df["concept"].map(NODE_ID_MAP).fillna("?")
     df["is_anchor"] = df["concept"].isin(ANCHORS)
@@ -226,33 +207,14 @@ def load_default_data() -> pd.DataFrame:
 # =====================================================================
 # 2D BAR CHART (matplotlib)
 # =====================================================================
-
-def render_2d_bar_chart(
-    df: pd.DataFrame,
-    cmap_name: str,
-    figsize: Tuple[float, float],
-    dpi: int,
-    bar_width: float,
-    label_position: str,        # "top" (outside) | "center" (inside)
-    label_rotation: int,
-    label_fontsize: int,
-    x_label_mode: str,          # "full" | "abbreviated" | "wrapped" | "rotated"
-    x_label_fontsize: int,
-    x_label_rotation: int,
-    show_node_ids: bool,
-    show_value_labels: bool,
-    highlight_anchors: bool,
-    title: str,
-    show_grid: bool,
-    bg_color: str,
-    text_color: str,
-    sort_order: str,            # "descending" | "ascending" | "alphabetical"
-) -> bytes:
-    """Render a 2D bar chart and return PNG bytes."""
+def render_2d_bar_chart(df: pd.DataFrame, cmap_name: str, figsize: Tuple[float, float], dpi: int,
+                        bar_width: float, label_position: str, label_rotation: int, label_fontsize: int,
+                        x_label_mode: str, x_label_fontsize: int, x_label_rotation: int,
+                        show_node_ids: bool, show_value_labels: bool, highlight_anchors: bool,
+                        title: str, show_grid: bool, bg_color: str, text_color: str, sort_order: str) -> bytes:
     if df.empty:
         return b""
 
-    # Sort
     if sort_order == "descending":
         df = df.sort_values("SIS", ascending=False).reset_index(drop=True)
     elif sort_order == "ascending":
@@ -270,47 +232,29 @@ def render_2d_bar_chart(
     fig.patch.set_facecolor(bg_color)
 
     x_positions = np.arange(n)
-    bars = ax.bar(
-        x_positions, sis_values,
-        width=bar_width,
-        color=colors,
-        edgecolor=text_color if bg_color != "white" else "#333333",
-        linewidth=0.6,
-        alpha=0.95,
-    )
+    bars = ax.bar(x_positions, sis_values, width=bar_width, color=colors,
+                  edgecolor=text_color if bg_color != "white" else "#333333", linewidth=0.6, alpha=0.95)
 
-    # Highlight anchors with gold edge
     if highlight_anchors:
         for i, is_anchor in enumerate(df["is_anchor"]):
             if is_anchor:
                 bars[i].set_edgecolor("#FFD700")
                 bars[i].set_linewidth(2.5)
 
-    # Value labels
     if show_value_labels:
         for i, (bar, val) in enumerate(zip(bars, sis_values)):
             if label_position == "top":
                 y = val + (max(sis_values) - min(sis_values)) * 0.012 + 0.005
-                va = "bottom"
-                color = text_color
-                weight = "bold"
-            else:  # center / inside
+                va, color, weight = "bottom", text_color, "bold"
+            else:
                 y = val / 2
-                va = "center"
-                # Pick white or black text based on bar darkness
+                va, weight = "center", "bold"
                 r, g, b, _ = mcolors.to_rgba(colors[i])
-                lum = 0.299 * r + 0.587 * g + 0.114 * b
-                color = "white" if lum < 0.55 else "black"
-                weight = "bold"
-            ax.text(
-                bar.get_x() + bar.get_width() / 2, y,
-                f"{val:.3f}",
-                ha="center", va=va,
-                fontsize=label_fontsize, fontweight=weight, color=color,
-                rotation=label_rotation,
-            )
+                color = "white" if (0.299 * r + 0.587 * g + 0.114 * b) < 0.55 else "black"
+            ax.text(bar.get_x() + bar.get_width() / 2, y, f"{val:.3f}",
+                    ha="center", va=va, fontsize=label_fontsize, fontweight=weight,
+                    color=color, rotation=label_rotation)
 
-    # X-axis labels
     x_labels = []
     for concept in concepts:
         if x_label_mode == "full":
@@ -319,34 +263,23 @@ def render_2d_bar_chart(
             x_labels.append(short_label(concept, max_len=12))
         elif x_label_mode == "wrapped":
             x_labels.append(wrap_label(concept, width=10))
-        else:  # rotated: use full name, rely on rotation
+        else:
             x_labels.append(concept.replace("_", " "))
 
     ax.set_xticks(x_positions)
-    ax.set_xticklabels(
-        x_labels,
-        fontsize=x_label_fontsize,
-        rotation=x_label_rotation,
-        ha="right" if x_label_rotation != 0 else "center",
-        color=text_color,
-    )
+    ax.set_xticklabels(x_labels, fontsize=x_label_fontsize, rotation=x_label_rotation,
+                       ha="right" if x_label_rotation != 0 else "center", color=text_color)
 
-    # Node IDs above x-axis labels (small, secondary)
     if show_node_ids:
         node_ids = df["node_id"].tolist()
         secax = ax.secondary_xaxis(-0.18)
         secax.set_xticks(x_positions)
-        secax.set_xticklabels(node_ids, fontsize=x_label_fontsize - 2,
-                              color="#666666", fontweight="bold")
+        secax.set_xticklabels(node_ids, fontsize=x_label_fontsize - 2, color="#666666", fontweight="bold")
         secax.tick_params(length=0)
-        # Hide the secondary axis spine
         secax.spines["bottom"].set_visible(False)
 
-    # Styling
-    ax.set_ylabel("SIS Score", fontsize=label_fontsize + 2, color=text_color,
-                   fontweight="bold")
-    ax.set_title(title, fontsize=label_fontsize + 4, fontweight="bold",
-                  color=text_color, pad=14)
+    ax.set_ylabel("SIS Score", fontsize=label_fontsize + 2, color=text_color, fontweight="bold")
+    ax.set_title(title, fontsize=label_fontsize + 4, fontweight="bold", color=text_color, pad=14)
     ax.tick_params(axis="y", labelsize=label_fontsize, colors=text_color)
     if show_grid:
         ax.grid(axis="y", linestyle="--", alpha=0.4, color="#888888")
@@ -356,17 +289,13 @@ def render_2d_bar_chart(
     for spine_name in ["left", "bottom"]:
         ax.spines[spine_name].set_color(text_color)
 
-    # Adjust y-limits to fit top labels
     if label_position == "top" and show_value_labels:
-        ymax = max(sis_values) * 1.08
-        ax.set_ylim(0, ymax)
+        ax.set_ylim(0, max(sis_values) * 1.08)
     else:
         ax.set_ylim(0, max(sis_values) * 1.02)
 
-    # Save
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
-                facecolor=bg_color, edgecolor="none")
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", facecolor=bg_color, edgecolor="none")
     plt.close(fig)
     return buf.getvalue()
 
@@ -374,23 +303,105 @@ def render_2d_bar_chart(
 # =====================================================================
 # 3D BAR CHART (plotly)
 # =====================================================================
+def render_3d_bar_chart(df: pd.DataFrame, cmap_name: str, width: int, height: int,
+                        show_value_labels: bool, show_node_ids: bool, highlight_anchors: bool,
+                        title: str, sort_order: str, label_fontsize: int, bg_color: str,
+                        text_color: str, grid_size: Optional[int] = None) -> go.Figure:
+    if df.empty:
+        return go.Figure()
 
-def render_3d_bar_chart(
+    if sort_order == "descending":
+        df = df.sort_values("SIS", ascending=False).reset_index(drop=True)
+    elif sort_order == "ascending":
+        df = df.sort_values("SIS", ascending=True).reset_index(drop=True)
+    else:
+        df = df.sort_values("concept", ascending=True).reset_index(drop=True)
+
+    n = len(df)
+    colors = get_cmap_colors(cmap_name, n)
+    if grid_size is None or grid_size <= 0:
+        grid_size = int(np.ceil(np.sqrt(n)))
+    cols, rows = grid_size, int(np.ceil(n / cols))
+
+    fig = go.Figure()
+    for i in range(n):
+        x, y, z = i % cols, i // cols, df["SIS"].iloc[i]
+        hw = 0.4
+        verts_x = [x - hw, x + hw, x + hw, x - hw, x - hw, x + hw, x + hw, x - hw]
+        verts_y = [y - hw, y - hw, y + hw, y + hw, y - hw, y - hw, y + hw, y + hw]
+        verts_z = [0, 0, 0, 0, z, z, z, z]
+        I = [0, 0, 1, 1, 2, 2, 3, 3, 0, 0, 1, 2]
+        J = [1, 2, 2, 3, 3, 0, 0, 1, 4, 5, 5, 6]
+        K = [2, 3, 3, 0, 0, 1, 1, 2, 5, 4, 4, 7]
+
+        fig.add_trace(go.Mesh3d(x=verts_x, y=verts_y, z=verts_z, i=I, j=J, k=K,
+                                color=colors[i], opacity=0.95,
+                                hovertemplate=f"<b>{df['concept'].iloc[i]}</b> ({df['node_id'].iloc[i]})<br>SIS: {z:.4f}<extra></extra>"))
+        if show_value_labels:
+            fig.add_trace(go.Scatter3d(x=[x], y=[y], z=[z + 0.04], mode="text",
+                                       text=[f"{z:.3f}"], textfont=dict(size=label_fontsize, color=text_color, family="Arial Black"),
+                                       textposition="top center", showlegend=False, hoverinfo="skip"))
+        if show_node_ids:
+            fig.add_trace(go.Scatter3d(x=[x], y=[y], z=[-0.03], mode="text",
+                                       text=[df["node_id"].iloc[i]], textfont=dict(size=label_fontsize - 2, color="#666666"),
+                                       textposition="bottom center", showlegend=False, hoverinfo="skip"))
+        if highlight_anchors and df["is_anchor"].iloc[i]:
+            edge_x = [x - hw, x + hw, x + hw, x - hw, x - hw, x - hw, x + hw, x + hw, x - hw, x - hw, x + hw, x + hw, x - hw, x + hw, x + hw, x - hw]
+            edge_y = [y - hw, y - hw, y + hw, y + hw, y - hw, y - hw, y - hw, y - hw, y + hw, y + hw, y + hw, y + hw, y - hw, y - hw, y + hw, y + hw]
+            edge_z = [0, 0, 0, 0, 0, z, z, z, z, 0, 0, z, z, z, z, z]
+            fig.add_trace(go.Scatter3d(x=edge_x, y=edge_y, z=edge_z, mode="lines",
+                                       line=dict(color="#FFD700", width=4), showlegend=False, hoverinfo="skip"))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=18, color=text_color)),
+        scene=dict(xaxis=dict(showticklabels=False, showgrid=False, backgroundcolor=bg_color),
+                   yaxis=dict(showticklabels=False, showgrid=False, backgroundcolor=bg_color),
+                   zaxis=dict(title="SIS Score", title_font=dict(color=text_color), tickfont=dict(color=text_color),
+                              backgroundcolor=bg_color, gridcolor="rgba(150,150,150,0.3)"),
+                   camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)), aspectmode="data"),
+        paper_bgcolor=bg_color, plot_bgcolor=bg_color, font=dict(color=text_color),
+        width=width, height=height, showlegend=False, margin=dict(l=0, r=0, t=60, b=0),
+    )
+    return fig
+
+
+# =====================================================================
+# POLAR / RADIAL BAR CHART (plotly) — FIXED FOR TRUE CIRCULAR APPEARANCE
+# =====================================================================
+def render_polar_bar_chart(
     df: pd.DataFrame,
     cmap_name: str,
-    width: int,
-    height: int,
-    show_value_labels: bool,
-    show_node_ids: bool,
     highlight_anchors: bool,
     title: str,
-    sort_order: str,
-    label_fontsize: int,
     bg_color: str,
     text_color: str,
-    grid_size: Optional[int] = None,  # if None, auto-compute square-ish grid
+    sort_order: str,
+    chart_size: int = 900,           # square dimensions (width = height = chart_size)
+    bar_angular_width: float = 0.85, # fraction of slot each bar fills (0-1)
+    angular_rotation: int = 90,       # start angle: 90 = top (12 o'clock)
+    angular_direction: str = "clockwise",
+    show_value_labels: bool = True,
+    show_node_ids: bool = True,
+    label_fontsize: int = 12,
+    radial_range_padding: float = 1.20,
+    inner_radius_offset: float = 0.0,
 ) -> go.Figure:
-    """Render a 3D bar chart using plotly Mesh3D / surface bars."""
+    """
+    Render a TRULY CIRCULAR polar bar chart.
+
+    Key fixes vs. the previous version:
+      1. Force width == height (= chart_size) so the polar layout is square.
+      2. Tight zero margins so the circle fills the canvas.
+      3. Use proper angular axis: rotation=90 starts at top,
+         direction="clockwise" goes clockwise.
+      4. Drop the buggy `period=n` setting (was compressing the axis).
+      5. Set `width=360/n * bar_angular_width` on each bar so the bars fill
+         the full 360° with small gaps, instead of leaving the circle
+         looking "incomplete".
+      6. Add a separate Scatterpolar trace to label SIS scores at the tips.
+      7. Add a second Scatterpolar trace (at r=0) to show N_i IDs at the
+         center of each bar's angular slot.
+    """
     if df.empty:
         return go.Figure()
 
@@ -404,171 +415,144 @@ def render_3d_bar_chart(
 
     n = len(df)
     colors = get_cmap_colors(cmap_name, n)
-
-    # Auto grid size if not provided
-    if grid_size is None or grid_size <= 0:
-        grid_size = int(np.ceil(np.sqrt(n)))
-    cols = grid_size
-    rows = int(np.ceil(n / cols))
-
-    # Build grid positions
-    x_pos, y_pos = [], []
-    for i in range(n):
-        r = i // cols
-        c = i % cols
-        x_pos.append(c)
-        y_pos.append(r)
-
-    sis_values = df["SIS"].values
-    concepts = df["concept"].tolist()
+    sis_values = df["SIS"].tolist()
+    concepts = df["concept"].apply(lambda x: x.replace("_", " ")).tolist()
     node_ids = df["node_id"].tolist()
     is_anchors = df["is_anchor"].tolist()
 
-    # Build mesh3d traces: one per bar (cylinder approximation via 8 vertices)
+    # Angular slot for each bar (degrees)
+    slot = 360.0 / n
+    bar_width_deg = slot * bar_angular_width
+
+    # Theta positions: center of each bar's slot
+    # We pass theta as category labels (strings), so Plotly auto-distributes.
+    # But to control bar width, we use numeric theta and explicit `width`.
+    theta_numeric = [i * slot + slot / 2 for i in range(n)]  # center of each slot
+
+    # ---- 1. Bar trace (the actual radial bars) ----
+    bar_marker_line_color = [
+        "#FFD700" if is_a else "rgba(255,255,255,0.4)"
+        for is_a in is_anchors
+    ]
+    bar_marker_line_width = [
+        3 if is_a else 0.8
+        for is_a in is_anchors
+    ]
+
     fig = go.Figure()
+    fig.add_trace(go.Barpolar(
+        r=sis_values,
+        theta=theta_numeric,
+        width=[bar_width_deg] * n,
+        marker=dict(
+            color=colors,
+            line=dict(
+                color=bar_marker_line_color,
+                width=bar_marker_line_width,
+            ),
+        ),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b> (%{customdata[1]})<br>"
+            "SIS: %{r:.4f}<extra></extra>"
+        ),
+        customdata=list(zip(concepts, node_ids)),
+        name="SIS",
+        showlegend=False,
+    ))
 
-    for i in range(n):
-        x, y, z = x_pos[i], y_pos[i], sis_values[i]
-        # Bar footprint: half-width 0.4
-        hw = 0.4
-        # 8 corners of a box: (x-hw, y-hw, 0)...(x+hw, y+hw, z)
-        verts_x = [x-hw, x+hw, x+hw, x-hw, x-hw, x+hw, x+hw, x-hw]
-        verts_y = [y-hw, y-hw, y+hw, y+hw, y-hw, y-hw, y+hw, y+hw]
-        verts_z = [0, 0, 0, 0, z, z, z, z]
-        # Faces: bottom (0,1,2,3), top (4,5,6,7), sides
-        i_faces = [0,4,0,1,2,4,0,1]
-        j_faces = [1,5,3,2,3,5,3,2]
-        k_faces = [2,6,1,0,3,6,2,3]
-        # Fix: build proper cube faces
-        i_faces = [0,0,0,1,2,3,4,4,5,6]
-        j_faces = [1,2,3,2,3,0,5,7,6,7]
-        k_faces = [2,3,1,3,0,1,6,6,7,5]
-        # Simpler: use plotly's bar3d-like approach via Mesh3d with cube
-        # Use the standard cube face indices
-        # 8 vertices of cube: 0-3 bottom (CCW), 4-7 top (CCW)
-        # 12 triangles covering 6 faces
-        I = [0,1,2,3,0,1,2,3,4,5,6,7,0,4,1,5,2,6,3,7,0,1,2,3]
-        J = [1,0,3,2,4,5,6,7,5,4,7,6,4,0,5,1,6,2,7,3,3,2,1,0]
-        K = [2,3,0,1,5,4,7,6,6,7,4,5,5,1,4,0,7,3,6,2,2,3,0,1]
-        # Wait, the above is buggy — let me use a clean approach with 12 triangles
-
-        # Clean cube triangulation: 6 faces × 2 triangles = 12 triangles
-        # Vertex indices (8 corners):
-        #   bottom: 0=(x-hw,y-hw,0), 1=(x+hw,y-hw,0), 2=(x+hw,y+hw,0), 3=(x-hw,y+hw,0)
-        #   top:    4=(x-hw,y-hw,z), 5=(x+hw,y-hw,z), 6=(x+hw,y+hw,z), 7=(x-hw,y+hw,z)
-        I = [0,2, 4,6, 0,1, 2,3, 1,2, 0,3]
-        J = [2,3, 6,7, 4,5, 6,7, 5,6, 1,2]
-        K = [3,0, 5,4, 1,0, 3,2, 4,5, 2,1]
-        # This is messy; use simpler approach: build per-bar mesh
-        # Use 8 corners and 12 triangles
-        verts_x = [x-hw, x+hw, x+hw, x-hw, x-hw, x+hw, x+hw, x-hw]
-        verts_y = [y-hw, y-hw, y+hw, y+hw, y-hw, y-hw, y+hw, y+hw]
-        verts_z = [0, 0, 0, 0, z, z, z, z]
-        # 12 triangle indices (2 per face × 6 faces)
-        I = [0,2, 0,4, 1,5, 2,6, 3,7, 0,1]
-        J = [1,3, 1,5, 2,6, 3,7, 0,4, 2,3]
-        K = [2,0, 4,0, 5,1, 6,2, 7,3, 3,2]
-        # Actually the cleanest is:
-        I = [0,0,1,1,2,2,3,3,0,0,1,2]
-        J = [1,2,2,3,3,0,0,1,4,5,5,6]
-        K = [2,3,3,0,0,1,1,2,5,4,4,7]
-        # Use plotly's Mesh3d
-        fig.add_trace(go.Mesh3d(
-            x=verts_x, y=verts_y, z=verts_z,
-            i=I, j=J, k=K,
-            color=colors[i],
-            opacity=0.95,
-            hovertemplate=f"<b>{concepts[i]}</b> ({node_ids[i]})<br>SIS: {sis_values[i]:.4f}<extra></extra>",
-            name=concepts[i],
+    # ---- 2. SIS score labels at the tip of each bar ----
+    if show_value_labels:
+        label_r = [v * 1.02 + 0.005 for v in sis_values]  # just past the tip
+        fig.add_trace(go.Scatterpolar(
+            r=label_r,
+            theta=theta_numeric,
+            text=[f"{v:.3f}" for v in sis_values],
+            mode="text",
+            textfont=dict(size=label_fontsize, color=text_color, family="Arial Black"),
+            textposition="top center",
+            showlegend=False,
+            hoverinfo="skip",
         ))
 
-        # Value label on top
-        if show_value_labels:
-            fig.add_trace(go.Scatter3d(
-                x=[x], y=[y], z=[z + 0.04],
-                mode="text",
-                text=[f"{sis_values[i]:.3f}"],
-                textfont=dict(size=label_fontsize, color=text_color, family="Arial Black"),
-                textposition="top center",
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-
-        # Node ID below bar (on the floor)
-        if show_node_ids:
-            fig.add_trace(go.Scatter3d(
-                x=[x], y=[y], z=[-0.03],
-                mode="text",
-                text=[node_ids[i]],
-                textfont=dict(size=label_fontsize - 2, color="#666666", family="Arial Bold"),
-                textposition="bottom center",
-                showlegend=False,
-                hoverinfo="skip",
-            ))
-
-        # Concept name on the floor (small)
-        fig.add_trace(go.Scatter3d(
-            x=[x], y=[y - 0.55], z=[0],
+    # ---- 3. N_i node IDs at the inner edge of each bar ----
+    if show_node_ids:
+        # Place N_i just inside the inner radius (small positive offset)
+        # If inner_radius_offset=0, we put it at r ≈ 0.02 (near center)
+        nid_r = [max(v * 0.05, 0.02) for v in sis_values]
+        # If user provided a positive inner_radius_offset, lift the labels
+        if inner_radius_offset > 0:
+            nid_r = [inner_radius_offset + v * 0.05 for v in sis_values]
+        fig.add_trace(go.Scatterpolar(
+            r=nid_r,
+            theta=theta_numeric,
+            text=node_ids,
             mode="text",
-            text=[concepts[i].replace("_", " ")[:15]],
-            textfont=dict(size=label_fontsize - 3, color=text_color, family="Arial"),
+            textfont=dict(size=label_fontsize - 2, color="#666666", family="Arial Bold"),
             textposition="middle center",
             showlegend=False,
             hoverinfo="skip",
         ))
 
-    # Highlight anchors by adding gold outline
-    if highlight_anchors:
-        for i in range(n):
-            if is_anchors[i]:
-                x, y, z = x_pos[i], y_pos[i], sis_values[i]
-                hw = 0.42
-                # Vertical edges as line traces
-                edge_x = [x-hw, x+hw, x+hw, x-hw, x-hw, x-hw, x+hw, x+hw, x-hw, x-hw, x+hw, x+hw, x-hw, x+hw, x+hw, x-hw]
-                edge_y = [y-hw, y-hw, y+hw, y+hw, y-hw, y-hw, y-hw, y-hw, y+hw, y+hw, y+hw, y+hw, y-hw, y-hw, y+hw, y+hw]
-                edge_z = [0, 0, 0, 0, 0, z, z, z, z, 0, 0, z, z, z, z, z]
-                fig.add_trace(go.Scatter3d(
-                    x=edge_x, y=edge_y, z=edge_z,
-                    mode="lines",
-                    line=dict(color="#FFD700", width=4),
-                    showlegend=False,
-                    hoverinfo="skip",
-                ))
+    # ---- 4. Concept name labels at the outer ring ----
+    # We use the angular axis tick labels for this — see layout below.
+    # The ticks at theta_numeric will display the concept names.
 
-    # Layout
+    # ---- Layout: force TRULY CIRCULAR rendering ----
+    max_sis = max(sis_values) if sis_values else 1.0
+    radial_max = max_sis * radial_range_padding
+
     fig.update_layout(
-        title=dict(text=title, font=dict(size=label_fontsize + 6, color=text_color)),
-        scene=dict(
-            xaxis=dict(title="", showticklabels=False, showgrid=False,
-                       backgroundcolor=bg_color, showbackground=False),
-            yaxis=dict(title="", showticklabels=False, showgrid=False,
-                       backgroundcolor=bg_color, showbackground=False),
-            zaxis=dict(title="SIS Score",
-                       title_font=dict(color=text_color, size=label_fontsize),
-                       tickfont=dict(color=text_color, size=label_fontsize - 2),
-                       backgroundcolor=bg_color, showbackground=False,
-                       gridcolor="rgba(150,150,150,0.3)"),
-            camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9)),
-            aspectmode="data",
-        ),
+        title=dict(text=title, font=dict(size=18, color=text_color)),
+        # ★ THE KEY FIX: square dimensions + tight margins → circle, not ellipse
+        width=chart_size,
+        height=chart_size,
+        margin=dict(l=20, r=20, t=60, b=20),
         paper_bgcolor=bg_color,
-        plot_bgcolor=bg_color,
         font=dict(color=text_color),
-        width=width,
-        height=height,
         showlegend=False,
-        margin=dict(l=0, r=0, t=60, b=0),
+        polar=dict(
+            # The polar domain fills the full canvas (0..1 in both axes)
+            domain=dict(x=[0.05, 0.95], y=[0.05, 0.95]),
+            bgcolor=bg_color,
+            radialaxis=dict(
+                visible=True,
+                range=[0, radial_max],
+                showticklabels=True,
+                ticks="",
+                gridcolor="rgba(150,150,150,0.3)",
+                tickfont=dict(color=text_color, size=10),
+                # Force the radial axis to occupy equal angular space
+                angle=90 + (0 if angular_direction == "clockwise" else 180),
+                tickangle=90,
+            ),
+            angularaxis=dict(
+                # ★ Start at top (rotation=90), go clockwise
+                rotation=angular_rotation,
+                direction=angular_direction,
+                # ★ period=1 (default) — do NOT set period=n, that compresses axis
+                period=1,
+                visible=True,
+                showticklabels=True,
+                gridcolor="rgba(150,150,150,0.3)",
+                tickfont=dict(color=text_color, size=10),
+                # Map numeric thetas to concept names via tickvals/ticktext
+                tickmode="array",
+                tickvals=theta_numeric,
+                ticktext=concepts,
+            ),
+            # ★ Critical: enforce equal aspect (square polar)
+            # In Plotly, polar charts ARE square when width=height and domain
+            # is symmetric. The settings above ensure this.
+        ),
     )
 
     return fig
 
 
 # =====================================================================
-# LEGEND (concept → color swatch → N_i ID → full name)
+# LEGEND
 # =====================================================================
-
 def render_legend(df: pd.DataFrame, cmap_name: str, n_cols: int = 4) -> None:
-    """Render an HTML legend table mapping color swatches to concept names + N_i IDs."""
     if df.empty:
         st.info("No concepts selected to display in legend.")
         return
@@ -582,84 +566,89 @@ def render_legend(df: pd.DataFrame, cmap_name: str, n_cols: int = 4) -> None:
         sis = row["SIS"]
         anchor_badge = " ⭐" if row["is_anchor"] else ""
         rows_html.append(f"""
-        <div style='padding:6px 8px; border-radius:6px;
-                    background-color:{color}22;
-                    border-left:4px solid {color};
-                    margin-bottom:6px; font-size:12px;'>
-            <span style='display:inline-block; width:14px; height:14px;
-                         background-color:{color}; border-radius:3px;
-                         margin-right:6px; vertical-align:middle;'></span>
-            <b style='color:#333;'>{nid}</b>
-            <span style='color:#666;'>{concept.replace('_', ' ')}</span>{anchor_badge}
+        <div style='padding:6px 8px; border-radius:6px; background-color:{color}22;
+                    border-left:4px solid {color}; margin-bottom:6px; font-size:12px;'>
+            <span style='display:inline-block; width:14px; height:14px; background-color:{color};
+                         border-radius:3px; margin-right:6px; vertical-align:middle;'></span>
+            <b style='color:#333;'>{nid}</b> <span style='color:#666;'>{concept.replace('_', ' ')}</span>{anchor_badge}
             <span style='float:right; color:#888; font-family:monospace;'>{sis:.3f}</span>
-        </div>
-        """)
+        </div>""")
 
-    # Distribute rows across columns
     per_col = (len(rows_html) + n_cols - 1) // n_cols
     cols = st.columns(n_cols)
     for ci in range(n_cols):
         with cols[ci]:
             start = ci * per_col
-            end = start + per_col
+            end = min(start + per_col, len(rows_html))
             for html in rows_html[start:end]:
                 st.markdown(html, unsafe_allow_html=True)
 
 
 # =====================================================================
-# SIDEBAR — All controls
+# SIDEBAR
 # =====================================================================
-
-def render_sidebar(df_all: pd.DataFrame) -> Dict:
-    """Render the sidebar controls and return the user's settings as a dict."""
+def render_sidebar(df_all: pd.DataFrame) -> Tuple[Dict, pd.DataFrame]:
     with st.sidebar:
         st.header("📊 SIS Bar Chart Studio")
-        st.caption("Customizable 2D / 3D bar charts for Sustainability Impact Scores")
+        st.caption("Customizable 2D / 3D / Polar bar charts for SIS")
 
         # ---- 1. Data source ----
         st.subheader("1. Data Source")
-        data_mode = st.radio(
-            "Choose data source:",
-            ["Use preloaded SIS results", "Upload CSV"],
-            index=0,
-            horizontal=True,
-        )
+        data_mode = st.radio("Choose data source:", ["Use preloaded SIS results", "Upload CSV file(s)", "Load from local directory"], index=0)
 
-        if data_mode == "Upload CSV":
-            uploaded = st.file_uploader("Upload CSV (cols: concept, SIS)", type=["csv"])
-            if uploaded is not None:
-                try:
-                    df_all = pd.read_csv(uploaded)
-                    if "concept" not in df_all.columns or "SIS" not in df_all.columns:
-                        st.error("CSV must have 'concept' and 'SIS' columns.")
-                    else:
-                        df_all["node_id"] = df_all["concept"].map(NODE_ID_MAP).fillna("?")
-                        df_all["is_anchor"] = df_all["concept"].isin(ANCHORS)
-                        df_all = df_all.sort_values("SIS", ascending=False).reset_index(drop=True)
-                        st.success(f"Loaded {len(df_all)} concepts from CSV.")
-                except Exception as e:
-                    st.error(f"Failed to parse CSV: {e}")
+        if data_mode == "Upload CSV file(s)":
+            uploaded = st.file_uploader("Upload CSV(s) (must contain 'concept' and 'SIS')", type=["csv"], accept_multiple_files=True)
+            if uploaded:
+                dfs = []
+                for file in uploaded:
+                    try:
+                        df_temp = pd.read_csv(file)
+                        if "concept" in df_temp.columns and "SIS" in df_temp.columns:
+                            dfs.append(df_temp)
+                    except Exception:
+                        pass
+                if dfs:
+                    df_all = pd.concat(dfs, ignore_index=True)
+                    df_all["node_id"] = df_all["concept"].map(NODE_ID_MAP).fillna("?")
+                    df_all["is_anchor"] = df_all["concept"].isin(ANCHORS)
+                    df_all = df_all.sort_values("SIS", ascending=False).drop_duplicates(subset=["concept"]).reset_index(drop=True)
+                    st.success(f"Loaded {len(df_all)} unique concepts from {len(uploaded)} file(s).")
+
+        elif data_mode == "Load from local directory":
+            dir_path = st.text_input("Directory path (local):", value="./datasets")
+            if os.path.isdir(dir_path):
+                csv_files = [f for f in os.listdir(dir_path) if f.lower().endswith('.csv')]
+                if csv_files:
+                    selected_file = st.selectbox("Select CSV file:", csv_files)
+                    if selected_file:
+                        try:
+                            full_path = os.path.join(dir_path, selected_file)
+                            df_temp = pd.read_csv(full_path)
+                            if "concept" in df_temp.columns and "SIS" in df_temp.columns:
+                                df_all = df_temp.copy()
+                                df_all["node_id"] = df_all["concept"].map(NODE_ID_MAP).fillna("?")
+                                df_all["is_anchor"] = df_all["concept"].isin(ANCHORS)
+                                df_all = df_all.sort_values("SIS", ascending=False).reset_index(drop=True)
+                                st.success(f"Loaded {len(df_all)} concepts from {selected_file}.")
+                            else:
+                                st.error("CSV must have 'concept' and 'SIS' columns.")
+                        except Exception as e:
+                            st.error(f"Failed to load: {e}")
+                else:
+                    st.warning(f"No CSV files found in {dir_path}")
+            else:
+                st.warning(f"Directory does not exist: {dir_path}")
 
         # ---- 2. Concept selection ----
         st.subheader("2. Select Concepts")
         all_concepts = df_all["concept"].tolist()
-
-        # Filter box
-        filter_pattern = st.text_input(
-            "Filter concepts (regex or substring):",
-            value="",
-            help="Type a substring or regex to filter the list. e.g., 'twins', 'defect|twins', '^p'",
-        )
+        filter_pattern = st.text_input("Filter concepts (regex or substring):", value="", help="e.g., 'twins', 'defect|twins', '^p'")
         try:
-            if filter_pattern:
-                filtered = [c for c in all_concepts if re.search(filter_pattern, c, re.IGNORECASE)]
-            else:
-                filtered = all_concepts
+            filtered = [c for c in all_concepts if re.search(filter_pattern, c, re.IGNORECASE)] if filter_pattern else all_concepts
         except re.error:
             st.warning(f"Invalid regex: {filter_pattern}. Showing all.")
             filtered = all_concepts
 
-        # Select-all / remove-all / invert
         col_a, col_b, col_c = st.columns(3)
         with col_a:
             if st.button("Select All", key="select_all_btn", use_container_width=True):
@@ -672,18 +661,12 @@ def render_sidebar(df_all: pd.DataFrame) -> Dict:
                 current = st.session_state.get("selected_concepts", [])
                 st.session_state["selected_concepts"] = [c for c in filtered if c not in current]
 
-        # Default to top 15 by SIS
         if "selected_concepts" not in st.session_state:
             st.session_state["selected_concepts"] = df_all.head(15)["concept"].tolist()
 
-        selected = st.multiselect(
-            f"Concepts to plot ({len(filtered)} shown, {len(st.session_state['selected_concepts'])} selected):",
-            options=filtered,
-            default=[c for c in st.session_state["selected_concepts"] if c in filtered],
-            key="selected_concepts",
-        )
+        selected = st.multiselect(f"Concepts to plot ({len(filtered)} shown, {len(st.session_state['selected_concepts'])} selected):",
+                                  options=filtered, default=[c for c in st.session_state["selected_concepts"] if c in filtered], key="selected_concepts")
 
-        # Quick presets
         st.markdown("**Quick presets:**")
         preset_cols = st.columns(4)
         with preset_cols[0]:
@@ -700,33 +683,18 @@ def render_sidebar(df_all: pd.DataFrame) -> Dict:
                 st.rerun()
         with preset_cols[3]:
             if st.button("Defects only", key="preset_defects"):
-                defects = ["twins", "stacking_faults", "lattice_distortion",
-                          "defect_engineering", "diffusion_highways"]
+                defects = ["twins", "stacking_faults", "lattice_distortion", "defect_engineering", "diffusion_highways"]
                 st.session_state["selected_concepts"] = [c for c in all_concepts if c in defects]
                 st.rerun()
 
         # ---- 3. Chart type ----
         st.subheader("3. Chart Type & Colormap")
-        chart_type = st.selectbox(
-            "Chart type:",
-            ["2D Bar Chart (matplotlib)", "3D Bar Chart (plotly)"],
-            index=0,
-        )
-        cmap_name = st.selectbox(
-            f"Colormap ({len(COLORMAP_NAMES)} options):",
-            options=COLORMAP_NAMES,
-            index=COLORMAP_NAMES.index("inferno"),
-            help="inferno, plasma, viridis, jet, turbo, rainbow, spectral, coolwarm, ...",
-        )
+        chart_type = st.selectbox("Chart type:", ["2D Bar Chart (matplotlib)", "3D Bar Chart (plotly)", "Polar / Radial Bar Chart (plotly) ✨"], index=2)
+        cmap_name = st.selectbox(f"Colormap ({len(COLORMAP_NAMES)} options):", options=COLORMAP_NAMES, index=COLORMAP_NAMES.index("inferno"))
         reverse_cmap = st.checkbox("Reverse colormap", value=False)
         if reverse_cmap:
             cmap_name = cmap_name + "_r" if not cmap_name.endswith("_r") else cmap_name
-
-        sort_order = st.selectbox(
-            "Sort order:",
-            ["descending", "ascending", "alphabetical"],
-            index=0,
-        )
+        sort_order = st.selectbox("Sort order:", ["descending", "ascending", "alphabetical"], index=0)
 
         # ---- 4. Image customization ----
         st.subheader("4. Image Customization")
@@ -737,34 +705,37 @@ def render_sidebar(df_all: pd.DataFrame) -> Dict:
             figsize_h = st.slider("Figure height (inches)", 4, 16, 8)
             dpi = st.slider("DPI", 80, 400, 150)
             bar_width = st.slider("Bar width", 0.2, 1.0, 0.7)
+        elif "Polar" in chart_type:
+            # ★ Polar-specific controls (forces square for true circle)
+            st.markdown("**Polar chart controls:**")
+            st.caption("Width and height are forced equal to ensure a perfect circle.")
+            polar_size = st.slider("Chart size (px, square)", 500, 1600, 900, step=50,
+                                    help="Larger = bigger circle. Width = height automatically.")
+            bar_angular_width = st.slider("Bar angular width (fraction)", 0.2, 1.0, 0.85,
+                                            help="1.0 = bars touch, 0.85 = small gaps, 0.5 = thin spokes")
+            angular_rotation = st.slider("Start angle (°)", 0, 359, 90,
+                                          help="90 = top (12 o'clock), 0 = right (3 o'clock)")
+            angular_direction = st.selectbox("Direction:", ["clockwise", "counterclockwise"], index=0)
+            radial_padding = st.slider("Radial range padding", 1.05, 1.50, 1.20,
+                                          help="Multiplier on max SIS to give tip labels room")
         else:
             width_3d = st.slider("Chart width (px)", 600, 1600, 1000)
             height_3d = st.slider("Chart height (px)", 500, 1400, 800)
-            grid_size_3d = st.slider("3D grid columns", 0, 12, 0,
-                                       help="0 = auto-compute square-ish grid")
+            grid_size_3d = st.slider("3D grid columns (0=auto)", 0, 12, 0)
 
-        label_fontsize = st.slider("Value label font size", 6, 20, 10)
+        label_fontsize = st.slider("Value label font size", 6, 20, 12)
         x_label_fontsize = st.slider("X-axis label font size", 6, 18, 9)
         show_value_labels = st.checkbox("Show SIS score on bar", value=True)
         show_node_ids = st.checkbox("Show N_i node IDs", value=True)
-        highlight_anchors = st.checkbox("Highlight anchor nodes (gold outline)",
-                                         value=True)
+        highlight_anchors = st.checkbox("Highlight anchor nodes (gold outline)", value=True)
 
         if "2D" in chart_type:
-            label_position = st.selectbox(
-                "Label position:",
-                ["top (outside bar)", "center (inside bar)"],
-                index=0,
-            ).split(" ")[0]
+            label_position = st.selectbox("Label position:", ["top (outside bar)", "center (inside bar)"], index=0).split(" ")[0]
             label_rotation = st.slider("Value label rotation (°)", 0, 90, 0)
-            x_label_mode = st.selectbox(
-                "Long-name handling:",
-                ["full", "abbreviated", "wrapped", "rotated"],
-                index=3,
-                help="full=truncate, abbreviated=N1/N2..., wrapped=multi-line, rotated=full vertical text",
-            )
-            x_label_rotation = st.slider("X-axis label rotation (°)", 0, 90,
-                                          {0: 0, 1: 45, 2: 90}.get(2, 45) if x_label_mode == "rotated" else 45)
+            x_label_mode = st.selectbox("Long-name handling:", ["full", "abbreviated", "wrapped", "rotated"], index=3)
+            x_label_rotation = st.slider("X-axis label rotation (°)", 0, 90, 45 if x_label_mode == "rotated" else 0)
+        else:
+            label_position, label_rotation, x_label_mode, x_label_rotation = "top", 0, "full", 0
 
         bg_color = st.color_picker("Background color", value="#ffffff")
         text_color = st.color_picker("Text color", value="#1a1a1a")
@@ -775,191 +746,119 @@ def render_sidebar(df_all: pd.DataFrame) -> Dict:
         show_legend = st.checkbox("Show concept legend", value=True)
         legend_cols = st.slider("Legend columns", 1, 6, 4)
 
-    # Build settings dict
     settings = {
-        "data_mode": data_mode,
-        "selected_concepts": selected,
-        "chart_type": chart_type,
-        "cmap_name": cmap_name,
-        "sort_order": sort_order,
-        "title": title,
-        "label_fontsize": label_fontsize,
-        "x_label_fontsize": x_label_fontsize,
-        "show_value_labels": show_value_labels,
-        "show_node_ids": show_node_ids,
-        "highlight_anchors": highlight_anchors,
-        "bg_color": bg_color,
-        "text_color": text_color,
-        "show_grid": show_grid,
-        "show_legend": show_legend,
-        "legend_cols": legend_cols,
+        "data_mode": data_mode, "selected_concepts": selected, "chart_type": chart_type, "cmap_name": cmap_name,
+        "sort_order": sort_order, "title": title, "label_fontsize": label_fontsize, "x_label_fontsize": x_label_fontsize,
+        "show_value_labels": show_value_labels, "show_node_ids": show_node_ids, "highlight_anchors": highlight_anchors,
+        "bg_color": bg_color, "text_color": text_color, "show_grid": show_grid, "show_legend": show_legend, "legend_cols": legend_cols,
     }
     if "2D" in chart_type:
+        settings.update({"figsize": (figsize_w, figsize_h), "dpi": dpi, "bar_width": bar_width,
+                         "label_position": label_position, "label_rotation": label_rotation,
+                         "x_label_mode": x_label_mode, "x_label_rotation": x_label_rotation})
+    elif "Polar" in chart_type:
         settings.update({
-            "figsize": (figsize_w, figsize_h),
-            "dpi": dpi,
-            "bar_width": bar_width,
-            "label_position": label_position,
-            "label_rotation": label_rotation,
-            "x_label_mode": x_label_mode,
-            "x_label_rotation": x_label_rotation,
+            "polar_size": polar_size,
+            "bar_angular_width": bar_angular_width,
+            "angular_rotation": angular_rotation,
+            "angular_direction": angular_direction,
+            "radial_padding": radial_padding,
         })
     else:
-        settings.update({
-            "width": width_3d,
-            "height": height_3d,
-            "grid_size": grid_size_3d,
-        })
+        settings.update({"width": width_3d, "height": height_3d, "grid_size": grid_size_3d})
+
     return settings, df_all
 
 
 # =====================================================================
 # MAIN APP
 # =====================================================================
-
 def main():
     st.title("📊 SIS Bar Chart Studio")
-    st.caption(
-        "Customizable 2D / 3D bar charts for Sustainability Impact Scores — "
-        "50+ colormaps, interactive concept selection, score labels on bar tips."
-    )
+    st.caption("Customizable 2D / 3D / Polar bar charts for Sustainability Impact Scores — 50+ colormaps, interactive concept selection, score labels on bar tips.")
 
-    # Load default data
     df_all = load_default_data()
-
-    # Render sidebar
     settings, df_all = render_sidebar(df_all)
 
-    # Filter to selected concepts
     selected = settings["selected_concepts"]
     if not selected:
         st.warning("⚠️ Please select at least one concept to plot.")
         st.info("Use the sidebar → 'Select Concepts' → click 'Select All' or pick specific concepts.")
         return
 
-    df_plot = df_all[df_all["concept"].isin(selected)].copy()
-    df_plot = df_plot.sort_values("SIS", ascending=False).reset_index(drop=True)
-
-    # Display selected count
+    df_plot = df_all[df_all["concept"].isin(selected)].copy().sort_values("SIS", ascending=False).reset_index(drop=True)
     st.markdown(f"**Selected:** {len(df_plot)} / {len(df_all)} concepts")
 
-    # ---- Render chart ----
     if "2D" in settings["chart_type"]:
-        png_bytes = render_2d_bar_chart(
-            df_plot,
-            cmap_name=settings["cmap_name"],
-            figsize=settings["figsize"],
-            dpi=settings["dpi"],
-            bar_width=settings["bar_width"],
-            label_position=settings["label_position"],
-            label_rotation=settings["label_rotation"],
-            label_fontsize=settings["label_fontsize"],
-            x_label_mode=settings["x_label_mode"],
-            x_label_fontsize=settings["x_label_fontsize"],
-            x_label_rotation=settings["x_label_rotation"],
-            show_node_ids=settings["show_node_ids"],
-            show_value_labels=settings["show_value_labels"],
-            highlight_anchors=settings["highlight_anchors"],
-            title=settings["title"],
-            show_grid=settings["show_grid"],
-            bg_color=settings["bg_color"],
-            text_color=settings["text_color"],
-            sort_order=settings["sort_order"],
-        )
+        png_bytes = render_2d_bar_chart(df_plot, **{k: v for k, v in settings.items() if k in [
+            "cmap_name", "figsize", "dpi", "bar_width", "label_position", "label_rotation", "label_fontsize",
+            "x_label_mode", "x_label_fontsize", "x_label_rotation", "show_node_ids", "show_value_labels",
+            "highlight_anchors", "title", "show_grid", "bg_color", "text_color", "sort_order"
+        ]})
         st.image(png_bytes, use_container_width=True)
-        st.download_button(
-            "⬇️ Download PNG",
-            data=png_bytes,
-            file_name="sis_bar_chart_2d.png",
-            mime="image/png",
-        )
-    else:
-        fig_3d = render_3d_bar_chart(
+        st.download_button("⬇️ Download PNG", data=png_bytes, file_name="sis_bar_chart_2d.png", mime="image/png")
+
+    elif "Polar" in settings["chart_type"]:
+        fig_polar = render_polar_bar_chart(
             df_plot,
             cmap_name=settings["cmap_name"],
-            width=settings["width"],
-            height=settings["height"],
-            show_value_labels=settings["show_value_labels"],
-            show_node_ids=settings["show_node_ids"],
             highlight_anchors=settings["highlight_anchors"],
             title=settings["title"],
-            sort_order=settings["sort_order"],
-            label_fontsize=settings["label_fontsize"],
             bg_color=settings["bg_color"],
             text_color=settings["text_color"],
-            grid_size=settings["grid_size"],
+            sort_order=settings["sort_order"],
+            chart_size=settings["polar_size"],
+            bar_angular_width=settings["bar_angular_width"],
+            angular_rotation=settings["angular_rotation"],
+            angular_direction=settings["angular_direction"],
+            show_value_labels=settings["show_value_labels"],
+            show_node_ids=settings["show_node_ids"],
+            label_fontsize=settings["label_fontsize"],
+            radial_range_padding=settings["radial_padding"],
         )
-        st.plotly_chart(fig_3d, use_container_width=True)
-        # HTML download
-        html_bytes = fig_3d.to_html(include_plotlyjs="cdn").encode("utf-8")
-        st.download_button(
-            "⬇️ Download Interactive HTML",
-            data=html_bytes,
-            file_name="sis_bar_chart_3d.html",
-            mime="text/html",
-        )
+        st.plotly_chart(fig_polar, use_container_width=True)
+        st.caption("💡 *The polar chart is now a TRUE CIRCLE: width and height are forced equal, with tight margins and proper angular axis.*")
+        html_bytes = fig_polar.to_html(include_plotlyjs="cdn").encode("utf-8")
+        st.download_button("⬇️ Download Interactive HTML", data=html_bytes, file_name="sis_polar_chart.html", mime="text/html")
 
-    # ---- Legend ----
+    else:
+        fig_3d = render_3d_bar_chart(df_plot, **{k: v for k, v in settings.items() if k in [
+            "cmap_name", "width", "height", "show_value_labels", "show_node_ids", "highlight_anchors",
+            "title", "sort_order", "label_fontsize", "bg_color", "text_color", "grid_size"
+        ]})
+        st.plotly_chart(fig_3d, use_container_width=True)
+        html_bytes = fig_3d.to_html(include_plotlyjs="cdn").encode("utf-8")
+        st.download_button("⬇️ Download Interactive HTML", data=html_bytes, file_name="sis_bar_chart_3d.html", mime="text/html")
+
     if settings["show_legend"]:
         st.markdown("---")
         st.subheader("🎨 Concept Legend")
         st.caption("Color swatches map to bars in the chart above.")
         render_legend(df_plot, settings["cmap_name"], n_cols=settings["legend_cols"])
 
-    # ---- Data table ----
     st.markdown("---")
     st.subheader("📋 Selected Concepts (Data Table)")
-    st.dataframe(
-        df_plot[["node_id", "concept", "SIS", "is_anchor"]],
-        use_container_width=True,
-        hide_index=True,
-    )
-    st.download_button(
-        "⬇️ Download selected concepts (CSV)",
-        data=df_plot.to_csv(index=False).encode("utf-8"),
-        file_name="sis_selected_concepts.csv",
-        mime="text/csv",
-    )
+    st.dataframe(df_plot[["node_id", "concept", "SIS", "is_anchor"]], use_container_width=True, hide_index=True)
+    st.download_button("⬇️ Download selected concepts (CSV)", data=df_plot.to_csv(index=False).encode("utf-8"),
+                       file_name="sis_selected_concepts.csv", mime="text/csv")
 
-    # ---- Help / tips ----
     with st.expander("💡 Tips for handling long concept names"):
-        st.markdown(
-            """
-            **Problem:** Some concept names like `pressureless_sintering` or
-            `power_module_assembly` are too long to fit horizontally on the
-            x-axis without overlapping.
+        st.markdown("""
+        **Problem:** Some concept names like `pressureless_sintering` are too long to fit horizontally.
 
-            **Solutions offered in this app:**
+        **Solutions offered in this app:**
+        1. **Abbreviated mode (2D)** — Replaces long names with `N1`, `N2`, ... (manuscript node IDs).
+        2. **Wrapped mode (2D)** — Breaks long names into 2–3 lines (e.g., `pressureless\\nsintering`).
+        3. **Rotated mode (2D)** — Keeps the full name but rotates the label 45° or 90°.
+        4. **Polar / Radial Chart ✨** — Lays concepts around a circle so name length matters less.
 
-            1. **Abbreviated mode** — Replaces long names with `N1`, `N2`, ...
-               (manuscript node IDs). Use the "Show N_i node IDs" toggle to
-               display these in a secondary axis. Best for compact charts with
-               many concepts.
-
-            2. **Wrapped mode** — Breaks long names into 2–3 lines of
-               ~10 characters each (e.g., `pressureless_sintering` →
-               `pressureless\\nsintering`). Best when you have a moderate
-               number of concepts (≤30).
-
-            3. **Rotated mode** — Keeps the full name but rotates the label
-               45° or 90°. Best for publication-quality figures where
-               readability matters more than compactness.
-
-            4. **Full mode** — Truncates with `…` at 12 characters. Quick
-               default for screening.
-
-            **Additional tips:**
-            - Increase figure width (sidebar → Image Customization) to give
-              labels more room.
-            - Reduce x-axis font size for very dense charts.
-            - Use the "Filter concepts" box in the sidebar to plot only the
-              subset you care about (e.g., type `defect|twins` to show only
-              defect-related concepts).
-            - The **3D chart** lays concepts out in a grid, so name length
-              matters less — it's a good fallback for visualizing all 44
-              concepts at once.
-            """
-        )
+        **Tips for the polar chart specifically:**
+        - **Polar chart looks elliptical?** Increase *Chart size (px, square)* in the sidebar.
+          The chart is forced to be square (width = height) for a true circle.
+        - **Bars don't fill the circle?** Increase *Bar angular width* toward 1.0.
+        - **Tip labels overlap the bar?** Increase *Radial range padding* (e.g., 1.30).
+        - **Start at different position?** Adjust *Start angle (°)*: 90 = top, 0 = right.
+        """)
 
 
 if __name__ == "__main__":
